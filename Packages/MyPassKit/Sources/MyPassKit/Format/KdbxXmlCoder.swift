@@ -16,6 +16,11 @@ enum KdbxXmlCoderError: Error, Equatable {
     /// never legitimately contains a DOCTYPE/DTD, so this is rejected outright
     /// rather than parsed. See `decode(_:deobfuscate:)` for why.
     case disallowedDoctype
+    /// The raw payload is not valid, unambiguous UTF-8 (e.g. it is UTF-16/UTF-32
+    /// encoded, or carries a BOM signalling such). The real KDBX4 file format
+    /// mandates a UTF-8 XML payload; rejecting anything else closes an encoding
+    /// bypass of the `<!DOCTYPE` byte-scan below. See `decode(_:deobfuscate:)`.
+    case unsupportedEncoding
 }
 
 /// Encodes/decodes the KDBX4 XML tree (`KeePassFile/Root/Group/Entry/String/...`).
@@ -65,6 +70,25 @@ enum KdbxXmlCoder {
     private static let doctypeMarker = Data("<!DOCTYPE".utf8)
 
     static func decode(_ xml: Data, deobfuscate: (Data) -> Data) throws -> KdbxXmlPayload {
+        // `XMLDocument(data:options:)` auto-detects character encoding from a
+        // BOM or the XML prolog's `encoding="..."` attribute, and can happily
+        // parse UTF-16/UTF-32 input. The `<!DOCTYPE` byte-scan below only
+        // matches a contiguous UTF-8/ASCII byte sequence — in a UTF-16-encoded
+        // payload those same characters are interleaved with null bytes (e.g.
+        // `3C 00 21 00 44 4F 43 ...`) and would silently slip past the scan,
+        // letting a DOCTYPE-based entity-expansion (or XXE) payload reach
+        // libxml2 undetected. The real KDBX4 file format mandates a UTF-8 XML
+        // payload (this codec's own `encode()` always sets
+        // `characterEncoding = "UTF-8"`, matching KeePassXC), so requiring the
+        // raw bytes to be valid, unambiguous UTF-8 before doing anything else
+        // enforces the actual format contract and closes this bypass class
+        // generically (also naturally covers UTF-32 and any other alternate
+        // encoding) rather than trying to enumerate every non-UTF-8 encoding
+        // name or BOM signature individually.
+        guard String(data: xml, encoding: .utf8) != nil else {
+            throw KdbxXmlCoderError.unsupportedEncoding
+        }
+
         // Reject any DOCTYPE declaration outright, before handing the data to
         // the XML parser. This is a KDBX4 file that may be corrupted, tampered
         // with, or maliciously crafted (e.g. shared/synced from an untrusted

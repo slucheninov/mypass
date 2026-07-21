@@ -301,6 +301,57 @@ final class KdbxXmlCoderTests: XCTestCase {
         }
     }
 
+    /// A UTF-16-encoded payload containing a DOCTYPE (with a billion-laughs-style
+    /// internal entity expansion) is a bypass of the `<!DOCTYPE` byte-scan: that
+    /// scan looks for the contiguous UTF-8 byte sequence `<!DOCTYPE`, but in
+    /// UTF-16 those same characters are interleaved with null bytes and never
+    /// match. Before the UTF-8-validity check, this payload would sail past the
+    /// scan and be handed straight to `XMLDocument`, which auto-detects the
+    /// UTF-16 encoding (via the BOM) and would fully parse/expand it. decode()
+    /// must now reject this outright as `.unsupportedEncoding`, before the
+    /// DOCTYPE scan or any `XMLDocument` construction is even attempted.
+    func testDecodeRejectsUtf16EncodedPayloadBypassingDoctypeScan() {
+        let lolEntities = (1...9).map { level -> String in
+            if level == 1 {
+                return "<!ENTITY lol1 \"lol\">"
+            }
+            let previous = "&lol\(level - 1);&lol\(level - 1);"
+            return "<!ENTITY lol\(level) \"\(previous)\">"
+        }.joined(separator: "\n  ")
+
+        let billionLaughsXml = """
+        <?xml version="1.0" encoding="UTF-16"?>
+        <!DOCTYPE KeePassFile [
+          \(lolEntities)
+        ]>
+        <KeePassFile>
+          <Root>
+            <Group>
+              <UUID>&lol9;</UUID>
+              <Name>&lol9;</Name>
+            </Group>
+          </Root>
+        </KeePassFile>
+        """
+        // Encode as UTF-16 (with BOM) so libxml2 would auto-detect this encoding
+        // and the `<!DOCTYPE` bytes are interleaved with nulls, never matching
+        // the UTF-8 byte-scan.
+        guard let data = billionLaughsXml.data(using: .utf16) else {
+            return XCTFail("failed to construct UTF-16 test payload")
+        }
+        // Sanity-check the exploit shape: the raw bytes must NOT contain the
+        // contiguous UTF-8 "<!DOCTYPE" sequence (proving this would bypass the
+        // byte-scan alone), yet must also not be valid UTF-8 (proving the new
+        // check catches it).
+        XCTAssertNil(data.range(of: Data("<!DOCTYPE".utf8)))
+        XCTAssertNil(String(data: data, encoding: .utf8))
+
+        XCTAssertThrowsError(try KdbxXmlCoder.decode(data) { $0 }) { error in
+            XCTAssertEqual(error as? KdbxXmlCoderError, .unsupportedEncoding,
+                           "non-UTF-8 payloads must be rejected before the DOCTYPE scan or XML parsing")
+        }
+    }
+
     /// `Times/*` values are base64 of an attacker/file-controlled little-endian
     /// Int64. A value near Int64.min, once combined with the KDBX epoch offset,
     /// would overflow plain `Int64` subtraction and trap (crash the process).
