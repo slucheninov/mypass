@@ -16,18 +16,33 @@ final class AES256CBCCipherTests: XCTestCase {
         let plaintextBlock = Data(hex: "6bc1bee22e409f96e93d7e117393172a")
         let expectedCiphertextBlock = Data(hex: "f58c4c04d6e5f1ba779eabfb5f7bfbd6")
 
-        // CommonCrypto с PKCS7-паддингом добавит доп. блок паддинга для ровно
-        // одного 16-байтового блока входа — поэтому шифруем 2 идентичных блока
-        // подряд без паддинга через .noPadding и сверяем только первый блок вывода.
-        let doubleBlockPlaintext = plaintextBlock + plaintextBlock
-        let ciphertext = try AES256CBCCipher.encrypt(plaintext: doubleBlockPlaintext, key: key, iv: iv)
-        XCTAssertEqual(ciphertext.prefix(16), expectedCiphertextBlock)
+        // NIST SP 800-38A's CBC test vectors are for the raw cipher operation
+        // without any padding convention layered on top, so we exercise the
+        // no-padding primitive here rather than the padded public `encrypt()`.
+        let ciphertext = try AES256CBCCipher.encryptRawNoPadding(plaintext: plaintextBlock, key: key, iv: iv)
+        XCTAssertEqual(ciphertext, expectedCiphertextBlock)
     }
 
     func testEncryptDecryptRoundTrip() throws {
         let key = Data(repeating: 0x5A, count: 32)
         let iv = Data(repeating: 0xA5, count: 16)
         let plaintext = Data("MyPassKit KDBX4 round-trip test payload, произвольная длина!".utf8)
+
+        let ciphertext = try AES256CBCCipher.encrypt(plaintext: plaintext, key: key, iv: iv)
+        let decrypted = try AES256CBCCipher.decrypt(ciphertext: ciphertext, key: key, iv: iv)
+
+        XCTAssertEqual(decrypted, plaintext)
+    }
+
+    // Regression test for a defect where `encrypt()` skipped PKCS7 padding
+    // whenever the plaintext length was an exact multiple of 16 bytes, while
+    // `decrypt()` always assumed padding was present — silently corrupting
+    // any block-aligned real-world payload (e.g. a KDBX4 XML blob that
+    // happens to land on a 16-byte boundary) on round trip.
+    func testEncryptDecryptRoundTripWithBlockAlignedPlaintext() throws {
+        let key = Data(repeating: 0x3C, count: 32)
+        let iv = Data(repeating: 0x7E, count: 16)
+        let plaintext = Data(repeating: 0x42, count: 32) // exactly 2 AES blocks, no partial block
 
         let ciphertext = try AES256CBCCipher.encrypt(plaintext: plaintext, key: key, iv: iv)
         let decrypted = try AES256CBCCipher.decrypt(ciphertext: ciphertext, key: key, iv: iv)

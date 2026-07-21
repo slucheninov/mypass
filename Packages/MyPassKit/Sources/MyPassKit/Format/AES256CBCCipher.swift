@@ -7,12 +7,25 @@ enum CipherError: Error, Equatable {
 }
 
 enum AES256CBCCipher {
+    /// Always applies PKCS7 padding, per standard CBC+PKCS7 usage — including
+    /// when `plaintext.count` is already a multiple of the block size, in
+    /// which case a full padding block is appended. This is required for
+    /// `decrypt()` (which always expects PKCS7 padding) to round-trip
+    /// correctly for any input length.
     static func encrypt(plaintext: Data, key: Data, iv: Data) throws -> Data {
-        try crypt(input: plaintext, key: key, iv: iv, operation: CCOperation(kCCEncrypt), padding: plaintext.count % 16 == 0 ? CCOptions(0) : CCOptions(kCCOptionPKCS7Padding))
+        try crypt(input: plaintext, key: key, iv: iv, operation: CCOperation(kCCEncrypt), padding: CCOptions(kCCOptionPKCS7Padding))
     }
 
     static func decrypt(ciphertext: Data, key: Data, iv: Data) throws -> Data {
         try crypt(input: ciphertext, key: key, iv: iv, operation: CCOperation(kCCDecrypt), padding: CCOptions(kCCOptionPKCS7Padding))
+    }
+
+    /// Raw block-cipher operation with no padding applied. Intended only for
+    /// testing against known-answer test vectors (e.g. NIST SP 800-38A),
+    /// which specify the raw CBC operation without any padding convention
+    /// layered on top. Not for use with real plaintext of arbitrary length.
+    static func encryptRawNoPadding(plaintext: Data, key: Data, iv: Data) throws -> Data {
+        try crypt(input: plaintext, key: key, iv: iv, operation: CCOperation(kCCEncrypt), padding: CCOptions(0))
     }
 
     private static func crypt(input: Data, key: Data, iv: Data, operation: CCOperation, padding: CCOptions) throws -> Data {
