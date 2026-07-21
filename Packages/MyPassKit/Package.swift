@@ -20,7 +20,8 @@ let package = Package(
         ),
         .testTarget(
             name: "MyPassKitTests",
-            dependencies: ["MyPassKit", .product(name: "Sodium", package: "swift-sodium")]
+            dependencies: ["MyPassKit", .product(name: "Sodium", package: "swift-sodium")],
+            resources: [.copy("Fixtures")]
         )
     ]
 )
