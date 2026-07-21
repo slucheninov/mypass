@@ -122,35 +122,60 @@ enum KdbxXmlCoder {
             throw KdbxXmlCoderError.unsupportedEncoding
         }
 
-        // Root-cause fix (round 6): the raw bytes are now confirmed to be
-        // valid UTF-8 with no NUL bytes. The ONLY remaining way for libxml2 to
-        // subsequently interpret this same UTF-8 byte stream under a
-        // *different* text encoding (e.g. UTF-7, EBCDIC-via-declared-charset,
-        // etc.) is an explicit `encoding="..."` attribute in the leading XML
-        // declaration naming that encoding: unlike UTF-16/UTF-32, UTF-7 has no
-        // BOM or detectable byte-pattern signature, so libxml2 only ever
-        // switches to it via this declared name. `XMLDocument(data:options:)`
-        // receives nothing but these raw bytes (no side-channel/external
-        // metadata), so closing this one lever closes the entire encoding-
-        // declaration bypass class in one place, rather than adding another
-        // per-encoding heuristic. A conforming XML declaration must be the
-        // very first thing in the document, so only the leading slice needs
-        // scanning; 512 chars is comfortably more than any real `<?xml ...?>`
-        // prolog requires.
-        let prologScanWindow = xmlText.prefix(512)
-        if let prologRange = prologScanWindow.range(of: "<?xml", options: [.caseInsensitive]) {
-            let prologTail = String(prologScanWindow[prologRange.lowerBound...])
+        // Root-cause fix (round 6, hardened round 7): the raw bytes are now
+        // confirmed to be valid UTF-8 with no NUL bytes. The ONLY remaining
+        // way for libxml2 to subsequently interpret this same UTF-8 byte
+        // stream under a *different* text encoding (e.g. UTF-7,
+        // EBCDIC-via-declared-charset, etc.) is an explicit `encoding="..."`
+        // attribute in the leading XML declaration naming that encoding:
+        // unlike UTF-16/UTF-32, UTF-7 has no BOM or detectable byte-pattern
+        // signature, so libxml2 only ever switches to it via this declared
+        // name. `XMLDocument(data:options:)` receives nothing but these raw
+        // bytes (no side-channel/external metadata), so closing this one
+        // lever closes the entire encoding-declaration bypass class in one
+        // place, rather than adding another per-encoding heuristic.
+        //
+        // A conforming XML declaration must be the very first thing in the
+        // document (libxml2 only honors `<?xml ...?>` when it starts at byte
+        // 0), so only documents that literally start with `<?xml` need any
+        // scanning at all — anything else falls back to the default UTF-8
+        // interpretation, which the checks above already confirmed the bytes
+        // satisfy. Round 6 scanned only `xmlText.prefix(512)` on the theory
+        // that no real prolog needs more than that — but XML permits
+        // arbitrary whitespace between the `version=`, `encoding=`, and
+        // `standalone=` pseudo-attributes, so an attacker can pad
+        // `version="1.0"` with hundreds of spaces to push `encoding="UTF-7"`
+        // past that fixed window while libxml2 (which sees the whole file,
+        // not a truncated prefix) still honors it. The round 7 fix scans the
+        // FULL `<?xml ...?>` declaration — from index 0 through the first
+        // `?>` — with no character cap on the declaration itself. To keep
+        // this from becoming an unbounded scan on a pathological input that
+        // starts with `<?xml` but never closes the declaration, the search
+        // for `?>` is bounded to the first 64KB of the document: a real
+        // declaration, however absurdly padded, has no legitimate reason to
+        // need anywhere near that much space, so failing to find `?>` within
+        // 64KB is itself treated as malformed input.
+        if xmlText.hasPrefix("<?xml") {
+            let utf8View = xmlText.utf8
+            let searchLimit = utf8View.index(
+                utf8View.startIndex, offsetBy: 65_536, limitedBy: utf8View.endIndex
+            ) ?? utf8View.endIndex
+            let boundedSearchSpace = xmlText[xmlText.startIndex..<searchLimit]
+            guard let closeRange = boundedSearchSpace.range(of: "?>") else {
+                throw KdbxXmlCoderError.malformedXml
+            }
+            let declaration = String(xmlText[xmlText.startIndex..<closeRange.upperBound])
             if let encodingRegex = try? NSRegularExpression(
-                pattern: "encoding\\s*=\\s*[\"']([^\"']+)[\"']",
+                pattern: "(?:^|\\s)encoding\\s*=\\s*[\"']([^\"']+)[\"']",
                 options: [.caseInsensitive]
             ) {
-                let nsTail = prologTail as NSString
+                let nsDeclaration = declaration as NSString
                 if let match = encodingRegex.firstMatch(
-                    in: prologTail,
+                    in: declaration,
                     options: [],
-                    range: NSRange(location: 0, length: nsTail.length)
+                    range: NSRange(location: 0, length: nsDeclaration.length)
                 ), match.numberOfRanges > 1 {
-                    let declaredEncoding = nsTail.substring(with: match.range(at: 1))
+                    let declaredEncoding = nsDeclaration.substring(with: match.range(at: 1))
                     let normalized = declaredEncoding.lowercased().replacingOccurrences(of: "-", with: "")
                     if normalized != "utf8" {
                         throw KdbxXmlCoderError.disallowedEncodingDeclaration

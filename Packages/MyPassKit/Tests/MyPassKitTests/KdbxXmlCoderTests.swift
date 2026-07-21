@@ -488,6 +488,68 @@ final class KdbxXmlCoderTests: XCTestCase {
         }
     }
 
+    /// Round 7 regression: the round-6 fix only scanned `xmlText.prefix(512)`
+    /// for the `<?xml ...?>` declaration's `encoding="..."` attribute. XML
+    /// permits arbitrary whitespace between the `version=` and `encoding=`
+    /// pseudo-attributes, so an attacker can pad `version="1.0"` with
+    /// hundreds of spaces to push `encoding="UTF-7"` past that fixed
+    /// 512-character window entirely, while libxml2 (which sees the whole
+    /// file, not a truncated prefix) still honors the declared encoding and
+    /// fully parses/expands a UTF-7-shift-encoded DOCTYPE "billion laughs"
+    /// payload. decode() must now catch this via a full-declaration scan
+    /// bounded only by a generous 64KB search-for-`?>` limit, not a fixed
+    /// character cap on the declaration content itself.
+    func testDecodeRejectsUtf7DeclaredPayloadWithPaddedDeclarationBeyondOldWindow() {
+        func utf7Shift(_ s: String) -> String {
+            var units: [UInt8] = []
+            for scalar in s.unicodeScalars {
+                let value = UInt16(scalar.value)
+                units.append(UInt8(value >> 8))
+                units.append(UInt8(value & 0xFF))
+            }
+            let base64 = Data(units).base64EncodedString().replacingOccurrences(of: "=", with: "")
+            return "+" + base64 + "-"
+        }
+
+        let shiftedDoctype = utf7Shift("<!DOCTYPE")
+        let lolEntities = (1...9).map { level -> String in
+            if level == 1 {
+                return "<!ENTITY lol1 \"lol\">"
+            }
+            let previous = "&lol\(level - 1);&lol\(level - 1);"
+            return "<!ENTITY lol\(level) \"\(previous)\">"
+        }.joined(separator: "\n")
+
+        // Matches the reviewer's `/tmp/probe4.swift` B1 case: 600 spaces of
+        // legal inter-attribute whitespace between `version="1.0"` and
+        // `encoding="UTF-7"`, comfortably beyond the old 512-character scan
+        // window.
+        let padding = String(repeating: " ", count: 600)
+        let maliciousXml = "<?xml version=\"1.0\"\(padding)encoding=\"UTF-7\"?>\n"
+            + "\(shiftedDoctype) KeePassFile [\n\(lolEntities)\n]>\n"
+            + "<KeePassFile><Root><Group><UUID>&lol9;</UUID></Group></Root></KeePassFile>"
+        let data = Data(maliciousXml.utf8)
+
+        // Self-documenting sanity check: establish that the `encoding=`
+        // attribute's closing quote sits well past the old 512-character
+        // window, so this test unambiguously targets the round-7 padding
+        // bypass rather than the already-covered round-6 short-declaration
+        // case.
+        guard let encodingRange = maliciousXml.range(of: "encoding=\"UTF-7\"") else {
+            return XCTFail("test construction error: expected literal encoding=\"UTF-7\" substring")
+        }
+        let offsetOfEncodingClose = maliciousXml.distance(
+            from: maliciousXml.startIndex, to: encodingRange.upperBound
+        )
+        XCTAssertGreaterThan(offsetOfEncodingClose, 512,
+                              "sanity check: the encoding= declaration must sit past the old fixed 512-char scan window for this test to demonstrate the round-7 bug")
+
+        XCTAssertThrowsError(try KdbxXmlCoder.decode(data) { $0 }) { error in
+            XCTAssertEqual(error as? KdbxXmlCoderError, .disallowedEncodingDeclaration,
+                           "a declared encoding other than UTF-8 must be rejected even when padded with hundreds of spaces past any fixed scan window, since a conforming XML declaration is scanned in full")
+        }
+    }
+
     /// `Times/*` values are base64 of an attacker/file-controlled little-endian
     /// Int64. A value near Int64.min, once combined with the KDBX epoch offset,
     /// would overflow plain `Int64` subtraction and trap (crash the process).
