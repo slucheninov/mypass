@@ -97,9 +97,17 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
         }
         let data = try Data(contentsOf: url)
         XCTAssertThrowsError(try KdbxDatabase.open(data: data, password: Self.referencePassword)) { error in
-            guard case KdbxDatabaseError.unsupportedFeature = error else {
+            guard case KdbxDatabaseError.unsupportedFeature(let message) = error else {
                 return XCTFail("expected .unsupportedFeature (AES-KDF unimplemented), got \(error)")
             }
+            // Pin the *specific* wrapped cause, not just the outer case:
+            // `KdbxDatabase.open` wraps three distinct `KeyDerivationError`
+            // causes (`.sodiumFailure`, `.invalidParameters`,
+            // `.unsupportedKdf`) into this same `.unsupportedFeature` case
+            // (see `KdbxDatabase.swift`'s `"KDF: \(error)"` wrapping). Without
+            // checking the message, this test would stay green even if the
+            // real cause silently became a different KDF-pipeline bug.
+            XCTAssertTrue(message.contains("unsupportedKdf"), "expected .unsupportedKdf as the underlying cause, got: \(message)")
         }
     }
 
@@ -124,9 +132,15 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
             }
             let data = try Data(contentsOf: url)
             XCTAssertThrowsError(try KdbxDatabase.open(data: data, password: Self.referencePassword), "expected \(name) to fail on KDF, not gzip") { error in
-                guard case KdbxDatabaseError.unsupportedFeature = error else {
+                guard case KdbxDatabaseError.unsupportedFeature(let message) = error else {
                     return XCTFail("expected .unsupportedFeature (Argon2id salt-length gap), got \(error) for \(name)")
                 }
+                // Pin the *specific* wrapped cause (swift-sodium's
+                // `crypto_pwhash` rejecting the 32-byte salt as invalid,
+                // surfaced as `.sodiumFailure`), not just the outer case —
+                // see the comment on the AES-KDF test above for why this
+                // matters.
+                XCTAssertTrue(message.contains("sodiumFailure"), "expected .sodiumFailure (salt-length rejection) as the underlying cause, got: \(message) for \(name)")
             }
         }
     }
