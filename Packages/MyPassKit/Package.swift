@@ -13,7 +13,10 @@ let package = Package(
     targets: [
         .target(
             name: "MyPassKit",
-            dependencies: [.product(name: "Sodium", package: "swift-sodium")]
+            dependencies: [
+                .product(name: "Sodium", package: "swift-sodium"),
+                .product(name: "Clibsodium", package: "swift-sodium")
+            ]
         ),
         .testTarget(
             name: "MyPassKitTests",
