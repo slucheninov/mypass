@@ -418,6 +418,76 @@ final class KdbxXmlCoderTests: XCTestCase {
         }
     }
 
+    /// Round 6: reproduces the reviewer's empirically-confirmed UTF-7 bypass.
+    /// The XML prolog declares `encoding="UTF-7"`, and the `<!DOCTYPE` keyword
+    /// itself is shift-encoded (via UTF-7's `+...-` escape) so the literal
+    /// ASCII bytes `<!DOCTYPE` never appear anywhere in the payload. Every
+    /// individual byte in the payload is 7-bit ASCII, so:
+    ///   - it contains no NUL bytes,
+    ///   - `String(data:encoding:.utf8)` succeeds (all bytes are valid UTF-8),
+    ///   - the literal UTF-8 `<!DOCTYPE` byte-scan never matches.
+    /// All three of the OLD guards are satisfied, yet `XMLDocument` (which
+    /// auto-detects UTF-7 from the declared `encoding=` attribute — UTF-7 has
+    /// no BOM/byte-pattern signature, so this is the ONLY way to reach it)
+    /// still fully parses the DOCTYPE and expands the internal "billion
+    /// laughs" entities. decode() must now reject this via the new
+    /// encoding-declaration check, which fires before the DOCTYPE scan or any
+    /// `XMLDocument` construction is attempted.
+    func testDecodeRejectsUtf7DeclaredPayloadWithShiftEncodedDoctype() {
+        // UTF-7 "modified base64" shift-encode: each UTF-16BE code unit of the
+        // input string is base64-encoded (no padding) and wrapped in `+...-`.
+        // This is exactly how a UTF-7 encoder would represent any run of
+        // characters outside UTF-7's "directly encodable" set, including
+        // plain ASCII letters, if it chooses to shift into base64 mode for
+        // them — which is legal per RFC 2152 and is precisely the mechanism
+        // the reviewer used to hide the literal ASCII string "<!DOCTYPE" from
+        // any byte-level scan.
+        func utf7Shift(_ s: String) -> String {
+            var units: [UInt8] = []
+            for scalar in s.unicodeScalars {
+                let value = UInt16(scalar.value)
+                units.append(UInt8(value >> 8))
+                units.append(UInt8(value & 0xFF))
+            }
+            let base64 = Data(units).base64EncodedString().replacingOccurrences(of: "=", with: "")
+            return "+" + base64 + "-"
+        }
+
+        let shiftedDoctype = utf7Shift("<!DOCTYPE")
+        let lolEntities = (1...9).map { level -> String in
+            if level == 1 {
+                return "<!ENTITY lol1 \"lol\">"
+            }
+            let previous = "&lol\(level - 1);&lol\(level - 1);"
+            return "<!ENTITY lol\(level) \"\(previous)\">"
+        }.joined(separator: "\n")
+
+        let maliciousXml = """
+        <?xml version="1.0" encoding="UTF-7"?>
+        \(shiftedDoctype) KeePassFile [
+        \(lolEntities)
+        ]>
+        <KeePassFile><Root><Group><UUID>&lol9;</UUID></Group></Root></KeePassFile>
+        """
+        let data = Data(maliciousXml.utf8)
+
+        // Empirically prove this reproduces the exact reported bypass against
+        // the OLD three-guard code (NUL-check, UTF-8-validity check, literal
+        // `<!DOCTYPE` byte-scan), i.e. that it is not accidentally caught for
+        // some unrelated reason:
+        XCTAssertFalse(data.contains(0),
+                        "sanity check: a UTF-7-declared payload built entirely from 7-bit ASCII bytes must contain no NUL bytes")
+        XCTAssertNotNil(String(data: data, encoding: .utf8),
+                         "sanity check: all bytes are 7-bit ASCII, so this must decode as valid UTF-8, reproducing the reported bypass of the old UTF-8-validity check")
+        XCTAssertNil(data.range(of: Data("<!DOCTYPE".utf8)),
+                     "sanity check: the DOCTYPE keyword is shift-encoded, so the literal UTF-8 <!DOCTYPE byte sequence must not appear, reproducing the reported bypass of the old DOCTYPE byte-scan")
+
+        XCTAssertThrowsError(try KdbxXmlCoder.decode(data) { $0 }) { error in
+            XCTAssertEqual(error as? KdbxXmlCoderError, .disallowedEncodingDeclaration,
+                           "a declared encoding other than UTF-8 in the XML prolog must be rejected before the DOCTYPE scan or XML parsing, regardless of what encoding is named")
+        }
+    }
+
     /// `Times/*` values are base64 of an attacker/file-controlled little-endian
     /// Int64. A value near Int64.min, once combined with the KDBX epoch offset,
     /// would overflow plain `Int64` subtraction and trap (crash the process).

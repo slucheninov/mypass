@@ -21,6 +21,16 @@ enum KdbxXmlCoderError: Error, Equatable {
     /// mandates a UTF-8 XML payload; rejecting anything else closes an encoding
     /// bypass of the `<!DOCTYPE` byte-scan below. See `decode(_:deobfuscate:)`.
     case unsupportedEncoding
+    /// The XML prolog declares a character `encoding="..."` other than UTF-8
+    /// (e.g. `encoding="UTF-7"`). Even though the raw bytes were just confirmed
+    /// to be valid UTF-8 with no NUL bytes, an explicit non-UTF-8 `encoding=`
+    /// declaration is the ONLY lever by which libxml2 can subsequently
+    /// reinterpret those same bytes under a different codec (UTF-7 has no
+    /// BOM/byte-pattern signature, so it is only reachable this way). This is
+    /// the root-cause fix: it closes the entire "declare a non-UTF-8 encoding
+    /// name in the prolog" bypass class, not just UTF-7. See
+    /// `decode(_:deobfuscate:)`.
+    case disallowedEncodingDeclaration
 }
 
 /// Encodes/decodes the KDBX4 XML tree (`KeePassFile/Root/Group/Entry/String/...`).
@@ -108,8 +118,45 @@ enum KdbxXmlCoder {
         guard !xml.contains(0) else {
             throw KdbxXmlCoderError.unsupportedEncoding
         }
-        guard String(data: xml, encoding: .utf8) != nil else {
+        guard let xmlText = String(data: xml, encoding: .utf8) else {
             throw KdbxXmlCoderError.unsupportedEncoding
+        }
+
+        // Root-cause fix (round 6): the raw bytes are now confirmed to be
+        // valid UTF-8 with no NUL bytes. The ONLY remaining way for libxml2 to
+        // subsequently interpret this same UTF-8 byte stream under a
+        // *different* text encoding (e.g. UTF-7, EBCDIC-via-declared-charset,
+        // etc.) is an explicit `encoding="..."` attribute in the leading XML
+        // declaration naming that encoding: unlike UTF-16/UTF-32, UTF-7 has no
+        // BOM or detectable byte-pattern signature, so libxml2 only ever
+        // switches to it via this declared name. `XMLDocument(data:options:)`
+        // receives nothing but these raw bytes (no side-channel/external
+        // metadata), so closing this one lever closes the entire encoding-
+        // declaration bypass class in one place, rather than adding another
+        // per-encoding heuristic. A conforming XML declaration must be the
+        // very first thing in the document, so only the leading slice needs
+        // scanning; 512 chars is comfortably more than any real `<?xml ...?>`
+        // prolog requires.
+        let prologScanWindow = xmlText.prefix(512)
+        if let prologRange = prologScanWindow.range(of: "<?xml", options: [.caseInsensitive]) {
+            let prologTail = String(prologScanWindow[prologRange.lowerBound...])
+            if let encodingRegex = try? NSRegularExpression(
+                pattern: "encoding\\s*=\\s*[\"']([^\"']+)[\"']",
+                options: [.caseInsensitive]
+            ) {
+                let nsTail = prologTail as NSString
+                if let match = encodingRegex.firstMatch(
+                    in: prologTail,
+                    options: [],
+                    range: NSRange(location: 0, length: nsTail.length)
+                ), match.numberOfRanges > 1 {
+                    let declaredEncoding = nsTail.substring(with: match.range(at: 1))
+                    let normalized = declaredEncoding.lowercased().replacingOccurrences(of: "-", with: "")
+                    if normalized != "utf8" {
+                        throw KdbxXmlCoderError.disallowedEncodingDeclaration
+                    }
+                }
+            }
         }
 
         // Reject any DOCTYPE declaration outright, before handing the data to
