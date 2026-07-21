@@ -352,6 +352,72 @@ final class KdbxXmlCoderTests: XCTestCase {
         }
     }
 
+    /// Reproduces the specific bypass a reviewer found in the previous round's
+    /// fix: a BOM-LESS UTF-16LE encoding of pure ASCII-range content. Unlike
+    /// `String(_:).data(using: .utf16)`, which always prepends a BOM, this
+    /// hand-builds the byte stream by interleaving each ASCII byte with a raw
+    /// `0x00` (no BOM at all). Every individual byte in that stream —
+    /// including the `0x00`s — is independently a valid single-byte UTF-8 code
+    /// point, so `String(data:encoding:.utf8)` on it wrongly returns non-nil,
+    /// and the `<!DOCTYPE` byte-scan never matches (the nulls break up the
+    /// pattern) — meaning the OLD code (UTF-8-validity check + DOCTYPE
+    /// byte-scan) would let this straight through to `XMLDocument`, which
+    /// still auto-detects UTF-16 from the byte pattern alone (no BOM
+    /// required) and fully expands the internal "billion laughs" entities.
+    /// decode() must now reject this via the NUL-byte check, before the (now
+    /// insufficient-alone) UTF-8 check or the DOCTYPE scan even run.
+    func testDecodeRejectsBomlessUtf16LeEncodedPayloadBypassingDoctypeScan() {
+        let lolEntities = (1...9).map { level -> String in
+            if level == 1 {
+                return "<!ENTITY lol1 \"lol\">"
+            }
+            let previous = "&lol\(level - 1);&lol\(level - 1);"
+            return "<!ENTITY lol\(level) \"\(previous)\">"
+        }.joined(separator: "\n  ")
+
+        let billionLaughsXml = """
+        <?xml version="1.0" encoding="UTF-16"?>
+        <!DOCTYPE KeePassFile [
+          \(lolEntities)
+        ]>
+        <KeePassFile>
+          <Root>
+            <Group>
+              <UUID>&lol9;</UUID>
+              <Name>&lol9;</Name>
+            </Group>
+          </Root>
+        </KeePassFile>
+        """
+
+        // Hand-build BOM-less UTF-16LE: each ASCII byte followed by a raw 0x00,
+        // with NO leading BOM (0xFF 0xFE) prepended. `String.data(using: .utf16)`
+        // cannot produce this shape — it always writes a BOM — so this is
+        // constructed manually to genuinely exercise the BOM-less path.
+        let data = Data(billionLaughsXml.utf8.flatMap { [$0, 0x00] })
+
+        // Empirically prove this payload is a genuine reproduction of the
+        // reported bypass against the OLD two-check code, i.e. that it is not
+        // accidentally caught for some unrelated reason:
+        // 1. It must NOT contain the contiguous UTF-8 "<!DOCTYPE" byte sequence
+        //    (so the old DOCTYPE byte-scan alone would have missed it).
+        XCTAssertNil(data.range(of: Data("<!DOCTYPE".utf8)),
+                     "sanity check: BOM-less UTF-16LE bytes must not contain a literal UTF-8 <!DOCTYPE sequence")
+        // 2. `String(data:encoding:.utf8)` must (wrongly) succeed on it, proving
+        //    the old "reject non-UTF-8" check alone would NOT have caught this.
+        XCTAssertNotNil(String(data: data, encoding: .utf8),
+                         "sanity check: this NUL-interleaved byte stream must superficially decode as valid UTF-8, reproducing the reported bypass")
+        // 3. It does contain raw NUL bytes, which is exactly what the new check
+        //    keys on.
+        XCTAssertTrue(data.contains(0),
+                       "sanity check: BOM-less UTF-16LE of ASCII content must be saturated with NUL bytes")
+
+        XCTAssertThrowsError(try KdbxXmlCoder.decode(data) { $0 }) { error in
+            XCTAssertEqual(error as? KdbxXmlCoderError, .unsupportedEncoding,
+                           "BOM-less UTF-16 payloads (which look like valid UTF-8 to the old check) must be rejected via the NUL-byte check before the DOCTYPE scan or XML parsing")
+        }
+    }
+
     /// `Times/*` values are base64 of an attacker/file-controlled little-endian
     /// Int64. A value near Int64.min, once combined with the KDBX epoch offset,
     /// would overflow plain `Int64` subtraction and trap (crash the process).

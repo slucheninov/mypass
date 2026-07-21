@@ -85,6 +85,29 @@ enum KdbxXmlCoder {
         // generically (also naturally covers UTF-32 and any other alternate
         // encoding) rather than trying to enumerate every non-UTF-8 encoding
         // name or BOM signature individually.
+        //
+        // That `String(data:encoding:.utf8)` check alone is NOT sufficient,
+        // though: a BOM-less UTF-16 (or UTF-32) encoding of pure ASCII-range
+        // content is a byte stream where every individual byte — including the
+        // `0x00` bytes interleaved between/around each ASCII character — is
+        // independently a valid single-byte UTF-8 code point (0x00-0x7F all
+        // are). So `String(data:encoding:.utf8)` on such bytes wrongly
+        // succeeds, the `<!DOCTYPE` byte-scan below fails to match (the nulls
+        // break up the contiguous ASCII pattern), and libxml2's own encoding
+        // auto-detection (from byte patterns alone, no BOM required) still
+        // parses it as UTF-16/UTF-32 and fully expands any internal DTD
+        // entities — reproducing the exact billion-laughs DoS this whole
+        // check exists to prevent. Reject any raw NUL byte outright, before
+        // both the UTF-8 check and the DOCTYPE scan: the XML spec disallows a
+        // literal NUL character in well-formed XML/UTF-8 text, so no real
+        // KDBX4 payload (always written UTF-8 by conforming writers,
+        // including this codec's own `encode()`) ever legitimately contains
+        // one, whereas any BOM-less UTF-16/UTF-32 encoding of ASCII content is
+        // saturated with NUL bytes (roughly half, or three-quarters for
+        // UTF-32).
+        guard !xml.contains(0) else {
+            throw KdbxXmlCoderError.unsupportedEncoding
+        }
         guard String(data: xml, encoding: .utf8) != nil else {
             throw KdbxXmlCoderError.unsupportedEncoding
         }
