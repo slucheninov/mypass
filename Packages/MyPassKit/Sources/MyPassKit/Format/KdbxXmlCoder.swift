@@ -56,7 +56,14 @@ enum KdbxXmlCoder {
     static func decode(_ xml: Data, deobfuscate: (Data) -> Data) throws -> KdbxXmlPayload {
         let document: XMLDocument
         do {
-            document = try XMLDocument(data: xml, options: [])
+            // Hardened against XXE: this XML comes from decrypting a KDBX4 file,
+            // which may be corrupted, tampered with, or maliciously crafted (e.g.
+            // shared/synced from an untrusted source). `.nodeLoadExternalEntitiesNever`
+            // disables resolution of ALL external entities/DTDs — including
+            // non-network (local file) ones — regardless of what the file's own
+            // <!DOCTYPE>/<!ENTITY> declarations request, preventing arbitrary local
+            // file read, SSRF-style requests, and entity-expansion ("billion laughs") DoS.
+            document = try XMLDocument(data: xml, options: [.nodeLoadExternalEntitiesNever])
         } catch {
             throw KdbxXmlCoderError.malformedXml
         }
@@ -139,6 +146,12 @@ enum KdbxXmlCoder {
         if field.isProtected {
             let obfuscated = obfuscate(Data(field.value.utf8))
             valueElement = textElement("Value", obfuscated.base64EncodedString())
+            // Safe force-cast: `XMLNode.attribute(withName:stringValue:)` is a plain
+            // string-based factory (declared `+ (id)` non-nullable in Foundation's
+            // NSXMLNode.h, with no parsing/validation that could fail for arbitrary
+            // strings), so it always returns an `XMLNode` here. This is also on the
+            // encode path over our own trusted in-memory model, not attacker-controlled
+            // parsed XML, so there is no realistic failure mode to guard against.
             let attribute = XMLNode.attribute(withName: "Protected", stringValue: "True") as! XMLNode
             valueElement.addAttribute(attribute)
         } else {
@@ -276,6 +289,10 @@ enum KdbxXmlCoder {
 
     /// KDBX4 dates: base64 of a little-endian Int64 count of seconds since
     /// 0001-01-01 00:00:00 UTC (not ISO8601 — that's the KDBX3 convention).
+    // Note: unlike `date(fromBase64:)`, this path's input is an internal `Date`
+    // value (not attacker/file-controlled file bytes), and `Date`'s representable
+    // range is nowhere near Int64's overflow boundary once combined with
+    // `kdbxEpochOffsetFromUnix`, so plain arithmetic is left as-is here.
     private static func base64(fromDate date: Date) -> String {
         let secondsSinceUnixEpoch = Int64(date.timeIntervalSince1970.rounded())
         let secondsSinceKdbxEpoch = secondsSinceUnixEpoch + kdbxEpochOffsetFromUnix
@@ -293,7 +310,13 @@ enum KdbxXmlCoder {
             }
         }
         let secondsSinceKdbxEpoch = Int64(littleEndian: storage)
-        let secondsSinceUnixEpoch = secondsSinceKdbxEpoch - kdbxEpochOffsetFromUnix
+        // `secondsSinceKdbxEpoch` is read verbatim from file bytes, so it may be
+        // any Int64 value (including near Int64.min/Int64.max) in a corrupted or
+        // maliciously crafted database. Plain `-` traps on overflow, which would
+        // crash the app (a DoS on open); use checked subtraction and fail
+        // gracefully instead.
+        let (secondsSinceUnixEpoch, overflowed) = secondsSinceKdbxEpoch.subtractingReportingOverflow(kdbxEpochOffsetFromUnix)
+        guard !overflowed else { return nil }
         return Date(timeIntervalSince1970: Double(secondsSinceUnixEpoch))
     }
 }

@@ -214,4 +214,84 @@ final class KdbxXmlCoderTests: XCTestCase {
             }
         }
     }
+
+    // MARK: - Security regressions
+
+    /// A maliciously crafted KDBX4 XML payload declaring an external entity
+    /// pointing at a local file. If `decode()` resolved external entities (XXE),
+    /// the referenced file's contents would end up substituted into the parsed
+    /// document's text content. This proves that does NOT happen: decode()
+    /// either throws, or (if it tolerates the unknown elements/DTD) produces a
+    /// result that provably does not contain the sentinel file's contents.
+    func testDecodeDoesNotResolveExternalEntitiesXXE() throws {
+        let sentinelFile = FileManager.default.temporaryDirectory
+            .appendingPathComponent("kdbx-xxe-sentinel-\(UUID().uuidString).txt")
+        let sentinelContents = "XXE-SENTINEL-\(UUID().uuidString)"
+        try sentinelContents.write(to: sentinelFile, atomically: true, encoding: .utf8)
+        defer { try? FileManager.default.removeItem(at: sentinelFile) }
+
+        let maliciousXml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE KeePassFile [
+          <!ENTITY xxe SYSTEM "file://\(sentinelFile.path)">
+        ]>
+        <KeePassFile>
+          <Root>
+            <Group>
+              <UUID>&xxe;</UUID>
+              <Name>&xxe;</Name>
+            </Group>
+          </Root>
+        </KeePassFile>
+        """
+        let data = Data(maliciousXml.utf8)
+
+        do {
+            let decoded = try KdbxXmlCoder.decode(data) { $0 }
+            // If decoding succeeded at all, the entity must NOT have been expanded
+            // into the sentinel file's contents anywhere in the decoded payload.
+            XCTAssertNotEqual(decoded.rootGroup.name, sentinelContents)
+            XCTAssertFalse(decoded.rootGroup.name.contains(sentinelContents))
+        } catch {
+            // Throwing (e.g. malformedXml because the unresolved entity reference
+            // makes the document invalid) is an acceptable, safe outcome too.
+            XCTAssertTrue(error is KdbxXmlCoderError, "expected a typed KdbxXmlCoderError, got \(error)")
+        }
+    }
+
+    /// `Times/*` values are base64 of an attacker/file-controlled little-endian
+    /// Int64. A value near Int64.min, once combined with the KDBX epoch offset,
+    /// would overflow plain `Int64` subtraction and trap (crash the process).
+    /// decode() must instead throw a typed error.
+    func testDecodeDateNearInt64MinThrowsInsteadOfCrashing() {
+        var extreme = Int64.min.littleEndian
+        let base64Extreme = withUnsafeBytes(of: &extreme) { Data($0) }.base64EncodedString()
+
+        let uuid = UUID()
+        let uuidBase64 = withUnsafeBytes(of: uuid.uuid) { Data($0) }.base64EncodedString()
+
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <KeePassFile>
+          <Root>
+            <Group>
+              <UUID>\(uuidBase64)</UUID>
+              <Name>Root</Name>
+              <Times>
+                <CreationTime>\(base64Extreme)</CreationTime>
+                <LastModificationTime>\(base64Extreme)</LastModificationTime>
+                <LocationChanged>\(base64Extreme)</LocationChanged>
+              </Times>
+            </Group>
+          </Root>
+        </KeePassFile>
+        """
+        let data = Data(xml.utf8)
+
+        XCTAssertThrowsError(try KdbxXmlCoder.decode(data) { $0 }) { error in
+            guard case .missingRequiredElement = error as? KdbxXmlCoderError else {
+                return XCTFail("expected missingRequiredElement (date overflow treated as unparsable), got \(error)")
+            }
+        }
+    }
 }
