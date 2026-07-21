@@ -259,6 +259,48 @@ final class KdbxXmlCoderTests: XCTestCase {
         }
     }
 
+    /// A "billion laughs"-style payload: only internally-defined, recursively
+    /// nested `<!ENTITY>` declarations, with NO external (SYSTEM/PUBLIC)
+    /// reference at all. `.nodeLoadExternalEntitiesNever` (the mitigation for
+    /// the XXE test above) only blocks resolution of EXTERNAL entities — it
+    /// does nothing to stop this kind of internal entity expansion, which can
+    /// blow up a tiny document into gigabytes of memory. Before the DOCTYPE
+    /// rejection fix, this payload would parse and its innermost element's
+    /// text content would fully expand to 2^9 = 512 repetitions of "lol" (small
+    /// here only so the test itself stays fast and doesn't OOM the test
+    /// runner — the exploit scales the same way to many more expansion levels).
+    /// decode() must now throw `.disallowedDoctype` before any expansion happens.
+    func testDecodeRejectsBillionLaughsStyleInternalEntityExpansion() {
+        let lolEntities = (1...9).map { level -> String in
+            if level == 1 {
+                return "<!ENTITY lol1 \"lol\">"
+            }
+            let previous = "&lol\(level - 1);&lol\(level - 1);"
+            return "<!ENTITY lol\(level) \"\(previous)\">"
+        }.joined(separator: "\n  ")
+
+        let billionLaughsXml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE KeePassFile [
+          \(lolEntities)
+        ]>
+        <KeePassFile>
+          <Root>
+            <Group>
+              <UUID>&lol9;</UUID>
+              <Name>&lol9;</Name>
+            </Group>
+          </Root>
+        </KeePassFile>
+        """
+        let data = Data(billionLaughsXml.utf8)
+
+        XCTAssertThrowsError(try KdbxXmlCoder.decode(data) { $0 }) { error in
+            XCTAssertEqual(error as? KdbxXmlCoderError, .disallowedDoctype,
+                           "any <!DOCTYPE, including internal-entity-only ones with no external reference, must be rejected before parsing/expansion")
+        }
+    }
+
     /// `Times/*` values are base64 of an attacker/file-controlled little-endian
     /// Int64. A value near Int64.min, once combined with the KDBX epoch offset,
     /// would overflow plain `Int64` subtraction and trap (crash the process).

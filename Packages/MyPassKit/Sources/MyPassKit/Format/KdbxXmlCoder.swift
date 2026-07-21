@@ -11,6 +11,11 @@ struct KdbxXmlPayload: Equatable {
 enum KdbxXmlCoderError: Error, Equatable {
     case malformedXml
     case missingRequiredElement(String)
+    /// The XML payload contains a `<!DOCTYPE` declaration. KDBX4's real XML
+    /// payload (as written by KeePassXC and other conformant implementations)
+    /// never legitimately contains a DOCTYPE/DTD, so this is rejected outright
+    /// rather than parsed. See `decode(_:deobfuscate:)` for why.
+    case disallowedDoctype
 }
 
 /// Encodes/decodes the KDBX4 XML tree (`KeePassFile/Root/Group/Entry/String/...`).
@@ -53,16 +58,35 @@ enum KdbxXmlCoder {
         return document.xmlData
     }
 
+    /// The literal ASCII byte sequence that opens an XML DOCTYPE declaration.
+    /// Checked verbatim (case-sensitively) against the raw payload bytes before
+    /// any parsing occurs — this is how DOCTYPE declarations are written in XML;
+    /// there is no case-insensitive spelling to worry about.
+    private static let doctypeMarker = Data("<!DOCTYPE".utf8)
+
     static func decode(_ xml: Data, deobfuscate: (Data) -> Data) throws -> KdbxXmlPayload {
+        // Reject any DOCTYPE declaration outright, before handing the data to
+        // the XML parser. This is a KDBX4 file that may be corrupted, tampered
+        // with, or maliciously crafted (e.g. shared/synced from an untrusted
+        // source), and a real KDBX4 XML payload (as written by KeePassXC and
+        // other conformant implementations) never legitimately contains a
+        // DOCTYPE/DTD. `.nodeLoadExternalEntitiesNever` below prevents the
+        // parser from *resolving* EXTERNAL (SYSTEM/PUBLIC) entities, but it does
+        // NOT stop DTD-internal, recursively-nested `<!ENTITY>` definitions from
+        // being expanded ("billion laughs" DoS) — that attack needs no external
+        // reference at all. Refusing any DOCTYPE up front closes both the
+        // internal-entity-expansion DoS and any residual external-entity path,
+        // in one place, without depending on parser-specific option semantics.
+        if xml.range(of: doctypeMarker) != nil {
+            throw KdbxXmlCoderError.disallowedDoctype
+        }
+
         let document: XMLDocument
         do {
-            // Hardened against XXE: this XML comes from decrypting a KDBX4 file,
-            // which may be corrupted, tampered with, or maliciously crafted (e.g.
-            // shared/synced from an untrusted source). `.nodeLoadExternalEntitiesNever`
-            // disables resolution of ALL external entities/DTDs — including
-            // non-network (local file) ones — regardless of what the file's own
-            // <!DOCTYPE>/<!ENTITY> declarations request, preventing arbitrary local
-            // file read, SSRF-style requests, and entity-expansion ("billion laughs") DoS.
+            // Defense in depth against XXE (SYSTEM/PUBLIC external entities):
+            // even though DOCTYPEs are already rejected above, keep this so a
+            // parser-level bypass of the textual check above still can't reach
+            // an external resource.
             document = try XMLDocument(data: xml, options: [.nodeLoadExternalEntitiesNever])
         } catch {
             throw KdbxXmlCoderError.malformedXml
