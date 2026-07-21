@@ -40,6 +40,16 @@ private enum KdbxHeaderFieldID {
     static let publicCustomData: UInt8 = 12
 }
 
+/// Well-known KDF UUIDs stored in `kdfParameters["$UUID"]`.
+enum KdbxKdfUUID {
+    static let aesKdf = Data([0x7C, 0x02, 0xBB, 0x82, 0x79, 0xA7, 0x4A, 0xC0,
+                              0x92, 0x7D, 0x11, 0x4A, 0x00, 0x64, 0x82, 0x38])
+    static let argon2d = Data([0xEF, 0x63, 0x6D, 0xDF, 0x8C, 0x29, 0x44, 0x4B,
+                               0x91, 0xF7, 0xA9, 0xA4, 0x03, 0xE3, 0x0A, 0x0C])
+    static let argon2id = Data([0x9E, 0x29, 0x8B, 0x19, 0x56, 0xDB, 0x47, 0x73,
+                                0xB2, 0x3D, 0xFC, 0x3E, 0xC6, 0xF0, 0xA1, 0xE6])
+}
+
 struct KdbxOuterHeader: Equatable {
     var cipher: KdbxCipher
     var compression: KdbxCompression
@@ -145,5 +155,40 @@ struct KdbxOuterHeader: Equatable {
                 break // Unknown field ID — ignored for forward compatibility.
             }
         }
+    }
+}
+
+extension KdbxOuterHeader {
+    /// Serializes this header back to the outer-header TLV byte stream
+    /// (field ID (1 byte) + Int32 little-endian length + value, repeated),
+    /// terminated by the EndOfHeader field. Does NOT include the
+    /// Signature/Version prefix (Task 4's `KdbxSignature`) — callers that
+    /// need `HeaderSHA256`/`HeaderHMAC-SHA256` over the full byte range must
+    /// prepend that separately.
+    func serialize() -> Data {
+        var out = Data()
+
+        func appendField(id: UInt8, value: Data) {
+            out.append(id)
+            out.append(contentsOf: withUnsafeBytes(of: Int32(value.count).littleEndian) { Data($0) })
+            out.append(value)
+        }
+
+        let cipherUUID = (cipher == .aes256) ? KdbxCipher.aes256UUID : KdbxCipher.chaCha20UUID
+        appendField(id: KdbxHeaderFieldID.cipherID, value: cipherUUID)
+
+        let compressionFlag: Int32 = (compression == .gzip) ? 1 : 0
+        appendField(id: KdbxHeaderFieldID.compressionFlags, value: withUnsafeBytes(of: compressionFlag.littleEndian) { Data($0) })
+
+        appendField(id: KdbxHeaderFieldID.masterSeed, value: masterSeed)
+        appendField(id: KdbxHeaderFieldID.encryptionIV, value: encryptionIV)
+        appendField(id: KdbxHeaderFieldID.kdfParameters, value: kdfParameters.encode())
+
+        if let publicCustomData {
+            appendField(id: KdbxHeaderFieldID.publicCustomData, value: publicCustomData.encode())
+        }
+
+        appendField(id: KdbxHeaderFieldID.endOfHeader, value: Data([0x0D, 0x0A, 0x0D, 0x0A]))
+        return out
     }
 }
