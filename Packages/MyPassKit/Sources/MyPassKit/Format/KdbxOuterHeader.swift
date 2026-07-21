@@ -53,8 +53,17 @@ struct KdbxOuterHeader: Equatable {
     /// header verification (Task 7) is computed over.
     var rawHeaderBytes: Data
 
-    static func parse(from data: Data, startingAt offset: inout Data.Index) throws -> KdbxOuterHeader {
-        let headerStart = offset
+    /// - Parameters:
+    ///   - offset: Position (in/out) of the first outer-header TLV field. Advanced past
+    ///     the EndOfHeader field on success.
+    ///   - rawHeaderStart: Position in `data` where the raw header capture used for
+    ///     `rawHeaderBytes` should begin. Pass the index where Signature+Version parsing
+    ///     began (i.e. the very start of the file buffer) so `rawHeaderBytes` spans
+    ///     Signature(8) + Version(4) + OuterHeaderFields through EndOfHeader inclusive,
+    ///     as required for KDBX4 HeaderSHA256/HeaderHMAC-SHA256 verification (Task 7).
+    ///     Defaults to `offset` (i.e. no signature/version prefix) when not provided.
+    static func parse(from data: Data, startingAt offset: inout Data.Index, rawHeaderStart: Data.Index? = nil) throws -> KdbxOuterHeader {
+        let headerStart = rawHeaderStart ?? offset
         var cipher: KdbxCipher?
         var compression: KdbxCompression?
         var masterSeed: Data?
@@ -86,7 +95,17 @@ struct KdbxOuterHeader: Equatable {
             case KdbxHeaderFieldID.endOfHeader:
                 let rawHeaderBytes = Data(data[headerStart..<offset])
                 guard let cipher, let masterSeed, let encryptionIV, let kdfParameters else {
-                    throw KdbxHeaderError.missingRequiredField(KdbxHeaderFieldID.cipherID)
+                    let missingFieldID: UInt8
+                    if cipher == nil {
+                        missingFieldID = KdbxHeaderFieldID.cipherID
+                    } else if masterSeed == nil {
+                        missingFieldID = KdbxHeaderFieldID.masterSeed
+                    } else if encryptionIV == nil {
+                        missingFieldID = KdbxHeaderFieldID.encryptionIV
+                    } else {
+                        missingFieldID = KdbxHeaderFieldID.kdfParameters
+                    }
+                    throw KdbxHeaderError.missingRequiredField(missingFieldID)
                 }
                 return KdbxOuterHeader(
                     cipher: cipher,

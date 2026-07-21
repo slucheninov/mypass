@@ -50,6 +50,16 @@ final class KdbxOuterHeaderTests: XCTestCase {
     }
 
     func testParsesMinimalOuterHeader() throws {
+        // Full file prefix: Signature(8) + Version(4), as it appears on disk, since
+        // rawHeaderBytes must span Signature+Version+OuterHeaderFields through
+        // EndOfHeader inclusive (needed by Task 7's HeaderSHA256/HMAC verification).
+        var fileData = Data()
+        fileData.append(contentsOf: withUnsafeBytes(of: UInt32(0x9AA2D903).littleEndian) { Data($0) })
+        fileData.append(contentsOf: withUnsafeBytes(of: UInt32(0xB54BFB67).littleEndian) { Data($0) })
+        fileData.append(contentsOf: withUnsafeBytes(of: UInt16(0x0000).littleEndian) { Data($0) }) // minor
+        fileData.append(contentsOf: withUnsafeBytes(of: UInt16(0x0004).littleEndian) { Data($0) }) // major
+        let signatureAndVersionLength = fileData.count
+
         var body = Data()
         // CipherID (2): AES256 UUID
         let aesUUID = Data([0x31, 0xC1, 0xF2, 0xE6, 0xBF, 0x71, 0x43, 0x50,
@@ -69,17 +79,20 @@ final class KdbxOuterHeaderTests: XCTestCase {
         // EndOfHeader (0)
         appendField(&body, id: 0, value: Data([0x0D, 0x0A, 0x0D, 0x0A]))
 
-        var offset = body.startIndex
-        let header = try KdbxOuterHeader.parse(from: body, startingAt: &offset)
+        fileData.append(body)
+
+        let fileStart = fileData.startIndex
+        var offset = fileData.index(fileStart, offsetBy: signatureAndVersionLength)
+        let header = try KdbxOuterHeader.parse(from: fileData, startingAt: &offset, rawHeaderStart: fileStart)
 
         XCTAssertEqual(header.cipher, .aes256)
         XCTAssertEqual(header.compression, .gzip)
         XCTAssertEqual(header.masterSeed, Data(repeating: 0xAB, count: 32))
         XCTAssertEqual(header.encryptionIV, Data(repeating: 0xCD, count: 16))
-        XCTAssertEqual(offset, body.endIndex)
-        // rawHeaderBytes must cover the entire header INCLUDING the EndOfHeader TLV,
-        // since that's what's hashed/HMAC'd in the real KDBX4 format.
-        XCTAssertEqual(header.rawHeaderBytes, body)
+        XCTAssertEqual(offset, fileData.endIndex)
+        // rawHeaderBytes must cover Signature(8) + Version(4) + OuterHeaderFields, including
+        // the EndOfHeader TLV, since that's what's hashed/HMAC'd in the real KDBX4 format.
+        XCTAssertEqual(header.rawHeaderBytes, fileData)
     }
 
     func testChaCha20CipherRecognized() throws {
@@ -201,6 +214,45 @@ final class KdbxOuterHeaderTests: XCTestCase {
             guard case KdbxHeaderError.missingRequiredField = error else {
                 return XCTFail("expected missingRequiredField, got \(error)")
             }
+        }
+    }
+
+    func testMissingMasterSeedReportsCorrectFieldID() {
+        // Cipher IS present, but MasterSeed (field ID 4) is missing. Regression test:
+        // the thrown error must report the field that's actually missing (4), not
+        // unconditionally cipherID (2).
+        var body = Data()
+        let aesUUID = Data([0x31, 0xC1, 0xF2, 0xE6, 0xBF, 0x71, 0x43, 0x50,
+                             0xBE, 0x58, 0x05, 0x21, 0x6A, 0xFC, 0x5A, 0xFF])
+        appendField(&body, id: 2, value: aesUUID)
+        appendField(&body, id: 0, value: Data([0x0D, 0x0A, 0x0D, 0x0A]))
+
+        var offset = body.startIndex
+        XCTAssertThrowsError(try KdbxOuterHeader.parse(from: body, startingAt: &offset)) { error in
+            guard case KdbxHeaderError.missingRequiredField(let fieldID) = error else {
+                return XCTFail("expected missingRequiredField, got \(error)")
+            }
+            XCTAssertEqual(fieldID, 4, "expected MasterSeed (4) to be reported missing, got \(fieldID)")
+        }
+    }
+
+    func testMissingKdfParametersReportsCorrectFieldID() {
+        // Cipher, MasterSeed, and EncryptionIV are present; only KdfParameters (field
+        // ID 11) is missing. The error must report 11, not cipherID (2).
+        var body = Data()
+        let aesUUID = Data([0x31, 0xC1, 0xF2, 0xE6, 0xBF, 0x71, 0x43, 0x50,
+                             0xBE, 0x58, 0x05, 0x21, 0x6A, 0xFC, 0x5A, 0xFF])
+        appendField(&body, id: 2, value: aesUUID)
+        appendField(&body, id: 4, value: Data(repeating: 0xAB, count: 32))
+        appendField(&body, id: 7, value: Data(repeating: 0xCD, count: 16))
+        appendField(&body, id: 0, value: Data([0x0D, 0x0A, 0x0D, 0x0A]))
+
+        var offset = body.startIndex
+        XCTAssertThrowsError(try KdbxOuterHeader.parse(from: body, startingAt: &offset)) { error in
+            guard case KdbxHeaderError.missingRequiredField(let fieldID) = error else {
+                return XCTFail("expected missingRequiredField, got \(error)")
+            }
+            XCTAssertEqual(fieldID, 11, "expected KdfParameters (11) to be reported missing, got \(fieldID)")
         }
     }
 }
