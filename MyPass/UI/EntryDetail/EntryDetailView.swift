@@ -32,6 +32,7 @@ struct EntryDetailView: View {
     @EnvironmentObject var navigationState: NavigationState
     @State private var isPasswordRevealed = false
     @State private var now = Date()
+    @State private var showHistory = false
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
@@ -76,6 +77,7 @@ struct EntryDetailView: View {
                         Button("Copy", systemImage: "doc.on.doc") { copy(code) }
                     }
                 }
+                Button("История") { showHistory = true }
                 Button("Удалить", role: .destructive) {
                     vaultSession.mutate { database in
                         GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects, recycleBinGroupUUID: &database.recycleBinGroupUUID)
@@ -85,6 +87,14 @@ struct EntryDetailView: View {
             }
             .padding()
             .onReceive(timer) { now = $0 }
+            .sheet(isPresented: $showHistory) {
+                HistoryView(entry: entry) { updated in
+                    vaultSession.mutate { database in
+                        replaceEntry(updated, in: database.rootGroup)
+                    }
+                    showHistory = false
+                }
+            }
         } else {
             Text("Выберите запись")
         }
@@ -94,5 +104,15 @@ struct EntryDetailView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
         ClipboardAutoClear.schedule(value: value, after: 30, pasteboard: pasteboard, clock: clock)
+    }
+
+    private func replaceEntry(_ updated: KdbxEntry, in group: KdbxGroup) {
+        if let index = group.entries.firstIndex(where: { $0.uuid == updated.uuid }) {
+            group.entries[index] = updated
+            return
+        }
+        for subgroup in group.subgroups {
+            replaceEntry(updated, in: subgroup)
+        }
     }
 }
