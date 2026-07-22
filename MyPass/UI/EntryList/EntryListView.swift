@@ -10,7 +10,9 @@ struct EntryListView: View {
     }
 
     private var displayedEntries: [KdbxEntry] {
-        EntrySearch.entries(in: currentGroup, matching: navigationState.searchText)
+        navigationState.searchText.isEmpty
+            ? currentGroup.entries
+            : EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
     }
 
     var body: some View {

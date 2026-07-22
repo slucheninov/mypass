@@ -66,4 +66,34 @@ final class NavigationStateSearchTests: XCTestCase {
         let result = EntrySearch.entries(in: root, matching: "child")
         XCTAssertEqual(result.map(\.title), ["Child Entry"])
     }
+
+    // Regression test for the review finding on Task 12: EntryListView.displayedEntries
+    // originally passed `currentGroup` (the currently selected group) as the `in:` argument
+    // to EntrySearch.entries(in:matching:), instead of `rootGroup` (the true database root).
+    // Because EntrySearch.entries's internal findRoot(from:) is a documented no-op passthrough
+    // (KdbxGroup has no parent pointer by design), passing a subgroup as `in:` silently narrows
+    // "global" search to that subgroup's own subtree, missing sibling branches — contradicting
+    // the design spec's requirement that search be global across the whole database.
+    //
+    // This test pins EntrySearch's own correct multi-branch traversal behavior: given a root
+    // with two SIBLING subgroups, each holding a different entry, searching from the root must
+    // find an entry that lives only under the sibling branch not directly related to the first.
+    // NOTE: this cannot exercise the actual regression at the EntryListView call-site level
+    // (passing rootGroup vs. currentGroup) directly, since EntryListView is a SwiftUI view with
+    // no XCTest target here. It documents the correct EntrySearch behavior the fix at the
+    // call site (EntryListView.displayedEntries) now correctly relies on, so that an accidental
+    // revert of that call-site fix is easier to diagnose against this pinned expectation.
+    func testEntriesInRootFindsEntryInSiblingSubgroupNotJustSelectedBranch() {
+        let now = Date()
+        let entryInFirstSubgroup = makeEntry(title: "Alpha Entry")
+        let firstSubgroup = KdbxGroup(uuid: UUID(), name: "First", iconID: 0, creationTime: now, lastModificationTime: now, locationChanged: now, entries: [entryInFirstSubgroup], subgroups: [])
+
+        let entryInSiblingSubgroup = makeEntry(title: "Beta Entry", login: "beta-user")
+        let siblingSubgroup = KdbxGroup(uuid: UUID(), name: "Sibling", iconID: 0, creationTime: now, lastModificationTime: now, locationChanged: now, entries: [entryInSiblingSubgroup], subgroups: [])
+
+        let root = KdbxGroup(uuid: UUID(), name: "Root", iconID: 0, creationTime: now, lastModificationTime: now, locationChanged: now, entries: [], subgroups: [firstSubgroup, siblingSubgroup])
+
+        let result = EntrySearch.entries(in: root, matching: "beta")
+        XCTAssertEqual(result.map(\.title), ["Beta Entry"])
+    }
 }
