@@ -42,5 +42,10 @@ struct MyPassApp: App {
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
         }
+
+        Settings {
+            SettingsView()
+                .environmentObject(autoLockController)
+        }
     }
 }
