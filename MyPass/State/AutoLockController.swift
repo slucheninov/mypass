@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 
 protocol AutoLockClock {
     func scheduleTick(after seconds: TimeInterval, _ action: @escaping () -> Void) -> AutoLockCancelable
@@ -42,4 +43,21 @@ final class AutoLockController: ObservableObject {
     func lockNow() {
         vaultSession.lock()
     }
+}
+
+final class NSWorkspaceSleepObserver: AutoLockSleepObserving {
+    func onWillSleep(_ handler: @escaping () -> Void) -> AutoLockCancelable {
+        let token = NotificationCenter.default.addObserver(
+            forName: NSWorkspace.willSleepNotification,
+            object: nil,
+            queue: .main
+        ) { _ in handler() }
+        return NotificationTokenCancelable(token: token)
+    }
+}
+
+final class NotificationTokenCancelable: AutoLockCancelable {
+    private let token: NSObjectProtocol
+    init(token: NSObjectProtocol) { self.token = token }
+    func cancel() { NotificationCenter.default.removeObserver(token) }
 }
