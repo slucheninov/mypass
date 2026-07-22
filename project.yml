@@ -1,0 +1,34 @@
+name: MyPass
+options:
+  bundleIdPrefix: com.mypass
+packages:
+  MyPassKit:
+    path: Packages/MyPassKit
+targets:
+  MyPass:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: MyPass
+    dependencies:
+      - package: MyPassKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mypass.app
+        CODE_SIGN_ENTITLEMENTS: MyPass/MyPass.entitlements
+        MARKETING_VERSION: "0.1.0"
+    info:
+      path: MyPass/Info.plist
+      properties:
+        NSFaceIDUsageDescription: "MyPass использует Touch ID для быстрой разблокировки вашего хранилища паролей."
+        LSApplicationCategoryType: public.app-category.utilities
+  MyPassTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: MyPassTests
+    dependencies:
+      - package: MyPassKit
+      - target: MyPass
