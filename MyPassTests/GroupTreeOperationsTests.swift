@@ -68,31 +68,49 @@ final class GroupTreeOperationsTests: XCTestCase {
         XCTAssertEqual(root.subgroups.count, 1)
     }
 
-    /// Proves the fix for the identity-confusion bug: a decoy group that happens
-    /// to share the recycle bin's display name (but was never registered as the
-    /// bin via `recycleBinGroupUUID`) must NOT be mistaken for the real bin.
-    /// `recycleBinGroup` must track identity via `recycleBinGroupUUID`, not by
-    /// matching `name == recycleBinGroupName` against `root.subgroups` (the old,
-    /// buggy behavior this test would have failed against).
-    func testRecycleBinGroupIgnoresNameOnlyDecoyAndTracksRealBinByUUID() {
+    /// Proves that once a real bin's identity is tracked via
+    /// `recycleBinGroupUUID`, that tracked UUID takes priority over any
+    /// later name-only match. (Superseded by the legacy-file name-fallback
+    /// fix below: an *untracked* name match is now deliberately adopted as
+    /// the bin — see `testRecycleBinGroupAdoptsPreExistingNameMatchWhenUUIDUntracked`
+    /// — but a *tracked* UUID must still win over a same-named decoy that
+    /// shows up afterwards.)
+    func testRecycleBinGroupPrefersTrackedUUIDOverLaterNameOnlyDecoy() {
         let root = makeGroup(name: "Root")
-        // Decoy: created directly via addSubgroup, bypassing recycleBinGroup, so
-        // it is never registered in recycleBinGroupUUID despite sharing the name.
-        let decoy = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.recycleBinGroupName, to: root)
-
         var recycleBinUUID: UUID? = nil
         let realBin = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
 
-        XCTAssertNotEqual(realBin.uuid, decoy.uuid, "must create its own real bin, not mistake the name-only decoy for it")
-        XCTAssertEqual(root.subgroups.count, 2, "both the decoy and the newly created real bin should exist as separate groups")
-        XCTAssertEqual(recycleBinUUID, realBin.uuid)
+        // Decoy: a second group happens to share the bin's name, added
+        // directly via addSubgroup (bypassing recycleBinGroup) after the
+        // real bin's UUID is already tracked.
+        let decoy = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.recycleBinGroupName, to: root)
 
-        // A second call, now that recycleBinGroupUUID is set, must return the
-        // real bin again — not the decoy — even though both share the name.
-        let secondCall = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
-        XCTAssertEqual(secondCall.uuid, realBin.uuid)
-        XCTAssertNotEqual(secondCall.uuid, decoy.uuid)
-        XCTAssertEqual(root.subgroups.count, 2, "second call must not create yet another bin")
+        let resolved = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+
+        XCTAssertEqual(resolved.uuid, realBin.uuid, "tracked UUID must take priority over any later name-only match")
+        XCTAssertNotEqual(resolved.uuid, decoy.uuid)
+        XCTAssertEqual(root.subgroups.count, 2, "no additional bin created; the decoy remains a separate, untouched group")
+        XCTAssertEqual(recycleBinUUID, realBin.uuid)
+    }
+
+    /// Proves the legacy-file name fallback: a foreign/legacy file that already
+    /// has a "Корзина" group but no tracked `recycleBinGroupUUID` (e.g. a
+    /// KeePassXC-written file, or a MyPass file saved before RecycleBinUUID
+    /// existed) must have that pre-existing group adopted as the real bin,
+    /// not have a second, orphaned "Корзина" created alongside it.
+    func testRecycleBinGroupAdoptsPreExistingNameMatchWhenUUIDUntracked() {
+        let root = makeGroup(name: "Root")
+        // Simulates a legacy/foreign file: the group already exists directly
+        // under root, but was never registered via recycleBinGroup, so
+        // recycleBinGroupUUID starts out nil.
+        let existingBin = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.recycleBinGroupName, to: root)
+
+        var recycleBinUUID: UUID? = nil
+        let resolved = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+
+        XCTAssertEqual(resolved.uuid, existingBin.uuid, "must adopt the pre-existing name-matched group instead of creating a new one")
+        XCTAssertEqual(root.subgroups.count, 1, "no second bin group should be created")
+        XCTAssertEqual(recycleBinUUID, existingBin.uuid, "recycleBinGroupUUID must now track the adopted group")
     }
 
     func testSoftDeleteMovesEntryToRecycleBinAndRecordsDeletedObject() {

@@ -63,6 +63,10 @@ extension GroupTreeOperations {
         if let uuid = recycleBinGroupUUID, let existing = findGroup(uuid: uuid, in: root) {
             return existing
         }
+        if let existingByName = root.subgroups.first(where: { $0.name == recycleBinGroupName }) {
+            recycleBinGroupUUID = existingByName.uuid
+            return existingByName
+        }
         let created = addSubgroup(named: recycleBinGroupName, to: root)
         recycleBinGroupUUID = created.uuid
         return created
