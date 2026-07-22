@@ -7,17 +7,10 @@ enum CSVImportError: Error, Equatable {
 
 enum CSVImporter {
     private static let requiredColumns = ["title", "username", "password"]
-    private static let columnAliases: [String: String] = [
-        "title": "title",
-        "url": "url",
-        "username": "username",
-        "password": "password",
-        "notes": "notes"
-    ]
 
     static func parse(csvData: Data) throws -> [KdbxEntry] {
         guard let text = String(data: csvData, encoding: .utf8) else { return [] }
-        var lines = text.split(separator: "\n", omittingEmptySubsequences: true).map(String.init)
+        var lines = text.split(whereSeparator: \.isNewline).map(String.init)
         guard !lines.isEmpty else { return [] }
 
         let header = lines.removeFirst()
