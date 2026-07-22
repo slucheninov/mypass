@@ -95,4 +95,78 @@ final class VaultSessionTests: XCTestCase {
         XCTAssertEqual(db.rootGroup.entries.count, 1)
         XCTAssertEqual(db.rootGroup.entries.first?.title, "Mutated Entry")
     }
+
+    /// Regression guard for the persist() data race: `KdbxGroup` is a reference
+    /// type, so before the fix, `persist(_:)` captured `db` "by value" into a
+    /// background closure while `rootGroup` remained the same live object that
+    /// a subsequent `mutate()` call kept mutating on the main thread. Firing a
+    /// second `mutate()` immediately after the first — before the first
+    /// background save has necessarily completed — exercises exactly that
+    /// back-to-back scenario (rapid entry creation / CSV import / fast
+    /// drag-and-drop). This test can't deterministically force the exact race
+    /// window (GCD scheduling isn't that controllable from a test), but it does
+    /// prove that rapid repeated mutation never loses or corrupts either
+    /// entry, which is the practical regression guard available here.
+    func testRapidBackToBackMutationsBothPersistWithoutCorruption() throws {
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "correct-horse")
+
+        func makeEntry(title: String) -> KdbxEntry {
+            let now = Date()
+            var entry = KdbxEntry(
+                uuid: UUID(),
+                iconID: 0,
+                fields: [],
+                creationTime: now,
+                lastModificationTime: now,
+                lastAccessTime: now,
+                locationChanged: now,
+                history: []
+            )
+            entry.title = title
+            return entry
+        }
+
+        // Fire two mutations back-to-back with no delay in between, so the
+        // first persist()'s background snapshot-and-save may still be in
+        // flight when the second mutate() runs on the main thread.
+        session.mutate { database in
+            database.rootGroup.entries.append(makeEntry(title: "First Entry"))
+        }
+        session.mutate { database in
+            database.rootGroup.entries.append(makeEntry(title: "Second Entry"))
+        }
+
+        // In-memory state must reflect both mutations immediately regardless
+        // of the async saves still in flight.
+        guard case .unlocked(let inMemoryDb) = session.state else {
+            return XCTFail("expected unlocked state")
+        }
+        XCTAssertEqual(inMemoryDb.rootGroup.entries.count, 2)
+
+        // Poll a freshly-opened session against the same fileStore until the
+        // on-disk file reflects both entries (bounded retry, same pattern as
+        // the existing async-autosave test above).
+        // Each persist() performs a real Argon2id KDF derivation (64 MiB,
+        // 3 iterations) plus a disk write, and this test triggers three of
+        // them (unlock's first-run autosave + two mutate() autosaves) on a
+        // dedicated serial background queue, so completion can lag a little
+        // under system load. Poll with a generous-but-bounded retry budget
+        // rather than a fixed short timeout that would make this test flaky.
+        var sawBothEntries = false
+        for _ in 0..<100 {
+            if let data = try fileStore.load(),
+               let db = try? KdbxDatabase.open(data: data, password: "correct-horse"),
+               db.rootGroup.entries.count == 2 {
+                let titles = Set(db.rootGroup.entries.map { $0.title })
+                if titles == ["First Entry", "Second Entry"] {
+                    sawBothEntries = true
+                    break
+                }
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertTrue(sawBothEntries, "expected both rapid mutations to be reflected on disk within the timeout")
+        XCTAssertNil(session.lastSaveError)
+    }
 }

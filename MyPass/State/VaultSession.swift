@@ -30,6 +30,15 @@ final class VaultSession: ObservableObject {
     /// autosaved without re-prompting the user. Wiped on `lock()`.
     private var sessionPassword: String?
 
+    /// Dedicated *serial* background queue for `persist(_:)`'s KDF derivation +
+    /// disk write. A concurrent queue would let two back-to-back `persist`
+    /// calls race to completion in either order — e.g. a rapid second
+    /// `mutate()` could finish its background save before the first one does,
+    /// and the (now-stale) first save would then overwrite it, permanently
+    /// losing the second mutation on disk even though in-memory state was
+    /// correct. Serializing here guarantees writes land in invocation order.
+    private let persistQueue = DispatchQueue(label: "com.mypass.vaultsession.persist", qos: .userInitiated)
+
     init(fileStore: VaultFileStore) {
         self.fileStore = fileStore
     }
@@ -90,9 +99,17 @@ final class VaultSession: ObservableObject {
 
     private func persist(_ db: KdbxDatabase) {
         guard let sessionPassword else { return }
-        DispatchQueue.global(qos: .userInitiated).async { [fileStore] in
+        // Deep-copy the group tree synchronously (main thread, no concurrent
+        // writer yet) so the background save operates on a fully independent
+        // snapshot instead of the live, still-mutable `rootGroup` reference.
+        let snapshot = KdbxDatabase(
+            rootGroup: db.rootGroup.deepCopy(),
+            deletedObjects: db.deletedObjects,
+            recycleBinGroupUUID: db.recycleBinGroupUUID
+        )
+        persistQueue.async { [fileStore] in
             do {
-                let data = try db.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
+                let data = try snapshot.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
                 try fileStore.save(data: data)
                 DispatchQueue.main.async { [weak self] in
                     self?.lastSaveError = nil
