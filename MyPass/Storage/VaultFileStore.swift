@@ -3,6 +3,7 @@ import Foundation
 struct VaultFileStore {
     let directory: URL
     let backupCount: Int
+    private let queue = DispatchQueue(label: "com.tentens.mypass.VaultFileStore")
 
     init(directory: URL, backupCount: Int = 10) {
         self.directory = directory
@@ -18,16 +19,20 @@ struct VaultFileStore {
     }
 
     func load() throws -> Data? {
-        guard FileManager.default.fileExists(atPath: vaultURL.path) else {
-            return nil
+        try queue.sync {
+            guard FileManager.default.fileExists(atPath: vaultURL.path) else {
+                return nil
+            }
+            return try Data(contentsOf: vaultURL)
         }
-        return try Data(contentsOf: vaultURL)
     }
 
     func save(data: Data) throws {
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try backupCurrentVaultIfPresent()
-        try atomicWrite(data: data, to: vaultURL)
+        try queue.sync {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            try backupCurrentVaultIfPresent()
+            try atomicWrite(data: data, to: vaultURL)
+        }
     }
 
     private func atomicWrite(data: Data, to url: URL) throws {
