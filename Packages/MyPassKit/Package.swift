@@ -22,6 +22,11 @@ let package = Package(
             name: "MyPassKitTests",
             dependencies: ["MyPassKit", .product(name: "Sodium", package: "swift-sodium")],
             resources: [.copy("Fixtures")]
+        ),
+        .testTarget(
+            name: "MyPassKitPublicAPITests",
+            dependencies: ["MyPassKit"],
+            path: "Tests/MyPassKitPublicAPITests"
         )
     ]
 )

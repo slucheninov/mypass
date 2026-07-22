@@ -1,6 +1,6 @@
 import Foundation
 
-enum KdbxCipher: Equatable {
+public enum KdbxCipher: Equatable {
     case aes256
     case chaCha20
 
@@ -18,7 +18,7 @@ enum KdbxCipher: Equatable {
     }
 }
 
-enum KdbxCompression: Equatable { case none, gzip }
+public enum KdbxCompression: Equatable { case none, gzip }
 
 /// Field IDs for the KDBX4 outer header TLV stream.
 private enum KdbxHeaderFieldID {

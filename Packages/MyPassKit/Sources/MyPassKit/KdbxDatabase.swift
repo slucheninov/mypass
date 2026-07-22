@@ -6,7 +6,7 @@ import zlib
 
 /// Errors surfaced by `KdbxDatabase.open`/`save` — the public facade over the
 /// full KDBX4 read/write pipeline (Tasks 3–14).
-enum KdbxDatabaseError: Error, Equatable {
+public enum KdbxDatabaseError: Error, Equatable {
     /// The outer-header authentication (`HeaderHMAC-SHA256`) did not match —
     /// this is how a wrong password is distinguished from generic corruption,
     /// since the HMAC key is derived from the password via the KDF.
@@ -60,11 +60,11 @@ enum KdbxDatabaseError: Error, Equatable {
 /// (e.g. a direct binding to the Argon2 reference implementation) replaces
 /// swift-sodium here. `KdbxCrossCompatibilityTests` documents this gap
 /// explicitly rather than silently asserting success.
-struct KdbxDatabase {
-    var rootGroup: KdbxGroup
-    var deletedObjects: [KdbxDeletedObject]
+public struct KdbxDatabase {
+    public var rootGroup: KdbxGroup
+    public var deletedObjects: [KdbxDeletedObject]
 
-    static func open(data: Data, password: String) throws -> KdbxDatabase {
+    public static func open(data: Data, password: String) throws -> KdbxDatabase {
         guard data.count >= 12 else {
             throw KdbxDatabaseError.corruptFile("file too short for KDBX signature")
         }
@@ -204,7 +204,7 @@ struct KdbxDatabase {
         return KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects)
     }
 
-    func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {
+    public func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {
         let masterSeed = Self.randomBytes(count: 32)
         let salt = Self.randomBytes(count: 16)
         var kdfParameters = VariantDictionary()

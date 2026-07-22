@@ -2,7 +2,7 @@ import Foundation
 import CryptoKit
 
 /// HMAC algorithm used to compute an HOTP/TOTP value.
-enum TOTPAlgorithm {
+public enum TOTPAlgorithm {
     case sha1
     case sha256
     case sha512
@@ -12,7 +12,7 @@ enum TOTPAlgorithm {
 ///
 /// Builds on RFC 4226 (HOTP) by deriving the moving factor from the current
 /// Unix time rather than a counter: `counter = floor(unixTime / step)`.
-enum TOTPGenerator {
+public enum TOTPGenerator {
     /// Generates a TOTP code for the given shared secret and point in time.
     ///
     /// - Parameters:
@@ -22,7 +22,7 @@ enum TOTPGenerator {
     ///   - digits: The number of digits in the resulting code (commonly 6).
     ///   - algorithm: The HMAC hash algorithm to use.
     /// - Returns: A zero-padded decimal string with `digits` characters.
-    static func generate(
+    public static func generate(
         secret: Data,
         time: Date,
         step: TimeInterval,
