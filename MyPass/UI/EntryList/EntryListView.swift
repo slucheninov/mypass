@@ -4,6 +4,8 @@ import MyPassKit
 struct EntryListView: View {
     let rootGroup: KdbxGroup
     @EnvironmentObject var navigationState: NavigationState
+    @State private var isCreatingEntry = false
+    @EnvironmentObject var vaultSession: VaultSession
 
     private var currentGroup: KdbxGroup {
         find(uuid: navigationState.selectedGroupID, in: rootGroup) ?? rootGroup
@@ -30,7 +32,14 @@ struct EntryListView: View {
         .toolbar {
             ToolbarItem {
                 Button("Добавить", systemImage: "plus") {
-                    // wired to EntryEditView in Task 14
+                    isCreatingEntry = true
+                }
+            }
+        }
+        .sheet(isPresented: $isCreatingEntry) {
+            EntryEditView(existingEntry: nil) { newEntry in
+                vaultSession.mutate { database in
+                    addEntry(newEntry, toGroupWithID: currentGroup.uuid, in: database.rootGroup)
                 }
             }
         }
@@ -43,5 +52,15 @@ struct EntryListView: View {
             if let found = find(uuid: uuid, in: subgroup) { return found }
         }
         return nil
+    }
+
+    private func addEntry(_ entry: KdbxEntry, toGroupWithID groupID: UUID, in group: KdbxGroup) {
+        if group.uuid == groupID {
+            group.entries.append(entry)
+            return
+        }
+        for subgroup in group.subgroups {
+            addEntry(entry, toGroupWithID: groupID, in: subgroup)
+        }
     }
 }
