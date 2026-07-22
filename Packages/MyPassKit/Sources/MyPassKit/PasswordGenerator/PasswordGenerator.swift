@@ -1,26 +1,34 @@
 import Foundation
 import Security
 
-struct PasswordGeneratorOptions {
-    var length: Int
-    var includeLowercase: Bool
-    var includeUppercase: Bool
-    var includeDigits: Bool
-    var includeSymbols: Bool
+public struct PasswordGeneratorOptions {
+    public var length: Int
+    public var includeLowercase: Bool
+    public var includeUppercase: Bool
+    public var includeDigits: Bool
+    public var includeSymbols: Bool
+
+    public init(length: Int, includeLowercase: Bool, includeUppercase: Bool, includeDigits: Bool, includeSymbols: Bool) {
+        self.length = length
+        self.includeLowercase = includeLowercase
+        self.includeUppercase = includeUppercase
+        self.includeDigits = includeDigits
+        self.includeSymbols = includeSymbols
+    }
 }
 
-enum PasswordGeneratorError: Error, Equatable {
+public enum PasswordGeneratorError: Error, Equatable {
     case noCharacterClassSelected
     case secureRandomUnavailable
 }
 
-enum PasswordGenerator {
+public enum PasswordGenerator {
     private static let lowercase = Array("abcdefghijklmnopqrstuvwxyz")
     private static let uppercase = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
     private static let digits = Array("0123456789")
     private static let symbols = Array("!@#$%^&*()-_=+[]{};:,.<>?")
 
-    static func generate(options: PasswordGeneratorOptions) throws -> String {
+    public static func generate(options: PasswordGeneratorOptions) throws -> String {
         var pool: [Character] = []
         if options.includeLowercase { pool.append(contentsOf: lowercase) }
         if options.includeUppercase { pool.append(contentsOf: uppercase) }

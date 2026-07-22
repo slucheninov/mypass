@@ -4,12 +4,12 @@ import Foundation
 /// `isProtected` marks fields that must be memory-protected / encrypted in the XML
 /// inner stream (per the KDBX4 format) — the model just carries the flag; the XML
 /// layer (Task 14) is responsible for acting on it.
-struct KdbxField: Equatable {
-    var key: String
-    var value: String
-    var isProtected: Bool
+public struct KdbxField: Equatable {
+    public var key: String
+    public var value: String
+    public var isProtected: Bool
 
-    init(key: String, value: String, isProtected: Bool) {
+    public init(key: String, value: String, isProtected: Bool) {
         self.key = key
         self.value = value
         self.isProtected = isProtected
@@ -23,17 +23,17 @@ struct KdbxField: Equatable {
 /// By convention (and per the design spec's history semantics), entries stored
 /// inside `history` are themselves snapshots with an empty `history` — history
 /// does not nest.
-struct KdbxEntry: Equatable {
-    var uuid: UUID
-    var iconID: Int
-    var fields: [KdbxField]
-    var creationTime: Date
-    var lastModificationTime: Date
-    var lastAccessTime: Date
-    var locationChanged: Date
-    var history: [KdbxEntry]
+public struct KdbxEntry: Equatable, Identifiable {
+    public var uuid: UUID
+    public var iconID: Int
+    public var fields: [KdbxField]
+    public var creationTime: Date
+    public var lastModificationTime: Date
+    public var lastAccessTime: Date
+    public var locationChanged: Date
+    public var history: [KdbxEntry]
 
-    init(
+    public init(
         uuid: UUID,
         iconID: Int,
         fields: [KdbxField],
@@ -52,4 +52,6 @@ struct KdbxEntry: Equatable {
         self.locationChanged = locationChanged
         self.history = history
     }
+
+    public var id: UUID { uuid }
 }

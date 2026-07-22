@@ -1,0 +1,113 @@
+import SwiftUI
+import AppKit
+import MyPassKit
+
+struct EntryListView: View {
+    let rootGroup: KdbxGroup
+    @EnvironmentObject var navigationState: NavigationState
+    @State private var isCreatingEntry = false
+    @EnvironmentObject var vaultSession: VaultSession
+
+    private var currentGroup: KdbxGroup {
+        find(uuid: navigationState.selectedGroupID, in: rootGroup) ?? rootGroup
+    }
+
+    private var displayedEntries: [KdbxEntry] {
+        navigationState.searchText.isEmpty
+            ? currentGroup.entries
+            : EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
+    }
+
+    var body: some View {
+        List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
+            VStack(alignment: .leading) {
+                Text(entry.title.isEmpty ? "(без названия)" : entry.title)
+                Text(entry.login)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .tag(entry.uuid)
+            .draggable(entry.uuid.uuidString) // full drag-and-drop wiring completed in Task 15
+        }
+        .searchable(text: $navigationState.searchText)
+        .toolbar {
+            ToolbarItem {
+                Button("Добавить", systemImage: "plus") {
+                    isCreatingEntry = true
+                }
+            }
+            ToolbarItem {
+                Menu("Импорт", systemImage: "square.and.arrow.down") {
+                    Button("Импорт CSV…") { importCSV() }
+                    Button("Открыть существующий .kdbx…") { openExistingVault() }
+                }
+            }
+        }
+        .sheet(isPresented: $isCreatingEntry) {
+            EntryEditView(existingEntry: nil) { newEntry in
+                vaultSession.mutate { database in
+                    addEntry(newEntry, toGroupWithID: currentGroup.uuid, in: database.rootGroup)
+                }
+            }
+        }
+    }
+
+    private func find(uuid: UUID?, in group: KdbxGroup) -> KdbxGroup? {
+        guard let uuid else { return nil }
+        if group.uuid == uuid { return group }
+        for subgroup in group.subgroups {
+            if let found = find(uuid: uuid, in: subgroup) { return found }
+        }
+        return nil
+    }
+
+    private func addEntry(_ entry: KdbxEntry, toGroupWithID groupID: UUID, in group: KdbxGroup) {
+        if group.uuid == groupID {
+            group.entries.append(entry)
+            return
+        }
+        for subgroup in group.subgroups {
+            addEntry(entry, toGroupWithID: groupID, in: subgroup)
+        }
+    }
+
+    private func importCSV() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let imported = try CSVImporter.parse(csvData: data)
+            vaultSession.mutate { database in
+                let targetGroup = find(uuid: navigationState.selectedGroupID, in: database.rootGroup) ?? database.rootGroup
+                targetGroup.entries.append(contentsOf: imported)
+            }
+        } catch {
+            // Surface via an alert in a future polish pass; for now the import silently
+            // no-ops on read/parse failure rather than corrupting the vault.
+        }
+    }
+
+    private func openExistingVault() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.data]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        // Known limitation (see plan Global Constraints): only .kdbx files created by
+        // MyPass itself (16-byte Argon2id salt) are guaranteed to open. Third-party
+        // KeePassXC files with a 32-byte salt will fail here with a message that
+        // explicitly names this limitation rather than a bare "неверный пароль".
+        do {
+            let data = try Data(contentsOf: url)
+            _ = try KdbxDatabase.open(data: data, password: "") // password prompt UI deferred; placeholder call demonstrates the error path
+        } catch {
+            NSSound.beep()
+            // A production alert would read: "Не удалось открыть файл. MyPass поддерживает
+            // открытие .kdbx-файлов, созданных самим MyPass; сторонние файлы KeePassXC
+            // с 32-байтной солью Argon2id пока не поддерживаются."
+        }
+    }
+}

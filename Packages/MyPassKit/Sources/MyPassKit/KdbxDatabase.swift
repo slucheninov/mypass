@@ -6,7 +6,7 @@ import zlib
 
 /// Errors surfaced by `KdbxDatabase.open`/`save` — the public facade over the
 /// full KDBX4 read/write pipeline (Tasks 3–14).
-enum KdbxDatabaseError: Error, Equatable {
+public enum KdbxDatabaseError: Error, Equatable {
     /// The outer-header authentication (`HeaderHMAC-SHA256`) did not match —
     /// this is how a wrong password is distinguished from generic corruption,
     /// since the HMAC key is derived from the password via the KDF.
@@ -60,11 +60,20 @@ enum KdbxDatabaseError: Error, Equatable {
 /// (e.g. a direct binding to the Argon2 reference implementation) replaces
 /// swift-sodium here. `KdbxCrossCompatibilityTests` documents this gap
 /// explicitly rather than silently asserting success.
-struct KdbxDatabase {
-    var rootGroup: KdbxGroup
-    var deletedObjects: [KdbxDeletedObject]
+public struct KdbxDatabase {
+    public var rootGroup: KdbxGroup
+    public var deletedObjects: [KdbxDeletedObject]
+    /// Mirrors KDBX4's `Meta/RecycleBinUUID`: a UUID reference to whichever
+    /// group is currently the recycle bin, independent of that group's name.
+    public var recycleBinGroupUUID: UUID?
 
-    static func open(data: Data, password: String) throws -> KdbxDatabase {
+    public init(rootGroup: KdbxGroup, deletedObjects: [KdbxDeletedObject], recycleBinGroupUUID: UUID? = nil) {
+        self.rootGroup = rootGroup
+        self.deletedObjects = deletedObjects
+        self.recycleBinGroupUUID = recycleBinGroupUUID
+    }
+
+    public static func open(data: Data, password: String) throws -> KdbxDatabase {
         guard data.count >= 12 else {
             throw KdbxDatabaseError.corruptFile("file too short for KDBX signature")
         }
@@ -201,10 +210,10 @@ struct KdbxDatabase {
             throw KdbxDatabaseError.corruptFile("xml payload: \(error)")
         }
 
-        return KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects)
+        return KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects, recycleBinGroupUUID: payload.recycleBinGroupUUID)
     }
 
-    func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {
+    public func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {
         let masterSeed = Self.randomBytes(count: 32)
         let salt = Self.randomBytes(count: 16)
         var kdfParameters = VariantDictionary()
@@ -231,7 +240,7 @@ struct KdbxDatabase {
         let innerHeader = KdbxInnerHeader(innerRandomStreamID: .chaCha20, innerRandomStreamKey: innerStreamKey, binaries: [])
         let streamCipher = try InnerRandomStreamCipher(streamID: .chaCha20, rawKey: innerStreamKey)
 
-        let payload = KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects)
+        let payload = KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects, recycleBinGroupUUID: recycleBinGroupUUID)
         let xmlData = KdbxXmlCoder.encode(payload) { plaintext in
             let keystream = streamCipher.nextBytes(plaintext.count)
             return Data(zip(plaintext, keystream).map { $0 ^ $1 })

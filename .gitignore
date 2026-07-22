@@ -1,1 +1,4 @@
 .DS_Store
+*.xcodeproj
+MyPass/Info.plist
+MyPassTests/Info.plist

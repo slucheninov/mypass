@@ -6,6 +6,11 @@ import Foundation
 struct KdbxXmlPayload: Equatable {
     var rootGroup: KdbxGroup
     var deletedObjects: [KdbxDeletedObject]
+    /// The database's `Meta/RecycleBinUUID` — a UUID reference to whichever
+    /// group is currently the recycle bin, independent of that group's name.
+    /// `nil` means no recycle bin has been designated yet (e.g. a fresh
+    /// database, or one from a foreign/older writer that never set this).
+    var recycleBinGroupUUID: UUID? = nil
 }
 
 enum KdbxXmlCoderError: Error, Equatable {
@@ -52,7 +57,11 @@ enum KdbxXmlCoder {
 
     static func encode(_ payload: KdbxXmlPayload, obfuscate: (Data) -> Data) -> Data {
         let keePassFile = XMLElement(name: "KeePassFile")
-        keePassFile.addChild(XMLElement(name: "Meta"))
+        let metaElement = XMLElement(name: "Meta")
+        if let recycleBinGroupUUID = payload.recycleBinGroupUUID {
+            metaElement.addChild(textElement("RecycleBinUUID", base64(fromUuid: recycleBinGroupUUID)))
+        }
+        keePassFile.addChild(metaElement)
 
         let rootElement = XMLElement(name: "Root")
         rootElement.addChild(groupElement(payload.rootGroup, obfuscate: obfuscate))
@@ -234,7 +243,13 @@ enum KdbxXmlCoder {
                 deletedObjects.append(KdbxDeletedObject(uuid: uuid, deletionTime: date))
             }
         }
-        return KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects)
+        var recycleBinGroupUUID: UUID? = nil
+        if let metaElement = keePassFile.elements(forName: "Meta").first,
+           let recycleBinUuidString = metaElement.elements(forName: "RecycleBinUUID").first?.stringValue {
+            recycleBinGroupUUID = uuid(fromBase64: recycleBinUuidString)
+        }
+
+        return KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects, recycleBinGroupUUID: recycleBinGroupUUID)
     }
 
     // MARK: - Group / Entry / String

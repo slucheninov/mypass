@@ -6,17 +6,17 @@ import Foundation
 /// type would force awkward copy-on-write semantics for what is conceptually a
 /// single shared tree. Equality is by value (uuid/name/iconID/entries/subgroups),
 /// not by reference identity, so tests and later merge logic can compare snapshots.
-final class KdbxGroup: Equatable {
-    var uuid: UUID
-    var name: String
-    var iconID: Int
-    var creationTime: Date
-    var lastModificationTime: Date
-    var locationChanged: Date
-    var entries: [KdbxEntry]
-    var subgroups: [KdbxGroup]
+public final class KdbxGroup: Equatable, Identifiable {
+    public var uuid: UUID
+    public var name: String
+    public var iconID: Int
+    public var creationTime: Date
+    public var lastModificationTime: Date
+    public var locationChanged: Date
+    public var entries: [KdbxEntry]
+    public var subgroups: [KdbxGroup]
 
-    init(
+    public init(
         uuid: UUID,
         name: String,
         iconID: Int,
@@ -36,7 +36,7 @@ final class KdbxGroup: Equatable {
         self.subgroups = subgroups
     }
 
-    static func == (lhs: KdbxGroup, rhs: KdbxGroup) -> Bool {
+    public static func == (lhs: KdbxGroup, rhs: KdbxGroup) -> Bool {
         lhs.uuid == rhs.uuid &&
         lhs.name == rhs.name &&
         lhs.iconID == rhs.iconID &&
@@ -46,4 +46,6 @@ final class KdbxGroup: Equatable {
         lhs.entries == rhs.entries &&
         lhs.subgroups == rhs.subgroups
     }
+
+    public var id: UUID { uuid }
 }
