@@ -64,6 +64,11 @@ public struct KdbxDatabase {
     public var rootGroup: KdbxGroup
     public var deletedObjects: [KdbxDeletedObject]
 
+    public init(rootGroup: KdbxGroup, deletedObjects: [KdbxDeletedObject]) {
+        self.rootGroup = rootGroup
+        self.deletedObjects = deletedObjects
+    }
+
     public static func open(data: Data, password: String) throws -> KdbxDatabase {
         guard data.count >= 12 else {
             throw KdbxDatabaseError.corruptFile("file too short for KDBX signature")
