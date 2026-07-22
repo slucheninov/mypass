@@ -42,8 +42,21 @@ private enum KdbxHeaderFieldID {
 
 /// Well-known KDF UUIDs stored in `kdfParameters["$UUID"]`.
 enum KdbxKdfUUID {
+    /// `KDF_AES_KDBX4` in KeePassXC's `src/format/KeePass2.cpp`
+    /// (`7c02bb82-79a7-4ac0-927d-114a00648238`) — the UUID `AesKdf`'s
+    /// default (KDBX4-native) constructor tags itself with.
     static let aesKdf = Data([0x7C, 0x02, 0xBB, 0x82, 0x79, 0xA7, 0x4A, 0xC0,
                               0x92, 0x7D, 0x11, 0x4A, 0x00, 0x64, 0x82, 0x38])
+    /// `KDF_AES_KDBX3` in KeePassXC's `src/format/KeePass2.cpp`
+    /// (`c9d9f39a-628a-4460-bf74-0d08c18a4fea`) — the legacy KDBX3-era
+    /// AES-KDF UUID. Per `KeePass2::uuidToKdf()`, this constructs the exact
+    /// same `AesKdf` class/algorithm as `aesKdf` above (just tagged
+    /// differently, "for compatibility with other applications" per
+    /// `AesKdf::writeParameters()`'s comment) — pykeepass's `create_database`
+    /// (and many real-world KDBX4 files) use this UUID for AES-KDF, not the
+    /// KDBX4-native one, so both must be treated identically on read.
+    static let aesKdfLegacyKdbx3 = Data([0xC9, 0xD9, 0xF3, 0x9A, 0x62, 0x8A, 0x44, 0x60,
+                                         0xBF, 0x74, 0x0D, 0x08, 0xC1, 0x8A, 0x4F, 0xEA])
     static let argon2d = Data([0xEF, 0x63, 0x6D, 0xDF, 0x8C, 0x29, 0x44, 0x4B,
                                0x91, 0xF7, 0xA9, 0xA4, 0x03, 0xE3, 0x0A, 0x0C])
     static let argon2id = Data([0x9E, 0x29, 0x8B, 0x19, 0x56, 0xDB, 0x47, 0x73,

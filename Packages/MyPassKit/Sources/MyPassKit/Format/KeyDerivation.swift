@@ -13,9 +13,11 @@ enum KeyDerivationError: Error, Equatable {
 /// (Task 3), plus the final `masterKey`/`hmacKeyBase` values consumed by
 /// header authentication (Task 5) and the HMAC block stream (Task 7).
 ///
-/// Only Argon2id (`KdbxKdfUUID.argon2id`) is supported. KDBX4 files using
-/// AES-KDF or Argon2d are rejected with `.unsupportedKdf` rather than
-/// silently mis-deriving a key.
+/// Argon2id (`KdbxKdfUUID.argon2id`) and AES-KDF (`KdbxKdfUUID.aesKdf`) are
+/// supported for reading. KDBX4 files using Argon2d are still rejected with
+/// `.unsupportedKdf` rather than silently mis-deriving a key. Write support
+/// (`KdbxDatabase.save`) remains Argon2id-only per the plan's Global
+/// Constraints — AES-KDF here is read-only.
 enum KeyDerivation {
     /// Reads `$UUID` from `kdfParameters` and dispatches to the matching KDF.
     static func transformedKey(compositeKey: Data, kdfParameters: VariantDictionary) throws -> Data {
@@ -25,6 +27,8 @@ enum KeyDerivation {
         switch uuid {
         case KdbxKdfUUID.argon2id:
             return try argon2id(compositeKey: compositeKey, params: kdfParameters)
+        case KdbxKdfUUID.aesKdf, KdbxKdfUUID.aesKdfLegacyKdbx3:
+            return try aesKdf(compositeKey: compositeKey, params: kdfParameters)
         default:
             throw KeyDerivationError.unsupportedKdf(uuid)
         }
@@ -82,6 +86,38 @@ enum KeyDerivation {
             throw KeyDerivationError.sodiumFailure
         }
         return Data(derived)
+    }
+
+    /// AES-KDF (KeePass's classic key-transformation KDF, `KdbxKdfUUID.aesKdf`):
+    /// read support only (write support is out of scope — the plan mandates
+    /// Argon2id-only for `save()`).
+    ///
+    /// VariantDictionary keys (verified against KeePassXC's
+    /// `src/crypto/kdf/AesKdf.cpp`/`src/crypto/SymmetricCipher.cpp`, see
+    /// `AESECBCipher`'s doc-comment for the exact quoted source):
+    ///   - `S` = seed (32 bytes — the AES-256 key for the transform, NOT a
+    ///     salt in the Argon2 sense)
+    ///   - `R` = rounds (UInt64)
+    ///
+    /// Algorithm: `transformedKey = SHA256(AES256_ECB_encrypt(compositeKey, key: S)` applied `R` times`)`.
+    /// The 32-byte composite key is treated as two independent 16-byte AES
+    /// blocks with no chaining (ECB, not CBC) — see `AESECBCipher`.
+    private static func aesKdf(compositeKey: Data, params: VariantDictionary) throws -> Data {
+        guard case .byteArray(let seed)? = params.items["S"],
+              case .uint64(let rounds)? = params.items["R"] else {
+            throw KeyDerivationError.invalidParameters
+        }
+        guard seed.count == 32, compositeKey.count % 16 == 0, !compositeKey.isEmpty else {
+            throw KeyDerivationError.invalidParameters
+        }
+
+        let transformed: Data
+        do {
+            transformed = try AESECBCipher.transform(data: compositeKey, key: seed, rounds: rounds)
+        } catch {
+            throw KeyDerivationError.invalidParameters
+        }
+        return Data(SHA256.hash(data: transformed))
     }
 
     /// finalMasterKey = SHA256(masterSeed ‖ transformedKey)

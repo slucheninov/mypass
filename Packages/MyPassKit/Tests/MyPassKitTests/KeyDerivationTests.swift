@@ -107,6 +107,110 @@ final class KeyDerivationTests: XCTestCase {
         XCTAssertEqual(derived, expected)
     }
 
+    // MARK: - AES-KDF
+
+    /// Known-answer test for the AES-KDF `transformedKey` path, computed
+    /// independently via Python's `pycryptodome` (AES-256-ECB, not this
+    /// codebase's CommonCrypto binding):
+    ///
+    /// ```python
+    /// from Crypto.Cipher import AES
+    /// import hashlib
+    /// seed = bytes(range(32))               # 0x00..0x1F, matches "S"
+    /// composite = bytes([0xAA]*16 + [0xBB]*16)
+    /// rounds = 3                              # matches "R"
+    /// cipher = AES.new(seed, AES.MODE_ECB)
+    /// data = composite
+    /// for _ in range(rounds):
+    ///     data = cipher.encrypt(data)
+    /// final = hashlib.sha256(data).digest()
+    /// ```
+    /// which produced `df34ca116b7e1c04cb4b60bc813c60abfd27ba9334bdd6a489acb49ae24da9b4`.
+    /// This pins the exact algorithm verified against KeePassXC's
+    /// `SymmetricCipher::aesKdf()` (Botan's `BlockCipher::encrypt()` applied
+    /// in ECB mode to the whole 32-byte buffer, i.e. each 16-byte block
+    /// encrypted independently, `R` times, keyed by `S`), followed by a
+    /// SHA-256 finalization (`AesKdf::transform()`'s
+    /// `CryptoHash::hash(out, CryptoHash::Sha256)`).
+    func testTransformedKeyMatchesIndependentAesKdfKnownAnswer() throws {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.aesKdf)
+        kdf.items["S"] = .byteArray(Data((0..<32).map { UInt8($0) })) // 0x00..0x1F
+        kdf.items["R"] = .uint64(3)
+
+        let composite = Data(repeating: 0xAA, count: 16) + Data(repeating: 0xBB, count: 16)
+        let derived = try KeyDerivation.transformedKey(compositeKey: composite, kdfParameters: kdf)
+
+        let expected = Data([
+            0xdf, 0x34, 0xca, 0x11, 0x6b, 0x7e, 0x1c, 0x04,
+            0xcb, 0x4b, 0x60, 0xbc, 0x81, 0x3c, 0x60, 0xab,
+            0xfd, 0x27, 0xba, 0x93, 0x34, 0xbd, 0xd6, 0xa4,
+            0x89, 0xac, 0xb4, 0x9a, 0xe2, 0x4d, 0xa9, 0xb4,
+        ])
+        XCTAssertEqual(derived, expected)
+    }
+
+    /// Real-world KDBX4 files (including pykeepass-generated fixtures) tag
+    /// AES-KDF with the legacy `KDF_AES_KDBX3` UUID
+    /// (`c9d9f39a-628a-4460-bf74-0d08c18a4fea`), not the `KDF_AES_KDBX4`
+    /// UUID — per KeePassXC's `KeePass2::uuidToKdf()`, both construct the
+    /// identical `AesKdf` algorithm, so both must be accepted on read.
+    func testAesKdfAcceptsLegacyKdbx3UUID() throws {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.aesKdfLegacyKdbx3)
+        kdf.items["S"] = .byteArray(Data((0..<32).map { UInt8($0) }))
+        kdf.items["R"] = .uint64(3)
+
+        let composite = Data(repeating: 0xAA, count: 16) + Data(repeating: 0xBB, count: 16)
+        let derived = try KeyDerivation.transformedKey(compositeKey: composite, kdfParameters: kdf)
+
+        let expected = Data([
+            0xdf, 0x34, 0xca, 0x11, 0x6b, 0x7e, 0x1c, 0x04,
+            0xcb, 0x4b, 0x60, 0xbc, 0x81, 0x3c, 0x60, 0xab,
+            0xfd, 0x27, 0xba, 0x93, 0x34, 0xbd, 0xd6, 0xa4,
+            0x89, 0xac, 0xb4, 0x9a, 0xe2, 0x4d, 0xa9, 0xb4,
+        ])
+        XCTAssertEqual(derived, expected)
+    }
+
+    func testAesKdfIsDeterministicForSameInputs() throws {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.aesKdf)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x07, count: 32))
+        kdf.items["R"] = .uint64(1000)
+
+        var composite = Data("test-master-password".utf8)
+        composite.append(Data(repeating: 0, count: 32 - composite.count))
+        let key1 = try KeyDerivation.transformedKey(compositeKey: composite, kdfParameters: kdf)
+        let key2 = try KeyDerivation.transformedKey(compositeKey: composite, kdfParameters: kdf)
+
+        XCTAssertEqual(key1, key2)
+        XCTAssertEqual(key1.count, 32)
+    }
+
+    func testAesKdfMissingParametersThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.aesKdf)
+        // Missing S and R on purpose.
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(repeating: 0, count: 32), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
+    func testAesKdfWrongSeedLengthThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.aesKdf)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x01, count: 16)) // wrong: must be 32 bytes
+        kdf.items["R"] = .uint64(10)
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(repeating: 0, count: 32), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
     func testUnsupportedKdfThrows() {
         var kdf = VariantDictionary()
         kdf.items["$UUID"] = .byteArray(Data(repeating: 0xFF, count: 16))
