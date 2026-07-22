@@ -1,5 +1,5 @@
 ---
-description: "Global workflow (revised 2026-07-05 to Opus 4.8/Fable 5 orchestrator + Sonnet 5 executor tiers + HARD delegation rules). Main session is Opus 4.8 (`claude-opus-4-8-thinking-high`) by default, with Fable 5 (`claude-fable-5-high`) as an acceptable alternative; the Orchestrator MUST delegate Write/Edit/Read/Shell past hard numerical thresholds to Sonnet 5 (`claude-sonnet-5-thinking-high`) subagents. A preToolUse hook (~/.cursor/hooks/enforce-large-write.sh) blocks direct Orchestrator Writes >30 lines. Dispatched Sonnet subagents are Executors and must NOT re-dispatch Task() to equal-tier agents. Use superpowers skills (brainstorming, writing-plans, executing-plans, dispatching-parallel-agents, using-git-worktrees, verification-before-completion). DO NOT use gsd-* (archived) or claude-mem skills (make-plan/do/learn-codebase)."
+description: "Global workflow (revised 2026-07-22 to Opus 4.8/Fable 5 orchestrator + role-split executor tiers + HARD delegation rules). Main session is Opus 4.8 (`claude-opus-4-8-thinking-high`) by default, with Fable 5 (`claude-fable-5-high`) as an acceptable alternative; the Orchestrator MUST delegate Write/Edit/Read/Shell past hard numerical thresholds to Executor subagents split by role: Composer 2.5 Fast (`composer-2.5-fast`) for volume executors (`generalPurpose`, `explore`, `shell`, `best-of-n-runner`), Sonnet 5 (`claude-sonnet-5-thinking-high`) for reviewer/judgement subagents. A preToolUse hook (~/.cursor/hooks/enforce-large-write.sh) blocks direct Orchestrator Writes >30 lines. Dispatched Composer/Sonnet Executor subagents must NOT re-dispatch Task() to equal-tier agents. Use superpowers skills (brainstorming, writing-plans, executing-plans, dispatching-parallel-agents, using-git-worktrees, verification-before-completion). DO NOT use gsd-* (archived) or claude-mem skills (make-plan/do/learn-codebase)."
 alwaysApply: true
 ---
 
@@ -9,30 +9,28 @@ User-level defaults across every Cursor workspace. **User instructions in chat w
 
 ## Default model: Opus 4.8. Opus MUST delegate execution.
 
-The main session runs on **Opus 4.8** (`claude-opus-4-8-thinking-high`), with **Fable 5** (`claude-fable-5-high`) as an acceptable alternative for the main session, because architectural reasoning, plan synthesis, review judgement, and multi-source integration benefit from depth. Direct Opus writes/edits are roughly **5x more expensive than Sonnet 5**. To make cost discipline structural rather than aspirational, the Orchestrator operates under hard numerical delegation rules below — backed by a `preToolUse` hook at `~/.cursor/hooks/enforce-large-write.sh` that blocks Write tool calls >30 lines from the main session.
+The main session runs on **Opus 4.8** (`claude-opus-4-8-thinking-high`), with **Fable 5** (`claude-fable-5-high`) as an acceptable alternative for the main session, because architectural reasoning, plan synthesis, review judgement, and multi-source integration benefit from depth. Direct Opus writes/edits are far more expensive than either Executor tier below — roughly **5x Sonnet 5**, and cheaper still relative to **Composer 2.5 Fast**, the default for volume/mechanical work. To make cost discipline structural rather than aspirational, the Orchestrator operates under hard numerical delegation rules below — backed by a `preToolUse` hook at `~/.cursor/hooks/enforce-large-write.sh` that blocks Write tool calls >30 lines from the main session.
 
 | Operation | Model |
 |---|---|
 | Main chat (default) | **`claude-opus-4-8-thinking-high`** |
 | Main chat (alternative) | `claude-fable-5-high` |
 | Plan Mode | `claude-opus-4-8-thinking-high` (already there) |
-| `Task()` subagent dispatch | **`claude-sonnet-5-thinking-high`** |
-| Reviewer subagents (`go-expert`, `postgres-expert`, `prompt-engineer`, `slack-expert`, `test-writer`, `code-reviewer`, `plan-verifier`, `requirements-planner`, `youtrack-task-writer`) | Sonnet 5 (set in their frontmatter) |
-| `generalPurpose` for plan execution | Sonnet 5 |
-| `best-of-n-runner` isolated worktrees | Sonnet 5 |
-| Heavy mechanical edits (typo, rename, boilerplate) | Optionally `composer-2.5-fast` |
+| `Task()` volume dispatch — default (`generalPurpose`, `explore`, `shell`, `best-of-n-runner`), incl. heavy mechanical edits | **`composer-2.5-fast`** |
+| Reviewer/judgement subagents (`go-expert`, `postgres-expert`, `prompt-engineer`, `slack-expert`, `test-writer`, `code-reviewer`, `plan-verifier`, `requirements-planner`, `youtrack-task-writer`) | Sonnet 5 (set in their frontmatter) |
 
 ## Delegation hierarchy — two tiers only
 
 | Tier | Who | Model | May use `Task()`? |
 |------|-----|-------|-------------------|
 | **Orchestrator** | Main chat session only | `claude-opus-4-8-thinking-high` or `claude-fable-5-high` | **Yes** — dispatches Tier-2 executors |
-| **Executor** | Dispatched subagents (`generalPurpose`, `explore`, `shell`, reviewers, `best-of-n-runner`) | `claude-sonnet-5-thinking-high` | **No** — execute work directly |
+| **Executor (volume)** | Dispatched `generalPurpose`, `explore`, `shell`, `best-of-n-runner` | `composer-2.5-fast` | **No** — execute work directly |
+| **Executor (reviewer)** | Dispatched `go-expert`, `postgres-expert`, `prompt-engineer`, `slack-expert`, `test-writer`, `code-reviewer`, `plan-verifier`, `requirements-planner`, `youtrack-task-writer` | `claude-sonnet-5-thinking-high` | **No** — execute work directly |
 
-**Critical rule:** HARD delegation thresholds (Rules 1–5 below) apply **only to the Orchestrator tier**. When you are a dispatched Sonnet subagent, you are an Executor — do **not** spawn `Task()` subagents for work you were dispatched to do. Read, write, edit, and shell directly within your prompt scope.
+**Critical rule:** HARD delegation thresholds (Rules 1–5 below) apply **only to the Orchestrator tier**. When you are a dispatched Composer or Sonnet subagent, you are an Executor — do **not** spawn `Task()` subagents for work you were dispatched to do. Read, write, edit, and shell directly within your prompt scope.
 
-**Forbidden:** Sonnet → `Task(..., model=claude-sonnet-5-thinking-high)` for mechanical execution (equal-tier re-delegation).
-**Allowed:** Orchestrator → `Task(..., model=claude-sonnet-5-thinking-high)` per Rules 1–5.
+**Forbidden:** Executor → `Task(..., model=composer-2.5-fast)` or `Task(..., model=claude-sonnet-5-thinking-high)` for mechanical execution (equal-tier re-delegation).
+**Allowed:** Orchestrator → `Task(..., model=composer-2.5-fast)` for volume work, or `Task(..., model=claude-sonnet-5-thinking-high)` for reviewer/judgement work, per Rules 1–5.
 
 ## HARD RULES — check BEFORE every tool call
 
@@ -40,7 +38,7 @@ The main session runs on **Opus 4.8** (`claude-opus-4-8-thinking-high`), with **
 
 | File size                | Action                                                                |
 |--------------------------|-----------------------------------------------------------------------|
-| >30 lines                | STOP. Dispatch `Task(generalPurpose, model="claude-sonnet-5-thinking-high")`. |
+| >30 lines                | STOP. Dispatch `Task(generalPurpose, model="composer-2.5-fast")`. |
 | 10–30 lines, mechanical  | Prefer Task. Direct Write only with user reviewing inline.            |
 | <10 lines, hand-written  | Direct Write OK.                                                      |
 
@@ -53,14 +51,14 @@ Multiple small files in a row (≥2) → batch into ONE Task dispatch.
 | Edit volume                    | Action                                                                |
 |--------------------------------|-----------------------------------------------------------------------|
 | Single edit, <10 lines diff    | Direct StrReplace OK.                                                 |
-| ≥2 edits (same or multi-file)  | STOP. Dispatch `Task(generalPurpose, sonnet)` with full list.         |
+| ≥2 edits (same or multi-file)  | STOP. Dispatch `Task(generalPurpose, composer)` with full list.      |
 
 ### Rule 3 — Reading files (Read tool)
 
 | Read volume                    | Action                                                       |
 |--------------------------------|--------------------------------------------------------------|
 | 1–2 files                      | Direct Read OK.                                              |
-| ≥3 files for analysis          | STOP. Dispatch `Task(explore, sonnet)`.                      |
+| ≥3 files for analysis          | STOP. Dispatch `Task(explore, composer)`.                    |
 
 Exception: file the user is currently editing or which is the literal subject of the question.
 
@@ -69,16 +67,16 @@ Exception: file the user is currently editing or which is the literal subject of
 | Command volume                 | Action                                                       |
 |--------------------------------|--------------------------------------------------------------|
 | 1–2 quick commands             | Direct Shell OK (`git status`, `ls`).                        |
-| ≥3 commands for context        | STOP. Dispatch `Task(shell, sonnet)` with batched commands.  |
+| ≥3 commands for context        | STOP. Dispatch `Task(shell, composer)` with batched commands. |
 
 ### Rule 5 — Self-audit at start of every response
 
 Before issuing ANY tool call, count what the current plan implies:
 
 - Planned Write+Edit operations total ≥2 → one Task dispatch instead.
-- Planned Read operations total ≥3 → Task(explore, sonnet).
-- Planned shell commands for context ≥3 → Task(shell, sonnet).
-- Any single file >30 lines being written → Task(generalPurpose, sonnet).
+- Planned Read operations total ≥3 → Task(explore, composer).
+- Planned shell commands for context ≥3 → Task(shell, composer).
+- Any single file >30 lines being written → Task(generalPurpose, composer).
 
 If ANY threshold trips, the FIRST tool call in the response must be the Task dispatch.
 
@@ -87,25 +85,27 @@ If ANY threshold trips, the FIRST tool call in the response must be the Task dis
 ```
 Task(
   subagent_type: "generalPurpose",
-  model: "claude-sonnet-5-thinking-high",
+  model: "composer-2.5-fast",
   description: "<5-word title>",
   prompt: "<full spec: paths, content verbatim or specs, acceptance criteria, lints to pass>"
 )
 
 Task(
   subagent_type: "explore",
-  model: "claude-sonnet-5-thinking-high",
+  model: "composer-2.5-fast",
   description: "<5-word title>",
   prompt: "<question + directory + expected return shape>"
 )
 
 Task(
   subagent_type: "shell",
-  model: "claude-sonnet-5-thinking-high",
+  model: "composer-2.5-fast",
   description: "<5-word title>",
   prompt: "<exact commands, working dir, expected output>"
 )
 ```
+
+Reviewer/judgement subagents (`go-expert`, `test-writer`, `plan-verifier`, etc.) keep their own frontmatter model (`claude-sonnet-5-thinking-high`) — do not pass `composer-2.5-fast` for those dispatches.
 
 Removed subagents (do not reference):
 - `implementor`, `react-reviewer`, `react-ts-expert` — not used in this workflow (2026-07-05)
@@ -132,10 +132,10 @@ Removed subagents (do not reference):
 
 | Tempting thought                                | Reality                                                  |
 |-------------------------------------------------|----------------------------------------------------------|
-| "It's faster if I do it directly"               | Sonnet subagent returns in 10–30s. Count seconds.        |
+| "It's faster if I do it directly"               | Composer/Sonnet subagent returns in 10–30s. Count seconds. |
 | "I already have the context"                    | Pass it in the prompt.                                   |
 | "Just this one file"                            | Measure lines. >30? Dispatch.                            |
-| "Simple mechanical edit"                        | Simple → Sonnet trivial. Dispatch.                       |
+| "Simple mechanical edit"                        | Simple → Composer handles it trivially. Dispatch.        |
 | "The user is waiting"                           | Burning budget makes them wait longer. Dispatch.         |
 | "Subagent might miss context"                   | Pass exact paths and snippets.                           |
 | "I'll just start and switch later"              | No. First tool call = the dispatch.                      |
@@ -147,9 +147,9 @@ Removed subagents (do not reference):
 - `best-of-n-runner` subagent (auto git-worktree), or
 - `using-git-worktrees` superpowers skill (manual)
 
-**Pattern B — Plan in Opus, execute in Sonnet** (one big feature):
+**Pattern B — Plan in Opus, execute in Composer** (one big feature):
 1. Plan Mode in Cursor (Opus) or `writing-plans` skill → PLAN.md
-2. Back to Agent (Opus) → dispatch each atomic step to `Task(generalPurpose, sonnet)`
+2. Back to Agent (Opus) → dispatch each atomic step to `Task(generalPurpose, composer)`
 3. Executor invokes the relevant workspace skill before coding (e.g. under `<repo>/.cursor/skills/`)
 4. `verification-before-completion` skill before any "done" claim
 
@@ -187,8 +187,8 @@ Workspace-specific skills under `<repo>/.cursor/skills/` win over global skills.
 2. Batch parallel `Task()` calls in ONE message — prompt cache stays warm
 3. Use `context-mode` plugin for large tool outputs
 4. Lean on `claude-mem` cross-session memory — don't re-explain known context
-5. Plan Mode for big decisions — small edits go straight to Sonnet dispatch
-6. Healthy week: Sonnet >70% of tokens, Opus <30%
+5. Plan Mode for big decisions — small edits go straight to Composer dispatch
+6. Healthy week: Executor tokens (Composer volume + Sonnet reviewers) >70%, Opus <30%
 
 ## Workspace anti-patterns
 
@@ -196,4 +196,4 @@ Workspace-specific skills under `<repo>/.cursor/skills/` win over global skills.
 - Sequential `Task()` calls when they could be parallel.
 - Re-running already-memoized tools in the same session.
 - Hesitating to dispatch reviewer subagents — Sonnet review (~$0.02) is trivial vs catching bugs late.
-- Sonnet subagent re-dispatching `Task()` for work it should execute itself — Executors do not delegate; only the Orchestrator does.
+- Executor subagent (Composer or Sonnet) re-dispatching `Task()` for work it should execute itself — Executors do not delegate; only the Orchestrator does.
