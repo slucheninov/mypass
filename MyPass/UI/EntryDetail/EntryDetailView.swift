@@ -35,7 +35,7 @@ struct EntryDetailView: View {
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
-    private let timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+    @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private var currentEntry: KdbxEntry? {
         guard let database = vaultSession.currentDatabase, let id = navigationState.selectedEntryID else { return nil }
