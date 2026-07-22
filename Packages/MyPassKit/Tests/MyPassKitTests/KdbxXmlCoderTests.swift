@@ -554,6 +554,71 @@ final class KdbxXmlCoderTests: XCTestCase {
     /// Int64. A value near Int64.min, once combined with the KDBX epoch offset,
     /// would overflow plain `Int64` subtraction and trap (crash the process).
     /// decode() must instead throw a typed error.
+    // MARK: - RecycleBinUUID (Meta)
+
+    func testRecycleBinGroupUUIDRoundTripsThroughEncodeDecode() throws {
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [], subgroups: []
+        )
+        let recycleBinUUID = UUID()
+        let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [], recycleBinGroupUUID: recycleBinUUID)
+        let (obfuscate, deobfuscate) = passthroughStream()
+
+        let xml = KdbxXmlCoder.encode(payload, obfuscate: obfuscate)
+        let xmlString = String(data: xml, encoding: .utf8)!
+        let expectedBase64 = withUnsafeBytes(of: recycleBinUUID.uuid) { Data($0) }.base64EncodedString()
+        XCTAssertTrue(xmlString.contains("<RecycleBinUUID>\(expectedBase64)</RecycleBinUUID>"))
+
+        let decoded = try KdbxXmlCoder.decode(xml, deobfuscate: deobfuscate)
+        XCTAssertEqual(decoded.recycleBinGroupUUID, recycleBinUUID)
+    }
+
+    func testNilRecycleBinGroupUUIDProducesNoElementAndDecodesToNil() throws {
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [], subgroups: []
+        )
+        let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [], recycleBinGroupUUID: nil)
+        let (obfuscate, deobfuscate) = passthroughStream()
+
+        let xml = KdbxXmlCoder.encode(payload, obfuscate: obfuscate)
+        let xmlString = String(data: xml, encoding: .utf8)!
+        XCTAssertFalse(xmlString.contains("RecycleBinUUID"), "no RecycleBinUUID element should be written when nil")
+
+        let decoded = try KdbxXmlCoder.decode(xml, deobfuscate: deobfuscate)
+        XCTAssertNil(decoded.recycleBinGroupUUID)
+    }
+
+    func testDecodeMetaWithoutRecycleBinUUIDElementYieldsNilNotCrash() throws {
+        let uuid = UUID()
+        let uuidBase64 = withUnsafeBytes(of: uuid.uuid) { Data($0) }.base64EncodedString()
+        var now = (Int64(Date().timeIntervalSince1970.rounded()) + 62_135_596_800).littleEndian
+        let nowBase64 = withUnsafeBytes(of: &now) { Data($0) }.base64EncodedString()
+        let xml = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <KeePassFile>
+          <Meta/>
+          <Root>
+            <Group>
+              <UUID>\(uuidBase64)</UUID>
+              <Name>Root</Name>
+              <Times>
+                <CreationTime>\(nowBase64)</CreationTime>
+                <LastModificationTime>\(nowBase64)</LastModificationTime>
+                <LocationChanged>\(nowBase64)</LocationChanged>
+              </Times>
+            </Group>
+          </Root>
+        </KeePassFile>
+        """
+        let data = Data(xml.utf8)
+        let decoded = try KdbxXmlCoder.decode(data) { $0 }
+        XCTAssertNil(decoded.recycleBinGroupUUID)
+    }
+
     func testDecodeDateNearInt64MinThrowsInsteadOfCrashing() {
         var extreme = Int64.min.littleEndian
         let base64Extreme = withUnsafeBytes(of: &extreme) { Data($0) }.base64EncodedString()

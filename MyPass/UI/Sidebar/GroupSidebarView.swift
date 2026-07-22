@@ -3,6 +3,7 @@ import MyPassKit
 
 struct GroupSidebarView: View {
     let rootGroup: KdbxGroup
+    let recycleBinGroupUUID: UUID?
     @EnvironmentObject var navigationState: NavigationState
     @EnvironmentObject var vaultSession: VaultSession
 
@@ -38,7 +39,7 @@ struct GroupSidebarView: View {
                         return true
                     }
             }
-            if let bin = rootGroup.subgroups.first(where: { $0.name == GroupTreeOperations.recycleBinGroupName }) {
+            if let uuid = recycleBinGroupUUID, let bin = rootGroup.subgroups.first(where: { $0.uuid == uuid }) {
                 Text(GroupTreeOperations.recycleBinGroupName)
                     .tag(bin.uuid)
             } else {

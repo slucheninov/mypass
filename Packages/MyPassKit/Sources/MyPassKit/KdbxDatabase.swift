@@ -63,10 +63,14 @@ public enum KdbxDatabaseError: Error, Equatable {
 public struct KdbxDatabase {
     public var rootGroup: KdbxGroup
     public var deletedObjects: [KdbxDeletedObject]
+    /// Mirrors KDBX4's `Meta/RecycleBinUUID`: a UUID reference to whichever
+    /// group is currently the recycle bin, independent of that group's name.
+    public var recycleBinGroupUUID: UUID?
 
-    public init(rootGroup: KdbxGroup, deletedObjects: [KdbxDeletedObject]) {
+    public init(rootGroup: KdbxGroup, deletedObjects: [KdbxDeletedObject], recycleBinGroupUUID: UUID? = nil) {
         self.rootGroup = rootGroup
         self.deletedObjects = deletedObjects
+        self.recycleBinGroupUUID = recycleBinGroupUUID
     }
 
     public static func open(data: Data, password: String) throws -> KdbxDatabase {
@@ -206,7 +210,7 @@ public struct KdbxDatabase {
             throw KdbxDatabaseError.corruptFile("xml payload: \(error)")
         }
 
-        return KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects)
+        return KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects, recycleBinGroupUUID: payload.recycleBinGroupUUID)
     }
 
     public func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {
@@ -236,7 +240,7 @@ public struct KdbxDatabase {
         let innerHeader = KdbxInnerHeader(innerRandomStreamID: .chaCha20, innerRandomStreamKey: innerStreamKey, binaries: [])
         let streamCipher = try InnerRandomStreamCipher(streamID: .chaCha20, rawKey: innerStreamKey)
 
-        let payload = KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects)
+        let payload = KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects, recycleBinGroupUUID: recycleBinGroupUUID)
         let xmlData = KdbxXmlCoder.encode(payload) { plaintext in
             let keystream = streamCipher.nextBytes(plaintext.count)
             return Data(zip(plaintext, keystream).map { $0 ^ $1 })

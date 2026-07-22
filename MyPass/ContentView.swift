@@ -11,7 +11,7 @@ struct ContentView: View {
             UnlockView()
         case .unlocked(let database):
             NavigationSplitView {
-                GroupSidebarView(rootGroup: database.rootGroup)
+                GroupSidebarView(rootGroup: database.rootGroup, recycleBinGroupUUID: database.recycleBinGroupUUID)
             } content: {
                 EntryListView(rootGroup: database.rootGroup)
             } detail: {

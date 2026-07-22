@@ -27,9 +27,10 @@ enum GroupTreeOperations {
     static func moveEntry(withID entryID: UUID, to destinationGroupID: UUID, in root: KdbxGroup) -> Bool {
         guard let (sourceGroup, entryIndex) = findEntryLocation(entryID: entryID, in: root) else { return false }
         guard let destinationGroup = findGroup(uuid: destinationGroupID, in: root) else { return false }
-        let entry = sourceGroup.entries.remove(at: entryIndex)
-        destinationGroup.entries.append(entry)
+        var entry = sourceGroup.entries.remove(at: entryIndex)
         let now = Date()
+        entry.locationChanged = now
+        destinationGroup.entries.append(entry)
         sourceGroup.lastModificationTime = now
         destinationGroup.lastModificationTime = now
         return true
@@ -58,18 +59,21 @@ extension GroupTreeOperations {
     static let recycleBinGroupName = "Корзина"
 
     @discardableResult
-    static func recycleBinGroup(in root: KdbxGroup) -> KdbxGroup {
-        if let existing = root.subgroups.first(where: { $0.name == recycleBinGroupName }) {
+    static func recycleBinGroup(in root: KdbxGroup, recycleBinGroupUUID: inout UUID?) -> KdbxGroup {
+        if let uuid = recycleBinGroupUUID, let existing = findGroup(uuid: uuid, in: root) {
             return existing
         }
-        return addSubgroup(named: recycleBinGroupName, to: root)
+        let created = addSubgroup(named: recycleBinGroupName, to: root)
+        recycleBinGroupUUID = created.uuid
+        return created
     }
 
     @discardableResult
-    static func softDeleteEntry(withID entryID: UUID, in root: KdbxGroup, deletedObjects: inout [KdbxDeletedObject]) -> Bool {
+    static func softDeleteEntry(withID entryID: UUID, in root: KdbxGroup, deletedObjects: inout [KdbxDeletedObject], recycleBinGroupUUID: inout UUID?) -> Bool {
         guard let (sourceGroup, index) = findEntryLocation(entryID: entryID, in: root) else { return false }
-        let entry = sourceGroup.entries.remove(at: index)
-        let bin = recycleBinGroup(in: root)
+        var entry = sourceGroup.entries.remove(at: index)
+        entry.locationChanged = Date()
+        let bin = recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinGroupUUID)
         bin.entries.append(entry)
         deletedObjects.append(KdbxDeletedObject(uuid: entryID, deletionTime: Date()))
         return true

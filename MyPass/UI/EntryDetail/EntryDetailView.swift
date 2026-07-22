@@ -78,7 +78,7 @@ struct EntryDetailView: View {
                 }
                 Button("Удалить", role: .destructive) {
                     vaultSession.mutate { database in
-                        GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects)
+                        GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects, recycleBinGroupUUID: &database.recycleBinGroupUUID)
                     }
                     navigationState.selectedEntryID = nil
                 }
