@@ -53,3 +53,30 @@ enum GroupTreeOperations {
         return nil
     }
 }
+
+extension GroupTreeOperations {
+    static let recycleBinGroupName = "Корзина"
+
+    @discardableResult
+    static func recycleBinGroup(in root: KdbxGroup) -> KdbxGroup {
+        if let existing = root.subgroups.first(where: { $0.name == recycleBinGroupName }) {
+            return existing
+        }
+        return addSubgroup(named: recycleBinGroupName, to: root)
+    }
+
+    @discardableResult
+    static func softDeleteEntry(withID entryID: UUID, in root: KdbxGroup, deletedObjects: inout [KdbxDeletedObject]) -> Bool {
+        guard let (sourceGroup, index) = findEntryLocation(entryID: entryID, in: root) else { return false }
+        let entry = sourceGroup.entries.remove(at: index)
+        let bin = recycleBinGroup(in: root)
+        bin.entries.append(entry)
+        deletedObjects.append(KdbxDeletedObject(uuid: entryID, deletionTime: Date()))
+        return true
+    }
+
+    @discardableResult
+    static func restoreEntry(withID entryID: UUID, to destinationGroupID: UUID, in root: KdbxGroup) -> Bool {
+        moveEntry(withID: entryID, to: destinationGroupID, in: root)
+    }
+}

@@ -76,6 +76,12 @@ struct EntryDetailView: View {
                         Button("Copy", systemImage: "doc.on.doc") { copy(code) }
                     }
                 }
+                Button("Удалить", role: .destructive) {
+                    vaultSession.mutate { database in
+                        GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects)
+                    }
+                    navigationState.selectedEntryID = nil
+                }
             }
             .padding()
             .onReceive(timer) { now = $0 }

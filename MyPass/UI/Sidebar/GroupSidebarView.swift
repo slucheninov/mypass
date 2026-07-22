@@ -38,8 +38,13 @@ struct GroupSidebarView: View {
                         return true
                     }
             }
-            Text("Корзина")
-                .foregroundStyle(.secondary)
+            if let bin = rootGroup.subgroups.first(where: { $0.name == GroupTreeOperations.recycleBinGroupName }) {
+                Text(GroupTreeOperations.recycleBinGroupName)
+                    .tag(bin.uuid)
+            } else {
+                Text(GroupTreeOperations.recycleBinGroupName)
+                    .foregroundStyle(.secondary)
+            }
         }
         .listStyle(.sidebar)
     }

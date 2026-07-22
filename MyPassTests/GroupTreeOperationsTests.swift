@@ -49,4 +49,50 @@ final class GroupTreeOperationsTests: XCTestCase {
         let root = makeGroup(name: "Root", subgroups: [destination])
         XCTAssertFalse(GroupTreeOperations.moveEntry(withID: UUID(), to: destination.uuid, in: root))
     }
+
+    func testRecycleBinGroupCreatesItOnFirstAccess() {
+        let root = makeGroup(name: "Root")
+        let bin = GroupTreeOperations.recycleBinGroup(in: root)
+        XCTAssertEqual(bin.name, GroupTreeOperations.recycleBinGroupName)
+        XCTAssertEqual(root.subgroups.count, 1)
+    }
+
+    func testRecycleBinGroupReturnsExistingOneOnSecondAccess() {
+        let root = makeGroup(name: "Root")
+        let first = GroupTreeOperations.recycleBinGroup(in: root)
+        let second = GroupTreeOperations.recycleBinGroup(in: root)
+        XCTAssertEqual(first.uuid, second.uuid)
+        XCTAssertEqual(root.subgroups.count, 1)
+    }
+
+    func testSoftDeleteMovesEntryToRecycleBinAndRecordsDeletedObject() {
+        let now = Date()
+        let entry = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let source = makeGroup(name: "Source", entries: [entry])
+        let root = makeGroup(name: "Root", subgroups: [source])
+        var deletedObjects: [KdbxDeletedObject] = []
+
+        let deleted = GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: root, deletedObjects: &deletedObjects)
+
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(source.entries.count, 0)
+        let bin = root.subgroups.first { $0.name == GroupTreeOperations.recycleBinGroupName }
+        XCTAssertEqual(bin?.entries.first?.uuid, entry.uuid)
+        XCTAssertEqual(deletedObjects.count, 1)
+        XCTAssertEqual(deletedObjects.first?.uuid, entry.uuid)
+    }
+
+    func testRestoreEntryMovesFromRecycleBinBackToDestination() {
+        let now = Date()
+        let entry = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let source = makeGroup(name: "Source", entries: [entry])
+        let root = makeGroup(name: "Root", subgroups: [source])
+        var deletedObjects: [KdbxDeletedObject] = []
+        GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: root, deletedObjects: &deletedObjects)
+
+        let restored = GroupTreeOperations.restoreEntry(withID: entry.uuid, to: source.uuid, in: root)
+
+        XCTAssertTrue(restored)
+        XCTAssertEqual(source.entries.first?.uuid, entry.uuid)
+    }
 }
