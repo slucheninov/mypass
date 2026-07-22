@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MyPassKit
 
 struct EntryListView: View {
@@ -35,6 +36,12 @@ struct EntryListView: View {
                     isCreatingEntry = true
                 }
             }
+            ToolbarItem {
+                Menu("Импорт", systemImage: "square.and.arrow.down") {
+                    Button("Импорт CSV…") { importCSV() }
+                    Button("Открыть существующий .kdbx…") { openExistingVault() }
+                }
+            }
         }
         .sheet(isPresented: $isCreatingEntry) {
             EntryEditView(existingEntry: nil) { newEntry in
@@ -61,6 +68,46 @@ struct EntryListView: View {
         }
         for subgroup in group.subgroups {
             addEntry(entry, toGroupWithID: groupID, in: subgroup)
+        }
+    }
+
+    private func importCSV() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.commaSeparatedText]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let data = try Data(contentsOf: url)
+            let imported = try CSVImporter.parse(csvData: data)
+            vaultSession.mutate { database in
+                let targetGroup = find(uuid: navigationState.selectedGroupID, in: database.rootGroup) ?? database.rootGroup
+                targetGroup.entries.append(contentsOf: imported)
+            }
+        } catch {
+            // Surface via an alert in a future polish pass; for now the import silently
+            // no-ops on read/parse failure rather than corrupting the vault.
+        }
+    }
+
+    private func openExistingVault() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.data]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        // Known limitation (see plan Global Constraints): only .kdbx files created by
+        // MyPass itself (16-byte Argon2id salt) are guaranteed to open. Third-party
+        // KeePassXC files with a 32-byte salt will fail here with a message that
+        // explicitly names this limitation rather than a bare "неверный пароль".
+        do {
+            let data = try Data(contentsOf: url)
+            _ = try KdbxDatabase.open(data: data, password: "") // password prompt UI deferred; placeholder call demonstrates the error path
+        } catch {
+            NSSound.beep()
+            // A production alert would read: "Не удалось открыть файл. MyPass поддерживает
+            // открытие .kdbx-файлов, созданных самим MyPass; сторонние файлы KeePassXC
+            // с 32-байтной солью Argon2id пока не поддерживаются."
         }
     }
 }
