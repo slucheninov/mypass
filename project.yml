@@ -30,5 +30,7 @@ targets:
     sources:
       - path: MyPassTests
     dependencies:
-      - package: MyPassKit
       - target: MyPass
+    settings:
+      base:
+        GENERATE_INFOPLIST_FILE: YES
