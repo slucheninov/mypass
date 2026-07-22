@@ -90,12 +90,18 @@ final class VaultSession: ObservableObject {
 
     private func persist(_ db: KdbxDatabase) {
         guard let sessionPassword else { return }
-        do {
-            let data = try db.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
-            try fileStore.save(data: data)
-            lastSaveError = nil
-        } catch {
-            lastSaveError = "Не удалось сохранить изменения: \(error)"
+        DispatchQueue.global(qos: .userInitiated).async { [fileStore] in
+            do {
+                let data = try db.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
+                try fileStore.save(data: data)
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastSaveError = nil
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastSaveError = "Не удалось сохранить изменения: \(error)"
+                }
+            }
         }
     }
 }
