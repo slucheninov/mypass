@@ -10,11 +10,13 @@ struct MyPassApp: App {
                 .appendingPathComponent("MyPass")
         )
     )
+    @StateObject private var navigationState = NavigationState()
 
     var body: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(vaultSession)
+                .environmentObject(navigationState)
         }
     }
 }

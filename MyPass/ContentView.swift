@@ -1,15 +1,22 @@
 import SwiftUI
+import MyPassKit
 
 struct ContentView: View {
     @EnvironmentObject var vaultSession: VaultSession
+    @EnvironmentObject var navigationState: NavigationState
 
     var body: some View {
         switch vaultSession.state {
         case .locked:
             UnlockView()
-        case .unlocked:
-            Text("Hello, MyPass") // replaced by NavigationSplitView in Task 10
-                .padding()
+        case .unlocked(let database):
+            NavigationSplitView {
+                GroupSidebarView(rootGroup: database.rootGroup)
+            } content: {
+                EntryListView(rootGroup: database.rootGroup)
+            } detail: {
+                EntryDetailView()
+            }
         }
     }
 }
