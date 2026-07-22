@@ -13,6 +13,9 @@ struct PasswordGeneratorView: View {
     @State private var generatedPassword = ""
     @State private var errorMessage: String?
 
+    private let pasteboard = NSPasteboardClearing()
+    private let clock = RealAutoLockClock()
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("Длина: \(Int(length))")
@@ -39,6 +42,7 @@ struct PasswordGeneratorView: View {
                     Button("Copy", systemImage: "doc.on.doc") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(generatedPassword, forType: .string)
+                        ClipboardAutoClear.schedule(value: generatedPassword, after: 30, pasteboard: pasteboard, clock: clock)
                     }
                     Button("Использовать") {
                         onGenerate(generatedPassword)

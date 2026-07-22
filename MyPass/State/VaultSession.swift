@@ -22,8 +22,13 @@ enum VaultSessionError: Error {
 
 final class VaultSession: ObservableObject {
     @Published private(set) var state: VaultState = .locked
+    @Published private(set) var lastSaveError: String?
 
     private let fileStore: VaultFileStore
+
+    /// Retained for the lifetime of the unlocked session so every mutation can be
+    /// autosaved without re-prompting the user. Wiped on `lock()`.
+    private var sessionPassword: String?
 
     init(fileStore: VaultFileStore) {
         self.fileStore = fileStore
@@ -38,6 +43,7 @@ final class VaultSession: ObservableObject {
         if let existingData = try fileStore.load() {
             let db = try KdbxDatabase.open(data: existingData, password: password)
             state = .unlocked(db)
+            sessionPassword = password
         } else {
             let now = Date()
             let rootGroup = KdbxGroup(
@@ -53,11 +59,13 @@ final class VaultSession: ObservableObject {
             let db = KdbxDatabase(rootGroup: rootGroup, deletedObjects: [])
             state = .unlocked(db)
             try save(password: password)
+            sessionPassword = password
         }
     }
 
     func lock() {
         state = .locked
+        sessionPassword = nil
     }
 
     func save(password: String) throws {
@@ -72,5 +80,22 @@ final class VaultSession: ObservableObject {
         guard case .unlocked(var db) = state else { return }
         body(&db)
         state = .unlocked(db)
+        persist(db)
+    }
+
+    /// Dismisses a surfaced save-error alert without affecting vault state.
+    func acknowledgeSaveError() {
+        lastSaveError = nil
+    }
+
+    private func persist(_ db: KdbxDatabase) {
+        guard let sessionPassword else { return }
+        do {
+            let data = try db.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
+            try fileStore.save(data: data)
+            lastSaveError = nil
+        } catch {
+            lastSaveError = "Не удалось сохранить изменения: \(error)"
+        }
     }
 }

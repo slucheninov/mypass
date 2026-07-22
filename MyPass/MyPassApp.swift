@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MyPassKit
 
 @main
@@ -22,12 +23,23 @@ struct MyPassApp: App {
         )
         _vaultSession = StateObject(wrappedValue: session)
         _navigationState = StateObject(wrappedValue: NavigationState())
-        _autoLockController = StateObject(wrappedValue: AutoLockController(
+
+        let controller = AutoLockController(
             vaultSession: session,
             clock: RealAutoLockClock(),
             sleepObserver: NSWorkspaceSleepObserver(),
             timeout: Self.defaultAutoLockTimeout
-        ))
+        )
+        _autoLockController = StateObject(wrappedValue: controller)
+
+        // Reset the auto-lock timer on real user input so the vault locks after a
+        // period of inactivity, not simply `timeout` seconds after launch.
+        AppDelegate.activityMonitorToken = NSEvent.addLocalMonitorForEvents(
+            matching: [.keyDown, .leftMouseDown, .rightMouseDown, .scrollWheel]
+        ) { event in
+            controller.recordActivity()
+            return event
+        }
     }
 
     var body: some Scene {
@@ -35,6 +47,7 @@ struct MyPassApp: App {
             ContentView()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
+                .environmentObject(autoLockController)
         }
 
         MenuBarExtra("MyPass", systemImage: "key.fill") {

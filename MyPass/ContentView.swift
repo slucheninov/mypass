@@ -17,6 +17,15 @@ struct ContentView: View {
             } detail: {
                 EntryDetailView()
             }
+            .alert(
+                "Ошибка сохранения",
+                isPresented: Binding(
+                    get: { vaultSession.lastSaveError != nil },
+                    set: { if !$0 { vaultSession.acknowledgeSaveError() } }
+                ),
+                actions: {},
+                message: { Text(vaultSession.lastSaveError ?? "") }
+            )
         }
     }
 }

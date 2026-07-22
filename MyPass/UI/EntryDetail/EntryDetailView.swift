@@ -33,6 +33,7 @@ struct EntryDetailView: View {
     @State private var isPasswordRevealed = false
     @State private var now = Date()
     @State private var showHistory = false
+    @State private var showEdit = false
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
@@ -41,6 +42,15 @@ struct EntryDetailView: View {
     private var currentEntry: KdbxEntry? {
         guard let database = vaultSession.currentDatabase, let id = navigationState.selectedEntryID else { return nil }
         return EntrySearch.allEntries(in: database.rootGroup).first { $0.uuid == id }
+    }
+
+    /// True when the current entry currently lives in the Recycle Bin group, i.e. it
+    /// was soft-deleted and is awaiting restore or permanent purge.
+    private func isInRecycleBin(_ entry: KdbxEntry) -> Bool {
+        guard let database = vaultSession.currentDatabase,
+              let binUUID = database.recycleBinGroupUUID,
+              let bin = database.rootGroup.subgroups.first(where: { $0.uuid == binUUID }) else { return false }
+        return bin.entries.contains(where: { $0.uuid == entry.uuid })
     }
 
     var body: some View {
@@ -78,11 +88,23 @@ struct EntryDetailView: View {
                     }
                 }
                 Button("История") { showHistory = true }
-                Button("Удалить", role: .destructive) {
-                    vaultSession.mutate { database in
-                        GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects, recycleBinGroupUUID: &database.recycleBinGroupUUID)
+                Button("Редактировать") { showEdit = true }
+                if isInRecycleBin(entry) {
+                    Button("Восстановить") {
+                        vaultSession.mutate { database in
+                            // The entry's original source group isn't tracked once soft-deleted,
+                            // so root is the safe, predictable restore destination.
+                            GroupTreeOperations.restoreEntry(withID: entry.uuid, to: database.rootGroup.uuid, in: database.rootGroup)
+                        }
+                        navigationState.selectedEntryID = nil
                     }
-                    navigationState.selectedEntryID = nil
+                } else {
+                    Button("Удалить", role: .destructive) {
+                        vaultSession.mutate { database in
+                            GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects, recycleBinGroupUUID: &database.recycleBinGroupUUID)
+                        }
+                        navigationState.selectedEntryID = nil
+                    }
                 }
             }
             .padding()
@@ -93,6 +115,14 @@ struct EntryDetailView: View {
                         replaceEntry(updated, in: database.rootGroup)
                     }
                     showHistory = false
+                }
+            }
+            .sheet(isPresented: $showEdit) {
+                EntryEditView(existingEntry: entry) { updated in
+                    vaultSession.mutate { database in
+                        replaceEntry(updated, in: database.rootGroup)
+                    }
+                    showEdit = false
                 }
             }
         } else {

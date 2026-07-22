@@ -39,4 +39,39 @@ final class VaultSessionTests: XCTestCase {
         }
         XCTAssertEqual(secondSession.state, .locked)
     }
+
+    func testMutateAutosavesSoASecondSessionSeesTheChange() throws {
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "correct-horse")
+
+        let now = Date()
+        let entry = KdbxEntry(
+            uuid: UUID(),
+            iconID: 0,
+            fields: [],
+            creationTime: now,
+            lastModificationTime: now,
+            lastAccessTime: now,
+            locationChanged: now,
+            history: []
+        )
+        session.mutate { database in
+            var mutableEntry = entry
+            mutableEntry.title = "Mutated Entry"
+            database.rootGroup.entries.append(mutableEntry)
+        }
+        XCTAssertNil(session.lastSaveError)
+
+        // A brand-new session pointed at the SAME fileStore/directory must be able to
+        // unlock with the same password and see the mutation persisted to disk — this
+        // is the end-to-end proof that mutate() now autosaves rather than only ever
+        // writing once at first-run creation time.
+        let secondSession = VaultSession(fileStore: fileStore)
+        try secondSession.unlock(password: "correct-horse")
+        guard case .unlocked(let db) = secondSession.state else {
+            return XCTFail("expected unlocked state")
+        }
+        XCTAssertEqual(db.rootGroup.entries.count, 1)
+        XCTAssertEqual(db.rootGroup.entries.first?.title, "Mutated Entry")
+    }
 }
