@@ -2,3 +2,6 @@
 *.xcodeproj
 MyPass/Info.plist
 MyPassTests/Info.plist
+.build/
+Packages/*/.build/
+

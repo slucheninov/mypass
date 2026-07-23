@@ -4,6 +4,8 @@ options:
 packages:
   MyPassKit:
     path: Packages/MyPassKit
+  SyncKit:
+    path: Packages/SyncKit
 targets:
   MyPass:
     type: application
@@ -13,6 +15,7 @@ targets:
       - path: MyPass
     dependencies:
       - package: MyPassKit
+      - package: SyncKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mypass.app
