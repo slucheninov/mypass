@@ -1,5 +1,5 @@
 ---
-description: "Global workflow (revised 2026-07-22 to Opus 4.8/Fable 5 orchestrator + role-split executor tiers + HARD delegation rules). Main session is Opus 4.8 (`claude-opus-4-8-thinking-high`) by default, with Fable 5 (`claude-fable-5-high`) as an acceptable alternative; the Orchestrator MUST delegate Write/Edit/Read/Shell past hard numerical thresholds to Executor subagents split by role: Composer 2.5 Fast (`composer-2.5-fast`) for volume executors (`generalPurpose`, `explore`, `shell`, `best-of-n-runner`), Sonnet 5 (`claude-sonnet-5-thinking-high`) for reviewer/judgement subagents. A preToolUse hook (~/.cursor/hooks/enforce-large-write.sh) blocks direct Orchestrator Writes >30 lines. Dispatched Composer/Sonnet Executor subagents must NOT re-dispatch Task() to equal-tier agents. Use superpowers skills (brainstorming, writing-plans, executing-plans, dispatching-parallel-agents, using-git-worktrees, verification-before-completion). DO NOT use gsd-* (archived) or claude-mem skills (make-plan/do/learn-codebase)."
+description: "Global workflow (revised 2026-07-22 to Opus 4.8/Fable 5 orchestrator + role-split executor tiers + HARD delegation rules). Main session is Opus 4.8 (`claude-opus-4-8-thinking-high`) by default, with Fable 5 (`claude-fable-5-high`) as an acceptable alternative; the Orchestrator MUST delegate Write/Edit/Read/Shell past hard numerical thresholds to Executor subagents split by role: Composer 2.5 Fast (`composer-2.5-fast`) for volume executors (`generalPurpose`, `explore`, `shell`, `best-of-n-runner`), Sonnet 5 (`claude-sonnet-5-thinking-medium`) for reviewer/judgement subagents. A preToolUse hook (~/.cursor/hooks/enforce-large-write.sh) blocks direct Orchestrator Writes >30 lines. Dispatched Composer/Sonnet Executor subagents must NOT re-dispatch Task() to equal-tier agents. Use superpowers skills (brainstorming, writing-plans, executing-plans, dispatching-parallel-agents, using-git-worktrees, verification-before-completion). DO NOT use gsd-* (archived) or claude-mem skills (make-plan/do/learn-codebase)."
 alwaysApply: true
 ---
 
@@ -25,12 +25,12 @@ The main session runs on **Opus 4.8** (`claude-opus-4-8-thinking-high`), with **
 |------|-----|-------|-------------------|
 | **Orchestrator** | Main chat session only | `claude-opus-4-8-thinking-high` or `claude-fable-5-high` | **Yes** — dispatches Tier-2 executors |
 | **Executor (volume)** | Dispatched `generalPurpose`, `explore`, `shell`, `best-of-n-runner` | `composer-2.5-fast` | **No** — execute work directly |
-| **Executor (reviewer)** | Dispatched `go-expert`, `postgres-expert`, `prompt-engineer`, `slack-expert`, `test-writer`, `code-reviewer`, `plan-verifier`, `requirements-planner`, `youtrack-task-writer` | `claude-sonnet-5-thinking-high` | **No** — execute work directly |
+| **Executor (reviewer)** | Dispatched `go-expert`, `postgres-expert`, `prompt-engineer`, `slack-expert`, `test-writer`, `code-reviewer`, `plan-verifier`, `requirements-planner`, `youtrack-task-writer` | `claude-sonnet-5-thinking-medium` | **No** — execute work directly |
 
 **Critical rule:** HARD delegation thresholds (Rules 1–5 below) apply **only to the Orchestrator tier**. When you are a dispatched Composer or Sonnet subagent, you are an Executor — do **not** spawn `Task()` subagents for work you were dispatched to do. Read, write, edit, and shell directly within your prompt scope.
 
-**Forbidden:** Executor → `Task(..., model=composer-2.5-fast)` or `Task(..., model=claude-sonnet-5-thinking-high)` for mechanical execution (equal-tier re-delegation).
-**Allowed:** Orchestrator → `Task(..., model=composer-2.5-fast)` for volume work, or `Task(..., model=claude-sonnet-5-thinking-high)` for reviewer/judgement work, per Rules 1–5.
+**Forbidden:** Executor → `Task(..., model=composer-2.5-fast)` or `Task(..., model=claude-sonnet-5-thinking-medium)` for mechanical execution (equal-tier re-delegation).
+**Allowed:** Orchestrator → `Task(..., model=composer-2.5-fast)` for volume work, or `Task(..., model=claude-sonnet-5-thinking-medium)` for reviewer/judgement work, per Rules 1–5.
 
 ## HARD RULES — check BEFORE every tool call
 
@@ -105,7 +105,7 @@ Task(
 )
 ```
 
-Reviewer/judgement subagents (`go-expert`, `test-writer`, `plan-verifier`, etc.) keep their own frontmatter model (`claude-sonnet-5-thinking-high`) — do not pass `composer-2.5-fast` for those dispatches.
+Reviewer/judgement subagents (`go-expert`, `test-writer`, `plan-verifier`, etc.) keep their own frontmatter model (`claude-sonnet-5-thinking-medium`) — do not pass `composer-2.5-fast` for those dispatches.
 
 Removed subagents (do not reference):
 - `implementor`, `react-reviewer`, `react-ts-expert` — not used in this workflow (2026-07-05)

@@ -20,7 +20,7 @@ The contract for every session is therefore:
 > **Opus THINKS, DECIDES, DELEGATES, and VERIFIES.**
 > **Opus does NOT write code, run long shell pipelines, or read large file sets directly past the thresholds below.**
 
-The thresholds in this file are HARD numerical triggers, not preferences. If a trigger fires, you STOP the in-progress tool call and dispatch a `Task(...)` Executor subagent instead — **`composer-2.5-fast`** for volume executors (`generalPurpose`, `explore`, `shell`, `best-of-n-runner`), **`claude-sonnet-5-thinking-high`** for reviewer/judgement subagents. No exceptions for "I already have the context" or "it's just one file". A Cursor `preToolUse` hook at `~/.cursor/hooks/enforce-large-write.sh` enforces the Write rule programmatically.
+The thresholds in this file are HARD numerical triggers, not preferences. If a trigger fires, you STOP the in-progress tool call and dispatch a `Task(...)` Executor subagent instead — **`composer-2.5-fast`** for volume executors (`generalPurpose`, `explore`, `shell`, `best-of-n-runner`), **`claude-sonnet-5-thinking-medium`** for reviewer/judgement subagents. No exceptions for "I already have the context" or "it's just one file". A Cursor `preToolUse` hook at `~/.cursor/hooks/enforce-large-write.sh` enforces the Write rule programmatically.
 
 ---
 
@@ -30,12 +30,12 @@ The thresholds in this file are HARD numerical triggers, not preferences. If a t
 |------|-----|-------|-------------------|
 | **Orchestrator** | Main chat session only | `claude-opus-4-8-thinking-high` or `claude-fable-5-high` | **Yes** — dispatches Tier-2 executors |
 | **Executor (volume)** | Dispatched `generalPurpose`, `explore`, `shell`, `best-of-n-runner` | `composer-2.5-fast` | **No** — execute work directly |
-| **Executor (reviewer)** | Dispatched `go-expert`, `postgres-expert`, `prompt-engineer`, `slack-expert`, `test-writer`, `code-reviewer`, `plan-verifier`, `requirements-planner`, `youtrack-task-writer` | `claude-sonnet-5-thinking-high` | **No** — execute work directly |
+| **Executor (reviewer)** | Dispatched `go-expert`, `postgres-expert`, `prompt-engineer`, `slack-expert`, `test-writer`, `code-reviewer`, `plan-verifier`, `requirements-planner`, `youtrack-task-writer` | `claude-sonnet-5-thinking-medium` | **No** — execute work directly |
 
 **Critical rule:** HARD delegation thresholds (Rules 1–5 below) apply **only to the Orchestrator tier**. When you are a dispatched Composer or Sonnet subagent, you are an Executor — do **not** spawn `Task()` subagents for work you were dispatched to do. Read, write, edit, and shell directly within your prompt scope.
 
-**Forbidden:** Executor → `Task(..., model=composer-2.5-fast)` or `Task(..., model=claude-sonnet-5-thinking-high)` for mechanical execution (equal-tier re-delegation).
-**Allowed:** Orchestrator → `Task(..., model=composer-2.5-fast)` for volume work, or `Task(..., model=claude-sonnet-5-thinking-high)` for reviewer/judgement work, per Rules 1–5.
+**Forbidden:** Executor → `Task(..., model=composer-2.5-fast)` or `Task(..., model=claude-sonnet-5-thinking-medium)` for mechanical execution (equal-tier re-delegation).
+**Allowed:** Orchestrator → `Task(..., model=composer-2.5-fast)` for volume work, or `Task(..., model=claude-sonnet-5-thinking-medium)` for reviewer/judgement work, per Rules 1–5.
 
 ---
 
@@ -123,7 +123,7 @@ Task(
 ```
 Task(
  subagent_type: "test-writer",   // or go-expert, plan-verifier, code-reviewer, etc.
- model: "claude-sonnet-5-thinking-high",
+ model: "claude-sonnet-5-thinking-medium",
  description: "<5-word title>",
  prompt: "<what to review/verify, against which spec/acceptance criteria>"
 )

@@ -1,5 +1,6 @@
 import Foundation
 import MyPassKit
+import SyncKit
 
 enum VaultState {
     case locked
@@ -26,6 +27,11 @@ final class VaultSession: ObservableObject {
 
     private let fileStore: VaultFileStore
 
+    /// Optional remote sync orchestrator (Phase 3). `nil` for sessions that
+    /// only ever use local storage — every existing Phase 2 call site keeps
+    /// compiling and behaving unchanged via the default parameter below.
+    private let syncEngine: SyncEngine?
+
     /// Retained for the lifetime of the unlocked session so every mutation can be
     /// autosaved without re-prompting the user. Wiped on `lock()`.
     private var sessionPassword: String?
@@ -39,8 +45,9 @@ final class VaultSession: ObservableObject {
     /// correct. Serializing here guarantees writes land in invocation order.
     private let persistQueue = DispatchQueue(label: "com.mypass.vaultsession.persist", qos: .userInitiated)
 
-    init(fileStore: VaultFileStore) {
+    init(fileStore: VaultFileStore, syncEngine: SyncEngine? = nil) {
         self.fileStore = fileStore
+        self.syncEngine = syncEngine
     }
 
     var currentDatabase: KdbxDatabase? {
@@ -53,6 +60,7 @@ final class VaultSession: ObservableObject {
             let db = try KdbxDatabase.open(data: existingData, password: password)
             state = .unlocked(db)
             sessionPassword = password
+            state = .unlocked(syncOnUnlock(db, password: password))
         } else {
             let now = Date()
             let rootGroup = KdbxGroup(
@@ -69,6 +77,7 @@ final class VaultSession: ObservableObject {
             state = .unlocked(db)
             try save(password: password)
             sessionPassword = password
+            state = .unlocked(syncOnUnlock(db, password: password))
         }
     }
 
@@ -97,6 +106,31 @@ final class VaultSession: ObservableObject {
         lastSaveError = nil
     }
 
+    /// Runs one `SyncEngine.sync(...)` pass (if a `syncEngine` is attached)
+    /// right after unlocking, so a merge made on another device is picked up
+    /// as soon as the vault opens rather than only at the next mutation.
+    /// Returns `db` unchanged when there is no `syncEngine`, or when sync
+    /// itself fails — the local database the user already unlocked must
+    /// remain usable even if the network round-trip does not succeed.
+    private func syncOnUnlock(_ db: KdbxDatabase, password: String) -> KdbxDatabase {
+        guard let syncEngine else { return db }
+        let result: SyncResult
+        do {
+            result = try syncEngine.sync(local: db, password: password, cipher: .aes256, compression: .gzip)
+        } catch {
+            lastSaveError = "Не удалось синхронизировать хранилище: \(error)"
+            return db
+        }
+        guard case .merged(let mergedDatabase) = result else { return db }
+        do {
+            let data = try mergedDatabase.save(password: password, cipher: .aes256, compression: .gzip)
+            try fileStore.save(data: data)
+        } catch {
+            lastSaveError = "Не удалось сохранить объединённые изменения локально: \(error)"
+        }
+        return mergedDatabase
+    }
+
     private func persist(_ db: KdbxDatabase) {
         guard let sessionPassword else { return }
         // Deep-copy the group tree synchronously (main thread, no concurrent
@@ -107,16 +141,30 @@ final class VaultSession: ObservableObject {
             deletedObjects: db.deletedObjects,
             recycleBinGroupUUID: db.recycleBinGroupUUID
         )
-        persistQueue.async { [fileStore] in
+        persistQueue.async { [fileStore, syncEngine] in
             do {
                 let data = try snapshot.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
                 try fileStore.save(data: data)
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastSaveError = "Не удалось сохранить изменения: \(error)"
+                }
+                return
+            }
+            guard let syncEngine else {
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastSaveError = nil
+                }
+                return
+            }
+            do {
+                _ = try syncEngine.sync(local: snapshot, password: sessionPassword, cipher: .aes256, compression: .gzip)
                 DispatchQueue.main.async { [weak self] in
                     self?.lastSaveError = nil
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
-                    self?.lastSaveError = "Не удалось сохранить изменения: \(error)"
+                    self?.lastSaveError = "Локальное сохранение выполнено, но синхронизация не удалась: \(error)"
                 }
             }
         }
