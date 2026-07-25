@@ -6,6 +6,8 @@ packages:
     path: Packages/MyPassKit
   SyncKit:
     path: Packages/SyncKit
+  ExtensionBridgeKit:
+    path: Packages/ExtensionBridgeKit
 targets:
   MyPass:
     type: application
@@ -16,6 +18,7 @@ targets:
     dependencies:
       - package: MyPassKit
       - package: SyncKit
+      - package: ExtensionBridgeKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mypass.app
