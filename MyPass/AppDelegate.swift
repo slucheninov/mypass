@@ -16,6 +16,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// lifetime of the app.
     static var localFolderChangeWatcher: LocalFolderChangeWatcher?
 
+    /// Фаза 4: retains the loopback server that bridges MyPass.app to ChromeHost
+    /// for the lifetime of the app.
+    static var extensionBridgeServer: LoopbackServer?
+
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         false
     }

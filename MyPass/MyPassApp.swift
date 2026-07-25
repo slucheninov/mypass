@@ -2,6 +2,7 @@ import SwiftUI
 import AppKit
 import MyPassKit
 import SyncKit
+import ExtensionBridgeKit
 
 @main
 struct MyPassApp: App {
@@ -81,6 +82,19 @@ struct MyPassApp: App {
             syncEngine: syncEngine
         )
         _vaultSession = StateObject(wrappedValue: session)
+
+        let extensionBridgeService = ExtensionBridgeService(vaultSession: session)
+        let extensionBridgeServer = LoopbackServer(
+            tokenStore: ExtensionBridgeTokenStore(),
+            handler: extensionBridgeService.handle
+        )
+        try? extensionBridgeServer.start()
+        AppDelegate.extensionBridgeServer = extensionBridgeServer
+
+        NativeMessagingHostInstaller.installIfNeeded(
+            hostBinaryPath: NativeMessagingHostInstaller.debugChromeHostBinaryPath,
+            extensionID: NativeMessagingHostInstaller.developmentPlaceholderExtensionID
+        )
         _navigationState = StateObject(wrappedValue: NavigationState())
 
         let controller = AutoLockController(
