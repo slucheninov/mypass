@@ -45,7 +45,24 @@ struct MyPassApp: App {
             case .iCloud:
                 backend = SyncBackendResolver.resolveICloudBackend()
             case .sftp:
-                backend = nil // wired in Task 13
+                let host = defaults.string(forKey: "syncSFTPHost") ?? ""
+                let port = defaults.object(forKey: "syncSFTPPort") as? Int ?? 22
+                let remotePath = defaults.string(forKey: "syncSFTPRemotePath") ?? "/upload/vault.kdbx"
+                guard !host.isEmpty,
+                      let credentials = try? CredentialKeychainStore().loadCredentials(forHost: host) else {
+                    backend = nil
+                    break
+                }
+                let configuration = SyncBackendResolver.buildSFTPConfiguration(
+                    host: host,
+                    port: port,
+                    username: defaults.string(forKey: "syncSFTPUsername") ?? "",
+                    remotePath: remotePath,
+                    credentials: credentials
+                )
+                backend = configuration.map {
+                    SFTPBackend(configuration: $0, trustedHostKeyStore: UserDefaultsTrustedHostKeyStore())
+                }
             }
 
             guard let backend else { return nil }

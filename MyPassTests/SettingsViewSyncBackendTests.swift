@@ -34,4 +34,106 @@ final class SettingsViewSyncBackendTests: XCTestCase {
         let garbage = Data([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE])
         XCTAssertNil(SyncBackendResolver.resolveLocalFolderBackend(bookmarkData: garbage))
     }
+
+    func testBuildSFTPConfigurationCombinesStoredFieldsWithLoadedCredentials() throws {
+        let credentials = SFTPCredentials(
+            username: "vault-user",
+            privateKeyPEM: "-----BEGIN OPENSSH PRIVATE KEY-----\nfake\n-----END OPENSSH PRIVATE KEY-----",
+            privateKeyPassphrase: "hunter2"
+        )
+
+        let configuration = try XCTUnwrap(SyncBackendResolver.buildSFTPConfiguration(
+            host: "sftp.example.com",
+            port: 2222,
+            username: "ignored-form-field-username",
+            remotePath: "/upload/vault.kdbx",
+            credentials: credentials
+        ))
+
+        XCTAssertEqual(configuration.host, "sftp.example.com")
+        XCTAssertEqual(configuration.port, 2222)
+        // The username actually used comes from the loaded Keychain
+        // credentials, not the (possibly stale) form field — Keychain is
+        // the single source of truth for anything paired with the private
+        // key, since a mismatched username would silently fail auth.
+        XCTAssertEqual(configuration.username, "vault-user")
+        XCTAssertEqual(configuration.remotePath, "/upload/vault.kdbx")
+        XCTAssertEqual(configuration.privateKeyPEM, credentials.privateKeyPEM)
+        XCTAssertEqual(configuration.privateKeyPassphrase, "hunter2")
+    }
+
+    func testBuildSFTPConfigurationReturnsNilWithoutCredentials() {
+        XCTAssertNil(SyncBackendResolver.buildSFTPConfiguration(
+            host: "sftp.example.com",
+            port: 22,
+            username: "someone",
+            remotePath: "/upload/vault.kdbx",
+            credentials: nil
+        ))
+    }
+
+    func testBuildSFTPConfigurationReturnsNilWithEmptyHost() {
+        let credentials = SFTPCredentials(username: "u", privateKeyPEM: "pem", privateKeyPassphrase: nil)
+        XCTAssertNil(SyncBackendResolver.buildSFTPConfiguration(
+            host: "",
+            port: 22,
+            username: "u",
+            remotePath: "/upload/vault.kdbx",
+            credentials: credentials
+        ))
+    }
+
+    func testSFTPConnectionTesterReturnsSuccessWhenBackendDoesNotThrow() {
+        struct AlwaysExistsBackend: StorageBackend {
+            func read() throws -> Data? { nil }
+            func write(_ data: Data) throws {}
+            func modificationDate() throws -> Date? { nil }
+            func exists() throws -> Bool { true }
+        }
+
+        let configuration = SFTPBackendConfiguration(
+            host: "sftp.example.com", username: "u", remotePath: "/upload/vault.kdbx", privateKeyPEM: "pem"
+        )
+        let tester = SFTPConnectionTester(
+            configurationProvider: { configuration },
+            backendFactory: { _ in AlwaysExistsBackend() }
+        )
+
+        switch tester.testConnection() {
+        case .success: break
+        case .failure(let error): XCTFail("expected success, got \(error)")
+        }
+    }
+
+    func testSFTPConnectionTesterReturnsFailureWhenBackendThrows() {
+        struct ThrowingBackend: StorageBackend {
+            struct Boom: Error {}
+            func read() throws -> Data? { throw Boom() }
+            func write(_ data: Data) throws { throw Boom() }
+            func modificationDate() throws -> Date? { throw Boom() }
+            func exists() throws -> Bool { throw Boom() }
+        }
+
+        let configuration = SFTPBackendConfiguration(
+            host: "sftp.example.com", username: "u", remotePath: "/upload/vault.kdbx", privateKeyPEM: "pem"
+        )
+        let tester = SFTPConnectionTester(
+            configurationProvider: { configuration },
+            backendFactory: { _ in ThrowingBackend() }
+        )
+
+        switch tester.testConnection() {
+        case .success: XCTFail("expected failure")
+        case .failure: break
+        }
+    }
+
+    func testSFTPConnectionTesterReturnsFailureWhenConfigurationIsMissing() {
+        let tester = SFTPConnectionTester(configurationProvider: { nil })
+        switch tester.testConnection() {
+        case .success: XCTFail("expected failure")
+        case .failure(let error):
+            XCTAssertEqual(error as? SFTPConnectionTesterError, .missingConfiguration)
+        }
+    }
 }

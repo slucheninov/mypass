@@ -10,40 +10,47 @@ enum SyncBackendOption: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    // .local and .iCloud are wired in Phase 3 Task 12. .sftp is wired in
-    // Task 13. The picker below persists the user's choice to UserDefaults
-    // regardless of availability so a preference recorded before a backend
-    // was wired is still there once it is.
-    var isAvailable: Bool {
-        switch self {
-        case .local, .iCloud: return true
-        case .sftp: return false
-        }
-    }
+    var isAvailable: Bool { true }
 }
 
 struct SettingsView: View {
     @AppStorage("autoLockTimeoutMinutes") private var autoLockTimeoutMinutes: Double = 15
     @AppStorage("backupCount") private var backupCount: Int = 10
     @AppStorage("syncBackend") private var syncBackendRawValue: String = SyncBackendOption.local.rawValue
-
-    // Non-secret Local-folder bookmark data — @AppStorage supports `Data?`
-    // directly (one of AppStorage's natively-supported property list types
-    // alongside Bool/Int/Double/String/URL), so no base64/string bridging is
-    // needed here, unlike the SFTP secrets in Task 13 which deliberately
-    // avoid @AppStorage/UserDefaults entirely and go to Keychain instead.
     @AppStorage("syncLocalFolderBookmark") private var syncLocalFolderBookmarkData: Data?
+
+    // SFTP non-secret fields — host/port/username/remotePath/paths only.
+    // The private key PEM and its passphrase NEVER go through @AppStorage/
+    // UserDefaults — they are stored exclusively via CredentialKeychainStore
+    // (Task 9), per the design doc's security stance that secret material
+    // belongs in Keychain, not plist-backed UserDefaults.
+    @AppStorage("syncSFTPHost") private var sftpHost: String = ""
+    @AppStorage("syncSFTPPort") private var sftpPort: Int = 22
+    @AppStorage("syncSFTPUsername") private var sftpUsername: String = ""
+    @AppStorage("syncSFTPRemotePath") private var sftpRemotePath: String = "/upload/vault.kdbx"
+    @AppStorage("syncSFTPPrivateKeyPath") private var sftpPrivateKeyPath: String = ""
+    // UI-only bookkeeping — see this task's "Известный пробел" note above:
+    // not wired into SFTPBackendConfiguration (Task 10 has no certificate
+    // field), kept only so the chosen path survives across Settings reopens.
+    @AppStorage("syncSFTPCertificatePath") private var sftpCertificatePath: String = ""
+
+    @State private var sftpPrivateKeyPEM: String = ""
+    @State private var sftpPassphrase: String = ""
+    @State private var connectionTestState: ConnectionTestState = .idle
 
     @State private var iCloudContainerAvailable: Bool = true
     @State private var iCloudContainerCheckMessage: String?
     @State private var manualSyncStatusMessage: String?
 
-    // Bridges the persisted timeout to the live, running AutoLockController (Task 5) so that
-    // changing the stepper actually affects autolock behavior in this session, and so a value
-    // persisted in a previous session is restored into the controller on next launch too —
-    // otherwise UserDefaults would hold a value the running controller never reads.
     @EnvironmentObject private var autoLockController: AutoLockController
     @EnvironmentObject private var vaultSession: VaultSession
+
+    private enum ConnectionTestState: Equatable {
+        case idle
+        case testing
+        case success
+        case failure(String)
+    }
 
     private var selectedOption: SyncBackendOption {
         SyncBackendOption(rawValue: syncBackendRawValue) ?? .local
@@ -60,8 +67,7 @@ struct SettingsView: View {
             Section("Синхронизация") {
                 Picker("Бэкенд", selection: $syncBackendRawValue) {
                     ForEach(SyncBackendOption.allCases) { option in
-                        Text(option.isAvailable ? option.rawValue : "\(option.rawValue) (скоро)")
-                            .tag(option.rawValue)
+                        Text(option.rawValue).tag(option.rawValue)
                     }
                 }
 
@@ -71,8 +77,7 @@ struct SettingsView: View {
                 case .iCloud:
                     iCloudSection
                 case .sftp:
-                    Text("SFTP появится в следующей задаче Фазы 3.")
-                        .foregroundStyle(.secondary)
+                    sftpSection
                 }
 
                 Button("Синхронизировать сейчас") {
@@ -87,13 +92,11 @@ struct SettingsView: View {
             }
         }
         .padding()
-        .frame(width: 360)
+        .frame(width: 420)
         .onAppear {
-            // Restore a persisted value into the live controller at view-appear time — covers
-            // the case where a timeout was changed in a previous session but the controller
-            // (constructed once in MyPassApp.init with a hardcoded default) never saw it.
             autoLockController.timeout = autoLockTimeoutMinutes * 60
             refreshICloudStatus()
+            loadSFTPCredentialsIfAvailable()
         }
         .onChange(of: autoLockTimeoutMinutes) { _, newValue in
             autoLockController.timeout = newValue * 60
@@ -106,10 +109,9 @@ struct SettingsView: View {
     private var localFolderSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             if let bookmarkData = syncLocalFolderBookmarkData, !bookmarkData.isEmpty,
-               let backend = SyncBackendResolver.resolveLocalFolderBackend(bookmarkData: bookmarkData) {
+               SyncBackendResolver.resolveLocalFolderBackend(bookmarkData: bookmarkData) != nil {
                 Text("Папка выбрана.")
                     .foregroundStyle(.secondary)
-                    .task { _ = backend } // keeps `backend` from being flagged unused; construction itself already validates the bookmark
             } else {
                 Text("Папка не выбрана.")
                     .foregroundStyle(.secondary)
@@ -134,6 +136,120 @@ struct SettingsView: View {
             } else {
                 Text(iCloudContainerCheckMessage ?? "iCloud Drive недоступен — войдите в iCloud и включите iCloud Drive в Системных настройках.")
                     .foregroundStyle(.orange)
+            }
+        }
+    }
+
+    private var sftpSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("Хост", text: $sftpHost)
+            Stepper("Порт: \(sftpPort)", value: $sftpPort, in: 1...65535)
+            TextField("Пользователь", text: $sftpUsername)
+                .onChange(of: sftpUsername) { _, _ in persistCredentialsToKeychain() }
+            TextField("Путь на сервере", text: $sftpRemotePath)
+            SecureField("Passphrase ключа (если есть)", text: $sftpPassphrase)
+                .onChange(of: sftpPassphrase) { _, _ in persistCredentialsToKeychain() }
+
+            HStack {
+                Text(sftpPrivateKeyPath.isEmpty ? "Ключ не выбран" : sftpPrivateKeyPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Button("Выбрать приватный ключ…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = true
+                    panel.canChooseDirectories = false
+                    panel.allowsMultipleSelection = false
+                    if panel.runModal() == .OK, let url = panel.url {
+                        sftpPrivateKeyPath = url.path
+                        if let contents = try? String(contentsOf: url, encoding: .utf8) {
+                            sftpPrivateKeyPEM = contents
+                            persistCredentialsToKeychain()
+                        }
+                    }
+                }
+            }
+
+            HStack {
+                Text(sftpCertificatePath.isEmpty ? "Сертификат не выбран (опционально)" : sftpCertificatePath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Button("Выбрать сертификат…") {
+                    let panel = NSOpenPanel()
+                    panel.canChooseFiles = true
+                    panel.canChooseDirectories = false
+                    panel.allowsMultipleSelection = false
+                    if panel.runModal() == .OK, let url = panel.url {
+                        // Path-only, UI bookkeeping — see this task's
+                        // "Известный пробел" note: not yet wired into any
+                        // real SSH authentication.
+                        sftpCertificatePath = url.path
+                    }
+                }
+            }
+
+            Button("Проверить соединение") {
+                testSFTPConnection()
+            }
+            switch connectionTestState {
+            case .idle:
+                EmptyView()
+            case .testing:
+                ProgressView().controlSize(.small)
+            case .success:
+                Label("Соединение успешно", systemImage: "checkmark.circle.fill")
+                    .foregroundStyle(.green)
+            case .failure(let message):
+                Label(message, systemImage: "xmark.circle.fill")
+                    .foregroundStyle(.red)
+            }
+        }
+    }
+
+    private func loadSFTPCredentialsIfAvailable() {
+        guard !sftpHost.isEmpty,
+              let credentials = try? CredentialKeychainStore().loadCredentials(forHost: sftpHost) else { return }
+        sftpUsername = credentials.username
+        sftpPrivateKeyPEM = credentials.privateKeyPEM
+        sftpPassphrase = credentials.privateKeyPassphrase ?? ""
+    }
+
+    private func persistCredentialsToKeychain() {
+        guard !sftpHost.isEmpty, !sftpPrivateKeyPEM.isEmpty else { return }
+        let credentials = SFTPCredentials(
+            username: sftpUsername,
+            privateKeyPEM: sftpPrivateKeyPEM,
+            privateKeyPassphrase: sftpPassphrase.isEmpty ? nil : sftpPassphrase
+        )
+        try? CredentialKeychainStore().store(credentials, forHost: sftpHost)
+    }
+
+    private func testSFTPConnection() {
+        connectionTestState = .testing
+        let configuration = SyncBackendResolver.buildSFTPConfiguration(
+            host: sftpHost,
+            port: sftpPort,
+            username: sftpUsername,
+            remotePath: sftpRemotePath,
+            credentials: SFTPCredentials(
+                username: sftpUsername,
+                privateKeyPEM: sftpPrivateKeyPEM,
+                privateKeyPassphrase: sftpPassphrase.isEmpty ? nil : sftpPassphrase
+            )
+        )
+        let tester = SFTPConnectionTester(configurationProvider: { configuration })
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = tester.testConnection()
+            DispatchQueue.main.async {
+                switch result {
+                case .success:
+                    connectionTestState = .success
+                case .failure(let error):
+                    connectionTestState = .failure("\(error)")
+                }
             }
         }
     }

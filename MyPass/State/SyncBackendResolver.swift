@@ -26,4 +26,31 @@ enum SyncBackendResolver {
     static func resolveICloudBackend(relativePath: String = "vault.kdbx") -> iCloudBackend? {
         try? iCloudBackend(relativePath: relativePath)
     }
+
+    /// Combines the non-secret SFTP form fields with Keychain-loaded
+    /// `SFTPCredentials` (Task 9) into a real `SFTPBackendConfiguration`
+    /// (Task 10). Returns `nil` when `host` is empty or no credentials have
+    /// been stored yet — both are expected, common "not configured yet"
+    /// states, not errors. The username actually used always comes from the
+    /// loaded credentials (paired with the private key at storage time),
+    /// not the possibly-stale `username` form field, so a form field edited
+    /// without re-picking the key can never silently desync from the key
+    /// it's meant to go with.
+    static func buildSFTPConfiguration(
+        host: String,
+        port: Int,
+        username: String,
+        remotePath: String,
+        credentials: SFTPCredentials?
+    ) -> SFTPBackendConfiguration? {
+        guard !host.isEmpty, let credentials else { return nil }
+        return SFTPBackendConfiguration(
+            host: host,
+            port: port,
+            username: credentials.username,
+            remotePath: remotePath,
+            privateKeyPEM: credentials.privateKeyPEM,
+            privateKeyPassphrase: credentials.privateKeyPassphrase
+        )
+    }
 }
