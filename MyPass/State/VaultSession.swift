@@ -101,6 +101,23 @@ final class VaultSession: ObservableObject {
         persist(db)
     }
 
+    /// Runs a sync pass without an accompanying local mutation — used by
+    /// external-change notifications (Task 3's `LocalFolderChangeWatcher`
+    /// for the Local backend, `iCloudBackend.onRemoteChange` for the iCloud
+    /// backend, both wired in `MyPassApp.init()`, Task 12) and by a manual
+    /// "Sync Now" affordance in Settings (Task 12/13), so a remote change
+    /// made on another device is picked up promptly instead of waiting for
+    /// the next unlock or local edit. Reuses the existing serial
+    /// `persistQueue` + `syncEngine.sync(...)` pipeline via `persist(_:)` —
+    /// re-saving byte-identical content locally when nothing actually
+    /// changed is harmless (`VaultFileStore.save` overwrites idempotently)
+    /// and keeps this a single well-tested code path rather than a second,
+    /// parallel one.
+    func triggerBackgroundSync() {
+        guard case .unlocked(let db) = state else { return }
+        persist(db)
+    }
+
     /// Dismisses a surfaced save-error alert without affecting vault state.
     func acknowledgeSaveError() {
         lastSaveError = nil
