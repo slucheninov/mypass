@@ -45,6 +45,22 @@ public final class SyncEngine {
         cipher: KdbxCipher,
         compression: KdbxCompression
     ) throws -> SyncResult {
+        // Fold any pending iCloud-style conflict versions into `remote`'s
+        // current content BEFORE the normal download/merge/upload cycle
+        // below — closes the design spec's NSFileVersion requirement
+        // (Phase 3 Self-Review gap). No-ops for any backend that doesn't
+        // conform to `ConflictResolvingStorageBackend` (i.e. everything
+        // except `iCloudBackend`), preserving "any StorageBackend is
+        // pluggable" with zero special-casing for those backends.
+        if let conflictResolvingRemote = remote as? ConflictResolvingStorageBackend {
+            _ = try conflictResolvingRemote.resolveConflictVersions { currentData, conflictData in
+                let currentDatabase = try KdbxDatabase.open(data: currentData, password: password)
+                let conflictDatabase = try KdbxDatabase.open(data: conflictData, password: password)
+                let merged = MergeEngine.merge(local: currentDatabase, remote: conflictDatabase)
+                return try merged.save(password: password, cipher: cipher, compression: compression)
+            }
+        }
+
         let localData = try local.save(password: password, cipher: cipher, compression: compression)
 
         guard try remote.exists() else {

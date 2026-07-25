@@ -16,7 +16,7 @@ public enum iCloudBackendError: Error, Equatable {
 /// guarantee coordinated, safe I/O and that a read never returns a
 /// partially-downloaded placeholder (`ensureDownloaded`, called from
 /// `read()`), per the design doc's "iCloud задерживает выгрузку" risk row.
-public final class iCloudBackend: StorageBackend {
+public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBackend {
     private let containerURL: URL
     private let relativePath: String
     private let presenter: iCloudFilePresenter
@@ -134,6 +134,45 @@ public final class iCloudBackend: StorageBackend {
             Thread.sleep(forTimeInterval: 0.2)
         }
         throw iCloudBackendError.downloadTimedOut
+    }
+
+    /// Folds any unresolved iCloud conflict versions of this backend's file
+    /// into a single merged version, via the caller-supplied `merge`
+    /// closure — one raw-`Data`-in, raw-`Data`-out step per conflict, so
+    /// `iCloudBackend` itself stays password/`KdbxDatabase`-agnostic (same
+    /// separation of concerns as `StorageBackend` overall — `SyncEngine` is
+    /// the one that knows how to decrypt/merge/re-encrypt, via the closure
+    /// it passes in). Returns `false` when there are no unresolved
+    /// conflicts. When conflicts exist: reads the current file content,
+    /// folds each conflict version's content into it in turn via `merge`,
+    /// writes the folded result back as the current version, and marks
+    /// every conflict version resolved so iCloud stops surfacing it.
+    /// Addresses the design spec's "conflict-версии (NSFileVersion)
+    /// прогоняются через merge и удаляются" requirement, which Task 11's
+    /// initial implementation deliberately deferred (see Phase 3 plan's
+    /// Self-Review).
+    public func resolveConflictVersions(merge: (Data, Data) throws -> Data) throws -> Bool {
+        guard let conflictVersions = NSFileVersion.unresolvedConflictVersionsOfItem(at: fileURL),
+              !conflictVersions.isEmpty else {
+            return false
+        }
+        guard var mergedData = try read() else {
+            // No readable current version to merge conflicts into — nothing
+            // sensible to do; leave the conflicts unresolved rather than
+            // guessing which conflict version should become "current".
+            return false
+        }
+
+        for conflictVersion in conflictVersions {
+            guard let conflictData = try? Data(contentsOf: conflictVersion.url) else { continue }
+            mergedData = try merge(mergedData, conflictData)
+        }
+
+        try write(mergedData)
+        for conflictVersion in conflictVersions {
+            conflictVersion.isResolved = true
+        }
+        return true
     }
 }
 

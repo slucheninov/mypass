@@ -47,6 +47,20 @@ final class iCloudBackendTests: XCTestCase {
         XCTAssertFalse(try backend.exists())
         XCTAssertNil(try backend.read())
     }
+
+    func testResolveConflictVersionsReturnsFalseWhenNoConflictsExist() throws {
+        let backend = try iCloudBackend(relativePath: "mypass-icloud-backend-tests-\(UUID().uuidString).kdbx")
+        try backend.write(Data("no conflicts here".utf8))
+
+        var mergeCalled = false
+        let resolved = try backend.resolveConflictVersions { current, _ in
+            mergeCalled = true
+            return current
+        }
+
+        XCTAssertFalse(resolved)
+        XCTAssertFalse(mergeCalled)
+    }
 }
 
 /// Pure/unit tests that do NOT touch a real ubiquity container — always run,
