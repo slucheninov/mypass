@@ -91,7 +91,7 @@ struct MyPassApp: App {
         try? extensionBridgeServer.start()
         AppDelegate.extensionBridgeServer = extensionBridgeServer
 
-        NativeMessagingHostInstaller.installIfNeeded(
+        try? NativeMessagingHostInstaller.installIfNeeded(
             hostBinaryPath: NativeMessagingHostInstaller.debugChromeHostBinaryPath,
             extensionID: NativeMessagingHostInstaller.developmentPlaceholderExtensionID
         )

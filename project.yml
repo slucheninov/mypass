@@ -29,6 +29,19 @@ targets:
       properties:
         NSFaceIDUsageDescription: "MyPass использует Touch ID для быстрой разблокировки вашего хранилища паролей."
         LSApplicationCategoryType: public.app-category.utilities
+  ChromeHost:
+    type: tool
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: ChromeHost
+    dependencies:
+      - package: ExtensionBridgeKit
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.mypass.chromehost
+        CODE_SIGN_ENTITLEMENTS: ChromeHost/ChromeHost.entitlements
+        MARKETING_VERSION: "0.1.0"
   MyPassTests:
     type: bundle.unit-test
     platform: macOS
