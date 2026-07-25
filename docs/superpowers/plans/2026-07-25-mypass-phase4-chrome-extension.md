@@ -1016,7 +1016,7 @@ final class ExtensionBridgeService {
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse
 }
 ```
-Consumed by Task 6 (`LoopbackServer`'s injected handler closure), Task 7 (wired in `MyPassApp.init()`).
+Consumed by Task 6 (`LoopbackServer`'s injected handler closure), Task 7 (wired in `MyPassApp.init()`). `onSaveProposal` itself is set to a real closure (not left as a bare extension point) in Task 13, which activates the main window and presents a pre-filled create-entry form.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1146,6 +1146,10 @@ import ExtensionBridgeKit
 /// before a request ever reaches this type — `handle(_:)` trusts its caller.
 final class ExtensionBridgeService {
     weak var vaultSession: VaultSession?
+    /// Fired for `.proposeSaveLogin` requests. Wired to real window-activation +
+    /// pre-filled create-entry UI in Task 13 (`MyPassApp.init()` sets this to a
+    /// closure that populates `NavigationState.pendingSaveProposal` and brings
+    /// `MyPass.app` to the foreground) — not left as a bare extension point.
     var onSaveProposal: ((_ url: String, _ username: String, _ password: String) -> Void)?
 
     init(vaultSession: VaultSession) {
@@ -2486,14 +2490,219 @@ Run through this checklist in order. This is the real final deliverable of Task 
 9. Click the listed entry. Expected: the popup closes and the page's username/password fields are filled with `demo-user`/`demo-pass` (open DevTools and confirm both `input` and `change` events fired if a framework is involved — plain fixture doesn't need this, but note it for real-site testing later).
 10. On the fixture page, clear both fields, type a different username/password, and submit the form (button "Sign in"). Since the domain already has a matching entry (step 7), expect NO save banner to appear (there's a match, so `content.js`'s `lastCredentialList` is non-empty at submit time — to properly exercise the banner, first delete the entry created in step 7 in `MyPass.app`, then repeat this step for a fresh submit).
 11. After deleting the entry and reloading the page, submit the form again with test values. Expected: a "Сохранить пароль в MyPass?" banner appears bottom-right on the page.
-12. Click "Сохранить" on the banner. Expected: the banner disappears; `MyPass.app`'s `onSaveProposal` closure fires (verify via a temporary breakpoint/log, since the actual "open create-entry form pre-filled" UI wiring is out of scope for this plan's Swift tasks — `ExtensionBridgeService.onSaveProposal` is available for that UI work to hook into in a follow-up, but is not itself built here).
+12. Click "Сохранить" on the banner. Expected: the banner disappears and `MyPass.app`'s `onSaveProposal` closure fires, sending the `proposeSaveLogin` request through to `ExtensionBridgeService.handle(_:)`. This step only verifies that the message reaches `MyPass.app` and the banner clears — see Task 13's checklist for verifying that the app window activates and the pre-filled create-entry form appears, which is the rest of this flow.
 13. Quit `MyPass.app` entirely, reload the fixture page, click the MyPass toolbar icon. Expected: popup shows "MyPass не найден..." (since `ChromeHost`'s TCP connection now fails).
 
-Phase 4 (Chrome) is complete once this checklist passes end to end.
+This checklist covers the autofill flow (getCredentials/fillCredential) and confirms the save-proposal message reaches `MyPass.app`. Proceed to Task 13 to build and verify the save-proposal UI itself (window activation + pre-filled create-entry form) — Phase 4 (Chrome) is not complete until Task 13's checklist also passes.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add ChromeExtension/popup.html ChromeExtension/popup.js ChromeExtension/tests/fixtures/login.html
-git commit -m "Фаза 4, Task 12: popup.html/popup.js + end-to-end manual checklist (Фаза 4 complete)"
+git commit -m "Фаза 4, Task 12: popup.html/popup.js + end-to-end manual checklist (autofill flow)"
 ```
+
+---
+
+### Task 13: Сохранение предложенного логина — UI активации окна и предзаполненной формы
+
+**Files:**
+- Modify: `MyPass/State/NavigationState.swift`
+- Modify: `MyPass/ContentView.swift`
+- Modify: `MyPass/MyPassApp.swift`
+- Test: `MyPassTests/NavigationStatePendingSaveProposalTests.swift`
+
+**Interfaces:**
+- Consumes: `ExtensionBridgeService.onSaveProposal` (Task 5), `ExtensionEntryMatcher.registrableDomain(from:)` (Task 4), `EntryEditView(existingEntry:onSave:)` (existing UI, `MyPass/UI/EntryDetail/EntryEditView.swift` — unmodified), `VaultSession.mutate(_:)` (existing), `NSApp` (AppKit).
+- Produces:
+```swift
+struct PendingSaveProposal: Identifiable {
+    let id = UUID()
+    let url: String
+    let username: String
+    let password: String
+    var registrableDomain: String { get }
+}
+
+final class NavigationState: ObservableObject {
+    // ...existing published properties...
+    @Published var pendingSaveProposal: PendingSaveProposal?
+}
+```
+This is the payoff task for the `onSaveProposal` extension point Task 5 defined and Task 6/7 wired transport for: when the user confirms the "Сохранить пароль в MyPass?" banner in Chrome, `MyPass.app` activates and shows a pre-filled create-entry form via the existing `EntryEditView`, reusing its "draft entry as `existingEntry`" mechanism rather than adding any new UI surface. Nothing in this plan consumes `PendingSaveProposal` further — it is the terminal UI hop that closes the save-new-login-via-extension MVP flow described in `docs/superpowers/specs/2026-07-25-mypass-phase4-chrome-extension-design.md`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `MyPassTests/NavigationStatePendingSaveProposalTests.swift`:
+
+```swift
+import XCTest
+@testable import MyPass
+
+final class NavigationStatePendingSaveProposalTests: XCTestCase {
+    func testRegistrableDomainUsesParsedDomainForValidURL() {
+        let proposal = PendingSaveProposal(url: "https://login.example.com/signup", username: "alice", password: "pw")
+        XCTAssertEqual(proposal.registrableDomain, "example.com")
+    }
+
+    func testRegistrableDomainFallsBackToRawURLWhenUnparseable() {
+        let proposal = PendingSaveProposal(url: "not a url $$$", username: "alice", password: "pw")
+        XCTAssertEqual(proposal.registrableDomain, "not a url $$$")
+    }
+}
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `xcodegen generate && xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -only-testing:MyPassTests/NavigationStatePendingSaveProposalTests`
+Expected: FAIL — `PendingSaveProposal` does not exist yet.
+
+- [ ] **Step 3: Write minimal implementation**
+
+Modify `MyPass/State/NavigationState.swift` — current full content is 8 lines (`selectedGroupID`/`selectedEntryID`/`searchText` only); replace it with:
+
+```swift
+import Foundation
+
+/// A save-login proposal relayed from `ExtensionBridgeService.onSaveProposal`
+/// (Фаза 4, Task 5/13), waiting to be shown as a pre-filled create-entry sheet
+/// by `ContentView`. `Identifiable` so it can drive `.sheet(item:)` directly.
+struct PendingSaveProposal: Identifiable {
+    let id = UUID()
+    let url: String
+    let username: String
+    let password: String
+
+    /// Best-effort registrable domain for use as the draft entry's title —
+    /// falls back to the raw URL when `ExtensionEntryMatcher` can't parse a
+    /// host out of it (e.g. malformed or non-HTTP input from the extension).
+    var registrableDomain: String {
+        ExtensionEntryMatcher.registrableDomain(from: url) ?? url
+    }
+}
+
+final class NavigationState: ObservableObject {
+    @Published var selectedGroupID: UUID?
+    @Published var selectedEntryID: UUID?
+    @Published var searchText: String = ""
+    @Published var pendingSaveProposal: PendingSaveProposal?
+}
+```
+
+`ExtensionEntryMatcher` (Task 4) lives in the same `MyPass` target under `MyPass/State/ExtensionBridge/`, so no import is needed beyond `Foundation`.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -only-testing:MyPassTests/NavigationStatePendingSaveProposalTests`
+Expected: PASS (2 tests).
+
+- [ ] **Step 5: Wire the sheet into `ContentView`**
+
+This step is SwiftUI view-layer wiring, not independently unit-testable (same honest constraint already applied to `MyPassApp.init()` in Task 7) — it is verified manually in Step 7 below.
+
+Modify `MyPass/ContentView.swift` — current content is 31 lines (`.locked`/`.unlocked` switch, `NavigationSplitView` with an existing `.alert(...)` modifier). Add a `.sheet(item:)` modifier immediately after the existing `.alert(...)`, and add a private `draftEntry(from:)` helper:
+
+```swift
+            NavigationSplitView {
+                GroupSidebarView(rootGroup: database.rootGroup, recycleBinGroupUUID: database.recycleBinGroupUUID)
+            } content: {
+                EntryListView(rootGroup: database.rootGroup)
+            } detail: {
+                EntryDetailView()
+            }
+            .alert( /* lastSaveError alert — unchanged */ )
+            .sheet(item: $navigationState.pendingSaveProposal) { proposal in
+                EntryEditView(existingEntry: draftEntry(from: proposal)) { entry in
+                    vaultSession.mutate { database in
+                        database.rootGroup.entries.append(entry)
+                    }
+                    navigationState.pendingSaveProposal = nil
+                }
+            }
+```
+
+And add this private method to `ContentView`:
+
+```swift
+    private func draftEntry(from proposal: PendingSaveProposal) -> KdbxEntry {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now,
+            history: []
+        )
+        entry.title = proposal.registrableDomain
+        entry.login = proposal.username
+        entry.password = proposal.password
+        entry.url = proposal.url
+        return entry
+    }
+```
+
+`EntryEditView` itself needs no changes: passing this freshly-`UUID()`'d, pre-populated `KdbxEntry` as `existingEntry` makes `EntryEditView`'s `init` seed its `@State` title/login/password/url from it (exactly like the existing "create entry" sheet in `EntryListView` passes `existingEntry: nil` — here we pass a non-nil draft instead), and `save()` uses that same draft as the base it mutates and hands to `onSave`, without checking whether the entry already exists in the vault tree.
+
+One-line note on dismissal: only the `onSave` path above needs the explicit `navigationState.pendingSaveProposal = nil` — `.sheet(item:)`'s built-in dismiss-via-item-binding already sets `pendingSaveProposal` back to `nil` on Cancel or swipe-away, so no explicit handling is needed for those paths.
+
+- [ ] **Step 6: Wire the real `onSaveProposal` closure in `MyPassApp.init()`**
+
+Also not independently unit-testable — `NSApp` window activation requires a live app/window, verified manually in Step 7.
+
+Task 7 already inserts the `extensionBridgeService`/`extensionBridgeServer` construction between `_vaultSession = StateObject(wrappedValue: session)` and `_navigationState = StateObject(wrappedValue: NavigationState())` in `MyPass/MyPassApp.swift`. Task 13 needs a named `navigationState` local so the closure below can capture it weakly (the existing `[weak session]` capture used for `backgroundSyncTimer` a few lines down is the same pattern already in this file) — replace:
+
+```swift
+_navigationState = StateObject(wrappedValue: NavigationState())
+```
+
+with:
+
+```swift
+let navigationState = NavigationState()
+_navigationState = StateObject(wrappedValue: navigationState)
+
+// Фаза 4, Task 13: real UI for ExtensionBridgeService.onSaveProposal (Task 5's
+// extension point). The dispatch to main is technically redundant here since
+// LoopbackServer (Task 6) already dispatches onto the main thread before
+// invoking the handler that eventually calls this closure — but the window
+// activation calls below specifically need to run after SwiftUI has had a
+// chance to process the `@Published pendingSaveProposal` change (so the sheet
+// exists before we bring the window forward), so the async hop stays as
+// defense-in-depth rather than being removed.
+extensionBridgeService.onSaveProposal = { [weak navigationState] url, username, password in
+    DispatchQueue.main.async {
+        navigationState?.pendingSaveProposal = PendingSaveProposal(url: url, username: username, password: password)
+        NSApp.activate(ignoringOtherApps: true)
+        NSApp.windows.first(where: { $0.isVisible || $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+    }
+}
+```
+
+- [ ] **Step 7: Manual verification (build + save-proposal smoke test)**
+
+```bash
+xcodegen generate
+xcodebuild -project MyPass.xcodeproj -scheme MyPass build
+```
+
+Expected: build succeeds.
+
+This flow can be exercised without a full Chrome round-trip by calling `ExtensionBridgeService.handle(_:)` directly with a `proposeSaveLogin` request — either from a throwaway XCTest or from the Xcode debugger while the app is running and stopped at a breakpoint:
+
+1. Run `MyPass.app` from Xcode, unlock the vault, and let it run (don't stop at a breakpoint yet — the app needs to be live so `NSApp`/its window exist).
+2. Pause execution (Xcode's pause button) and, in the debugger console, run:
+   ```
+   po AppDelegate.extensionBridgeServer
+   ```
+   to confirm the server (and therefore the wired `ExtensionBridgeService`) is alive. Since `ExtensionBridgeService` itself isn't retained on `AppDelegate`, the more direct check is behavioral: resume execution and drive the flow from the extension side.
+3. Resume execution, then in Chrome (with the extension loaded per Task 12's checklist) submit a login form on the local test fixture (`ChromeExtension/tests/fixtures/login.html`, served per Task 12 Step 5) for a domain with no existing matching entry, exactly as in Task 12 checklist steps 10-11, and click "Сохранить" on the banner (Task 12 checklist step 12).
+4. Expected (this is what Task 12 checklist step 12 left unverified): `MyPass.app`'s window comes to the foreground (even if it was not the frontmost app, or was minimized/behind other windows), and a sheet appears on top of it showing `EntryEditView` with the title field pre-filled to the fixture's registrable domain (`localhost` when testing via the fixture, since `registrableDomain` falls back to the raw host when there's no real public suffix to strip), the login field pre-filled with the username typed into the form, the password field pre-filled with the password typed into the form, and the URL field pre-filled with the page's URL.
+5. Click "Сохранить" in `EntryEditView`. Expected: the sheet dismisses, and the new entry appears in the vault's entry list with the fields from step 4.
+6. Repeat steps 3-4 but click "Отмена" (Cancel) in `EntryEditView` instead. Expected: the sheet dismisses, no new entry is created, and `navigationState.pendingSaveProposal` is `nil` again (confirmable via a temporary breakpoint on the `.sheet(item:)` closure, or simply by re-triggering the save-proposal flow and observing the form is blank/fresh rather than showing stale data).
+
+- [ ] **Step 8: Commit**
+
+```bash
+git add MyPass/State/NavigationState.swift MyPass/ContentView.swift MyPass/MyPassApp.swift MyPassTests/NavigationStatePendingSaveProposalTests.swift
+git commit -m "Фаза 4, Task 13: сохранение предложенного логина — активация окна + предзаполненная форма создания записи"
+```
+
+Фаза 4 (Chrome) полностью закрывает согласованный MVP-скоуп (автозаполнение существующих логинов + сохранение нового логина через расширение) после прохождения этого чек-листа.
