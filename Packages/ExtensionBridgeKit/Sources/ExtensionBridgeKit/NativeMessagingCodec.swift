@@ -12,15 +12,40 @@ public enum NativeMessagingCodec {
     }
 }
 
+/// Thrown by `NativeMessagingFrameReader.feed` when a peer claims a frame
+/// length larger than the reader's configured cap. The 4-byte length prefix
+/// is an unchecked `UInt32` (up to ~4.29 GB); without a cap, a malicious or
+/// buggy peer on a reachable socket (e.g. `LoopbackServer`, Task 6) could
+/// force unbounded buffer growth in a password-manager process while the
+/// reader waits for that many bytes to arrive. This protocol's actual JSON
+/// payloads (credential lists, save proposals) are always tiny by comparison.
+public enum NativeMessagingFrameReaderError: Error, Equatable {
+    case frameTooLarge(claimed: Int, max: Int)
+}
+
 /// Incremental decoder: accumulates bytes fed via `feed(_:)` and returns zero or
 /// more complete payloads, tolerating partial reads and multiple frames per call —
 /// both are normal on a real stdio/TCP stream.
 public final class NativeMessagingFrameReader {
+    /// 10 MB is comfortably larger than any real payload this protocol ever
+    /// sends (credential lists, save proposals — all small JSON), while still
+    /// bounding worst-case memory growth from a hostile/buggy peer.
+    public static let defaultMaxFrameSize = 10 * 1024 * 1024
+
     private var buffer = Data()
+    private let maxFrameSize: Int
 
-    public init() {}
+    public init(maxFrameSize: Int = NativeMessagingFrameReader.defaultMaxFrameSize) {
+        self.maxFrameSize = maxFrameSize
+    }
 
-    public func feed(_ data: Data) -> [Data] {
+    /// - Throws: `NativeMessagingFrameReaderError.frameTooLarge` if the claimed
+    ///   frame length exceeds `maxFrameSize`. The internal buffer is discarded
+    ///   before throwing, so the reader never accumulates bytes toward an
+    ///   oversized claimed length. Callers should treat this as fatal for the
+    ///   connection (the byte stream can no longer be trusted to be
+    ///   frame-aligned) rather than retriable.
+    public func feed(_ data: Data) throws -> [Data] {
         buffer.append(data)
         var frames: [Data] = []
 
@@ -31,6 +56,11 @@ public final class NativeMessagingFrameReader {
                 | (UInt32(lengthBytes[2]) << 16)
                 | (UInt32(lengthBytes[3]) << 24)
             let frameLength = Int(length)
+
+            guard frameLength <= maxFrameSize else {
+                buffer.removeAll()
+                throw NativeMessagingFrameReaderError.frameTooLarge(claimed: frameLength, max: maxFrameSize)
+            }
 
             guard buffer.count >= 4 + frameLength else { break }
 

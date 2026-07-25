@@ -25,15 +25,21 @@ final class LoopbackServer {
     /// for it. Only the `handler` invocation (which touches `VaultSession`,
     /// main-thread-only) is explicitly hopped onto `.main` in `handleFrame`.
     private let queue = DispatchQueue(label: "com.mypass.extensionbridge.loopback")
+    private let maxConcurrentConnections: Int
     private var listener: NWListener?
     private var activeConnections: [NWConnection] = []
     private var token: String = ""
 
     private(set) var port: UInt16?
 
-    init(tokenStore: ExtensionBridgeTokenStoring, handler: @escaping (ExtensionBridgeRequest) -> ExtensionBridgeResponse) {
+    init(
+        tokenStore: ExtensionBridgeTokenStoring,
+        handler: @escaping (ExtensionBridgeRequest) -> ExtensionBridgeResponse,
+        maxConcurrentConnections: Int = 16
+    ) {
         self.tokenStore = tokenStore
         self.handler = handler
+        self.maxConcurrentConnections = maxConcurrentConnections
     }
 
     static func isValidToken(_ candidate: String, expected: String) -> Bool {
@@ -41,7 +47,13 @@ final class LoopbackServer {
     }
 
     func start() throws {
-        let newListener = try NWListener(using: .tcp, on: .any)
+        // `.tcp` alone binds the wildcard address (all interfaces) — not
+        // loopback-only. Restricting to `.loopback` confines the listener to
+        // 127.0.0.1/::1 so it's unreachable from other devices on the LAN,
+        // even though the port is randomly OS-assigned.
+        let parameters = NWParameters.tcp
+        parameters.requiredInterfaceType = .loopback
+        let newListener = try NWListener(using: parameters, on: .any)
         let semaphore = DispatchSemaphore(value: 0)
         var startError: Error?
 
@@ -89,6 +101,15 @@ final class LoopbackServer {
     }
 
     private func accept(_ connection: NWConnection) {
+        // Cap concurrent connections against the now-reachable (if
+        // loopback-only) socket — an unbounded accept loop is itself a
+        // resource-exhaustion surface even with the frame-size guard below.
+        // Connections beyond the cap are cancelled before `start()`, so the
+        // accept never completes at the application layer.
+        guard activeConnections.count < maxConcurrentConnections else {
+            connection.cancel()
+            return
+        }
         activeConnections.append(connection)
         let reader = NativeMessagingFrameReader()
         connection.start(queue: queue)
@@ -99,8 +120,21 @@ final class LoopbackServer {
         connection.receive(minimumIncompleteLength: 1, maximumLength: 65536) { [weak self] data, _, isComplete, error in
             guard let self else { return }
             if let data, !data.isEmpty {
-                for frame in reader.feed(data) {
-                    self.handleFrame(frame, on: connection)
+                do {
+                    for frame in try reader.feed(data) {
+                        self.handleFrame(frame, on: connection)
+                    }
+                } catch {
+                    // Claimed frame length exceeded the cap: the byte stream
+                    // can no longer be trusted to be frame-aligned, so the
+                    // connection is not salvageable — report and close it
+                    // rather than continuing to read. `cancel()` is deferred
+                    // to the send's completion handler: calling it right
+                    // after issuing an async `send` can tear the connection
+                    // down before the queued bytes are actually flushed to
+                    // the socket, silently dropping the error response.
+                    self.sendAndClose(.error("frame too large"), on: connection)
+                    return
                 }
             }
             if isComplete || error != nil {
@@ -139,5 +173,21 @@ final class LoopbackServer {
     private func send(_ response: ExtensionBridgeResponse, on connection: NWConnection) {
         guard let payload = try? JSONEncoder().encode(response) else { return }
         connection.send(content: NativeMessagingCodec.encode(payload), completion: .contentProcessed { _ in })
+    }
+
+    /// Sends `response` and only cancels/deregisters the connection once the
+    /// send has actually completed, so a fatal-error response (e.g. an
+    /// oversized claimed frame length) isn't dropped by a `cancel()` racing
+    /// ahead of its own outbound bytes.
+    private func sendAndClose(_ response: ExtensionBridgeResponse, on connection: NWConnection) {
+        guard let payload = try? JSONEncoder().encode(response) else {
+            connection.cancel()
+            activeConnections.removeAll { $0 === connection }
+            return
+        }
+        connection.send(content: NativeMessagingCodec.encode(payload), completion: .contentProcessed { [weak self] _ in
+            connection.cancel()
+            self?.activeConnections.removeAll { $0 === connection }
+        })
     }
 }
