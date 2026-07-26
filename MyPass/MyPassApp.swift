@@ -227,6 +227,7 @@ struct MyPassApp: App {
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
         }
+        .menuBarExtraStyle(.window)
     }
 
     @SceneBuilder
