@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// Retains the extension pairing store and manager for the lifetime of the app.
     static var extensionPairingStore: KeychainExtensionPairingStore?
+    static var extensionPairingStoreModel: ExtensionPairingStoreModel?
     static var extensionPairingManager: ExtensionPairingManager?
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {

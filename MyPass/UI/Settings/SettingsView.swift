@@ -40,6 +40,7 @@ struct SettingsView: View {
                 .environmentObject(vaultSession)
         case .browser:
             BrowserSettingsPane()
+                .environmentObject(AppDelegate.extensionPairingStoreModel!)
         case .sync:
             SyncSettingsPane()
                 .environmentObject(autoLockController)

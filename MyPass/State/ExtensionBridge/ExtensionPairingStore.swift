@@ -1,6 +1,7 @@
 import CryptoKit
 import Foundation
 import Security
+import Combine
 
 struct PairedBrowser: Codable, Equatable, Identifiable {
     let id: UUID
@@ -14,6 +15,18 @@ protocol ExtensionPairingStoring: AnyObject {
     func add(_ browser: PairedBrowser) throws
     func remove(id: UUID) throws
     func containsSecret(matching secret: String) -> Bool
+}
+
+final class ExtensionPairingStoreModel: ObservableObject {
+    let store: ExtensionPairingStoring
+
+    init(store: ExtensionPairingStoring) {
+        self.store = store
+    }
+
+    func refresh() -> [PairedBrowser] {
+        store.list()
+    }
 }
 
 enum ExtensionPairingStoreError: Error {

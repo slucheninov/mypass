@@ -87,8 +87,10 @@ struct MyPassApp: App {
         _vaultSession = StateObject(wrappedValue: session)
 
         let pairingStore = KeychainExtensionPairingStore()
+        let pairingStoreModel = ExtensionPairingStoreModel(store: pairingStore)
         let pairingManager = ExtensionPairingManager(store: pairingStore)
         AppDelegate.extensionPairingStore = pairingStore
+        AppDelegate.extensionPairingStoreModel = pairingStoreModel
         AppDelegate.extensionPairingManager = pairingManager
         let extensionBridgeService = ExtensionBridgeService(
             vaultSession: session,
