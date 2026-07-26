@@ -19,6 +19,7 @@ struct EntryEditView: View {
     @State private var otpauthInput: String = ""
     @State private var extraFields: [(key: String, value: String)] = []
     @State private var showPasswordGenerator = false
+    @State private var isPasswordRevealed = false
 
     init(
         existingEntry: KdbxEntry?,
@@ -57,7 +58,20 @@ struct EntryEditView: View {
             TextField("Title", text: $title)
             TextField("Username", text: $login)
             HStack {
-                SecureField("Password", text: $password)
+                Group {
+                    if isPasswordRevealed {
+                        TextField("Password", text: $password)
+                    } else {
+                        SecureField("Password", text: $password)
+                    }
+                }
+                Button {
+                    isPasswordRevealed.toggle()
+                } label: {
+                    Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(isPasswordRevealed ? "Hide password" : "Show password")
                 Button("Generate") { showPasswordGenerator = true }
             }
             TextField("URL", text: $url)

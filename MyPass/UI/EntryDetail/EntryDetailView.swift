@@ -31,6 +31,9 @@ struct EntryDetailView: View {
     @EnvironmentObject var vaultSession: VaultSession
     @EnvironmentObject var navigationState: NavigationState
     @State private var isPasswordRevealed = false
+    @State private var revealedExtraFields: Set<String> = []
+    @State private var copiedField: CopiedField?
+    @State private var copyFlashTask: Task<Void, Never>?
     @State private var now = Date()
     @State private var showHistory = false
     @State private var lastTouchedEntryID: UUID?
@@ -38,6 +41,15 @@ struct EntryDetailView: View {
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
     @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private enum CopiedField: Equatable {
+        case username
+        case password
+        case totp
+        case extra(String)
+    }
+
+    private static let standardFieldKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp"]
 
     private var currentEntry: KdbxEntry? {
         guard let database = vaultSession.currentDatabase, let id = navigationState.selectedEntryID else { return nil }
@@ -51,6 +63,18 @@ struct EntryDetailView: View {
               let binUUID = database.recycleBinGroupUUID,
               let bin = database.rootGroup.subgroups.first(where: { $0.uuid == binUUID }) else { return false }
         return bin.entries.contains(where: { $0.uuid == entry.uuid })
+    }
+
+    private func groupName(for entry: KdbxEntry) -> String? {
+        guard let database = vaultSession.currentDatabase,
+              let location = GroupTreeOperations.entryLocation(entryID: entry.uuid, in: database.rootGroup) else {
+            return nil
+        }
+        return location.group.name
+    }
+
+    private func additionalFields(for entry: KdbxEntry) -> [KdbxField] {
+        entry.fields.filter { !Self.standardFieldKeys.contains($0.key) }
     }
 
     var body: some View {
@@ -70,39 +94,30 @@ struct EntryDetailView: View {
                     .padding(.top, 24)
 
                     DetailFieldsCard {
-                        HStack(alignment: .center, spacing: 12) {
-                            Text("Username")
-                                .foregroundStyle(.secondary)
-                                .frame(width: 100, alignment: .leading)
-                            Text(entry.login)
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                            Button("Copy", systemImage: "doc.on.doc") { copy(entry.login) }
-                                .buttonStyle(.borderless)
-                        }
-                        .font(.body)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
+                        copyableFieldRow(
+                            label: "Username",
+                            field: .username,
+                            displayValue: entry.login,
+                            copyValue: entry.login
+                        )
 
                         DetailFieldDivider()
 
-                        HStack(alignment: .center, spacing: 12) {
-                            Text("Password")
-                                .foregroundStyle(.secondary)
-                                .frame(width: 100, alignment: .leading)
-                            Text(isPasswordRevealed ? entry.password : String(repeating: "•", count: max(entry.password.count, 8)))
-                                .frame(maxWidth: .infinity, alignment: .trailing)
-                            Button(isPasswordRevealed ? "Hide" : "Show") { isPasswordRevealed.toggle() }
-                                .buttonStyle(.borderless)
-                            Button("Copy", systemImage: "doc.on.doc") { copy(entry.password) }
-                                .buttonStyle(.borderless)
-                        }
-                        .font(.body)
-                        .padding(.horizontal, 16)
-                        .padding(.vertical, 10)
+                        passwordRow(for: entry)
 
                         if !entry.url.isEmpty {
                             DetailFieldDivider()
                             DetailFieldRow(label: "Website", value: entry.url, isLink: true)
+                        }
+
+                        if let groupName = groupName(for: entry) {
+                            DetailFieldDivider()
+                            DetailFieldRow(label: "Group", value: groupName)
+                        }
+
+                        ForEach(additionalFields(for: entry), id: \.key) { field in
+                            DetailFieldDivider()
+                            extraFieldRow(field)
                         }
 
                         DetailFieldDivider()
@@ -119,21 +134,7 @@ struct EntryDetailView: View {
 
                         if let secret = entry.totpSecretBase32 {
                             DetailFieldDivider()
-                            let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
-                            HStack(alignment: .center, spacing: 12) {
-                                Text("Verification Code")
-                                    .foregroundStyle(.secondary)
-                                    .frame(width: 100, alignment: .leading)
-                                Spacer(minLength: 0)
-                                Text(code)
-                                    .font(.system(.body, design: .monospaced))
-                                TOTPRingChrome()
-                                Button("Copy", systemImage: "doc.on.doc") { copy(code) }
-                                    .buttonStyle(.borderless)
-                            }
-                            .font(.body)
-                            .padding(.horizontal, 16)
-                            .padding(.vertical, 10)
+                            totpRow(secret: secret)
                         }
                     }
 
@@ -197,6 +198,10 @@ struct EntryDetailView: View {
                 )
             }
             .onChange(of: navigationState.selectedEntryID) { _, newID in
+                isPasswordRevealed = false
+                revealedExtraFields = []
+                copiedField = nil
+                copyFlashTask?.cancel()
                 if let newID, newID != lastTouchedEntryID {
                     lastTouchedEntryID = newID
                     vaultSession.touchAccess(entryID: newID)
@@ -204,6 +209,158 @@ struct EntryDetailView: View {
             }
         } else {
             DetailEmptyStateView()
+        }
+    }
+
+    private func copyableFieldRow(
+        label: String,
+        field: CopiedField,
+        displayValue: String,
+        copyValue: String
+    ) -> some View {
+        let shownValue = copiedField == field ? "Copied" : displayValue
+
+        return HStack(alignment: .center, spacing: 12) {
+            Text(label)
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Button {
+                copy(copyValue)
+                flashCopied(field)
+            } label: {
+                Text(shownValue)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Click to copy")
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func passwordRow(for entry: KdbxEntry) -> some View {
+        let displayText: String = {
+            if copiedField == .password { return "Copied" }
+            if isPasswordRevealed { return entry.password }
+            return String(repeating: "•", count: max(entry.password.count, 8))
+        }()
+
+        return HStack(alignment: .center, spacing: 12) {
+            Text("Password")
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Button {
+                copy(entry.password)
+                flashCopied(.password)
+            } label: {
+                Text(displayText)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Click to copy")
+            Button {
+                isPasswordRevealed.toggle()
+            } label: {
+                Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(isPasswordRevealed ? "Hide password" : "Show password")
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func extraFieldRow(_ field: KdbxField) -> some View {
+        let fieldCase = CopiedField.extra(field.key)
+        let isRevealed = revealedExtraFields.contains(field.key)
+        let displayText: String = {
+            if copiedField == fieldCase { return "Copied" }
+            if field.isProtected && !isRevealed {
+                return String(repeating: "•", count: max(field.value.count, 8))
+            }
+            return field.value
+        }()
+
+        return HStack(alignment: .center, spacing: 12) {
+            Text(field.key)
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Button {
+                copy(field.value)
+                flashCopied(fieldCase)
+            } label: {
+                Text(displayText)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Click to copy")
+            if field.isProtected {
+                Button {
+                    if isRevealed {
+                        revealedExtraFields.remove(field.key)
+                    } else {
+                        revealedExtraFields.insert(field.key)
+                    }
+                } label: {
+                    Image(systemName: isRevealed ? "eye.slash" : "eye")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(isRevealed ? "Hide \(field.key)" : "Show \(field.key)")
+            }
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func totpRow(secret: String) -> some View {
+        let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
+        let displayValue = copiedField == .totp ? "Copied" : code
+
+        return HStack(alignment: .center, spacing: 12) {
+            Text("Verification Code")
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Button {
+                copy(code)
+                flashCopied(.totp)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(displayValue)
+                        .font(.system(.body, design: .monospaced))
+                    if copiedField != .totp {
+                        TOTPRingChrome()
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Click to copy")
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func flashCopied(_ field: CopiedField) {
+        copyFlashTask?.cancel()
+        copiedField = field
+        copyFlashTask = Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if copiedField == field {
+                    copiedField = nil
+                }
+            }
         }
     }
 
