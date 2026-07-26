@@ -1,3 +1,4 @@
+import ExtensionBridgeKit
 import XCTest
 @testable import MyPass
 
@@ -59,4 +60,29 @@ final class ExtensionPairingManagerTests: XCTestCase {
         XCTAssertFalse(manager.isAuthorized(pairing: nil))
         XCTAssertFalse(manager.isAuthorized(pairing: "unknown"))
     }
+
+    func testCompletePairingReturnsNilWhenStorePersistenceFails() {
+        let throwingStore = ThrowingExtensionPairingStore()
+        let manager = ExtensionPairingManager(store: throwingStore, now: { [unowned self] in self.now })
+        var pairingFinished = false
+        manager.onPairingFinished = { pairingFinished = true }
+
+        let code = manager.startPairing(browser: nil)
+        XCTAssertNil(manager.completePairing(code: code))
+        XCTAssertTrue(throwingStore.list().isEmpty)
+        XCTAssertTrue(pairingFinished)
+        XCTAssertFalse(manager.isAuthorized(pairing: ExtensionBridgeTokenStore.generateToken()))
+    }
+}
+
+private final class ThrowingExtensionPairingStore: ExtensionPairingStoring {
+    func list() -> [PairedBrowser] { [] }
+
+    func add(_ browser: PairedBrowser) throws {
+        throw ExtensionPairingStoreError.encodingFailed
+    }
+
+    func remove(id: UUID) throws {}
+
+    func containsSecret(matching secret: String) -> Bool { false }
 }

@@ -60,7 +60,13 @@ final class ExtensionPairingManager {
             createdAt: now(),
             secretHash: hash
         )
-        try? store.add(browser)
+        do {
+            try store.add(browser)
+        } catch {
+            clearChallenge()
+            onPairingFinished?()
+            return nil
+        }
         clearChallenge()
         onPairingFinished?()
         return secret
