@@ -105,6 +105,17 @@ final class VaultSession: ObservableObject {
         persist(db)
     }
 
+    /// Bumps `lastAccessTime` for the entry and schedules a background persist.
+    /// No-op when vault is locked or entry ID is not found.
+    func touchAccess(entryID: UUID) {
+        mutate { database in
+            guard let location = GroupTreeOperations.entryLocation(entryID: entryID, in: database.rootGroup) else { return }
+            var entry = location.group.entries[location.index]
+            entry.lastAccessTime = Date()
+            location.group.entries[location.index] = entry
+        }
+    }
+
     /// Runs a sync pass without an accompanying local mutation — used by
     /// external-change notifications (Task 3's `LocalFolderChangeWatcher`
     /// for the Local backend, `iCloudBackend.onRemoteChange` for the iCloud

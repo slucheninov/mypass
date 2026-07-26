@@ -36,6 +36,10 @@ enum GroupTreeOperations {
         return true
     }
 
+    static func entryLocation(entryID: UUID, in root: KdbxGroup) -> (group: KdbxGroup, index: Int)? {
+        findEntryLocation(entryID: entryID, in: root)
+    }
+
     private static func findEntryLocation(entryID: UUID, in group: KdbxGroup) -> (KdbxGroup, Int)? {
         if let index = group.entries.firstIndex(where: { $0.uuid == entryID }) {
             return (group, index)
