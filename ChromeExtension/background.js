@@ -1,4 +1,44 @@
 const NATIVE_HOST_NAME = "com.mypass.chromehost";
+const PAIRING_STORAGE_KEY = "pairingSecret";
+
+function detectBrowserName() {
+  const brands = (navigator.userAgentData && navigator.userAgentData.brands) || [];
+  const brand = brands.find((b) => b.brand && b.brand !== "Chromium" && !/Not.?A.?Brand/i.test(b.brand));
+  return brand ? brand.brand : "Chromium browser";
+}
+
+function attachPairingField(message, pairingSecret) {
+  if (!pairingSecret) return message;
+  return { ...message, pairing: pairingSecret };
+}
+
+function persistPairingResponse(response) {
+  return new Promise((resolve) => {
+    if (response && response.type === "paired" && response.secret) {
+      chrome.storage.local.set({ [PAIRING_STORAGE_KEY]: response.secret }, resolve);
+    } else {
+      resolve();
+    }
+  });
+}
+
+function clearStaleSecretOnPairingRequired(response, previousSecret) {
+  return new Promise((resolve) => {
+    if (response && response.type === "pairingRequired" && previousSecret) {
+      chrome.storage.local.remove(PAIRING_STORAGE_KEY, resolve);
+    } else {
+      resolve();
+    }
+  });
+}
+
+function readPairingSecret() {
+  return new Promise((resolve) => {
+    chrome.storage.local.get(PAIRING_STORAGE_KEY, (result) => {
+      resolve(result[PAIRING_STORAGE_KEY] || null);
+    });
+  });
+}
 
 function sendNativeMessage(message) {
   return new Promise((resolve) => {
@@ -10,6 +50,15 @@ function sendNativeMessage(message) {
       resolve(response);
     });
   });
+}
+
+async function sendNativeMessageWithPairing(message) {
+  const pairingSecret = await readPairingSecret();
+  const enriched = attachPairingField(message, pairingSecret);
+  const response = await sendNativeMessage(enriched);
+  await clearStaleSecretOnPairingRequired(response, pairingSecret);
+  await persistPairingResponse(response);
+  return response;
 }
 
 // Mirrors content.js's `hostnameMatches` — duplicated rather than shared
@@ -74,12 +123,19 @@ function stripCredentialSecrets(response) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const knownTypes = ["getCredentials", "fillCredential", "proposeSaveLogin"];
+  const knownTypes = ["getCredentials", "fillCredential", "proposeSaveLogin", "startPairing", "completePairing"];
   if (!message || !knownTypes.includes(message.type)) {
     return false;
   }
 
-  sendNativeMessage(message).then((response) => {
+  if (message.type === "startPairing") {
+    sendNativeMessage({ type: "startPairing", browser: detectBrowserName() }).then((response) => {
+      sendResponse(response);
+    });
+    return true;
+  }
+
+  sendNativeMessageWithPairing(message).then((response) => {
     if (message.type === "fillCredential" && response && response.type === "credential") {
       relayFillToActiveTab(response, message.url);
       sendResponse(stripCredentialSecrets(response));
@@ -90,3 +146,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true; // keep the message channel open for the async sendNativeMessage response
 });
+
+if (typeof module !== "undefined") {
+  module.exports = {
+    PAIRING_STORAGE_KEY,
+    attachPairingField,
+    persistPairingResponse,
+    clearStaleSecretOnPairingRequired,
+    detectBrowserName
+  };
+}
