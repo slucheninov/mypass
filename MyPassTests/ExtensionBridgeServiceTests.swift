@@ -63,7 +63,18 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(response, .credentialList([]))
     }
 
-    func testFillCredentialReturnsPasswordAndTotpForMatchingEntry() {
+    func testFillCredentialReturnsPasswordForMatchingEntry() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com"))
+        XCTAssertEqual(response, .credential(username: "alice", password: "s3cret", totp: nil))
+    }
+
+    /// TOTP-filling isn't implemented anywhere downstream: the base32 seed
+    /// must never be echoed back into `.credential`'s totp field, even when
+    /// the matched entry has one set — sending a long-lived secret to a web
+    /// page's content-script world for a feature that doesn't exist is a
+    /// pure liability.
+    func testFillCredentialNeverReturnsTotpEvenWhenEntryHasOne() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         session.mutate { db in
             if let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) {
@@ -71,7 +82,10 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             }
         }
         let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com"))
-        XCTAssertEqual(response, .credential(username: "alice", password: "s3cret", totp: "JBSWY3DP"))
+        guard case .credential(_, _, let totp) = response else {
+            return XCTFail("expected credential response, got \(response)")
+        }
+        XCTAssertNil(totp)
     }
 
     func testFillCredentialReturnsErrorWhenDomainDoesNotMatch() {
@@ -98,5 +112,18 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(captured?.url, "https://example.com/signup")
         XCTAssertEqual(captured?.username, "carol")
         XCTAssertEqual(captured?.password, "pw123")
+    }
+
+    func testProposeSaveLoginReturnsLockedAndDoesNotInvokeClosureWhenVaultIsLocked() {
+        session.lock()
+        var wasInvoked = false
+        service.onSaveProposal = { _, _, _ in
+            wasInvoked = true
+        }
+        let response = service.handle(.proposeSaveLogin(
+            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123"
+        ))
+        XCTAssertEqual(response, .locked)
+        XCTAssertFalse(wasInvoked, "onSaveProposal must not fire while the vault is locked")
     }
 }

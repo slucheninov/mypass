@@ -91,17 +91,23 @@
   }
 
   if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
-    const state = { lastCredentialList: [], bannerShown: false };
+    const state = { lastCredentialList: [], bannerShown: false, vaultLocked: false };
 
     function requestCredentials() {
       chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
+        // Track lock-state separately from "empty list": a `locked` response
+        // also carries no credentials, but is NOT the same as "genuinely no
+        // matches for this site" — conflating the two lets the save-banner
+        // logic below offer to save a duplicate when the vault was simply
+        // locked at page-load time.
+        state.vaultLocked = !!(response && response.type === 'locked');
         state.lastCredentialList = (response && response.type === 'credentialList') ? response.credentials : [];
       });
     }
 
     function attachSubmitListener(loginForm) {
       loginForm.form.addEventListener('submit', () => {
-        if (state.lastCredentialList.length === 0) {
+        if (!state.vaultLocked && state.lastCredentialList.length === 0) {
           const username = loginForm.usernameInput ? loginForm.usernameInput.value : '';
           const password = loginForm.passwordInput.value;
           if (password) {

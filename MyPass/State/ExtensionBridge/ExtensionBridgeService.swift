@@ -37,9 +37,18 @@ final class ExtensionBridgeService {
             guard let entry = matches.first(where: { $0.uuid.uuidString == id }) else {
                 return .error("entry not found or domain mismatch")
             }
-            return .credential(username: entry.login, password: entry.password, totp: entry.totpSecretBase32)
+            // TOTP filling isn't implemented anywhere downstream (no consumer
+            // reads `.credential`'s totp field), so the raw base32 seed is
+            // never populated here — sending a long-lived secret into a web
+            // page's content-script world for a feature that doesn't exist
+            // would be a pure liability. Always `nil` until TOTP-filling is
+            // actually built.
+            return .credential(username: entry.login, password: entry.password, totp: nil)
 
         case .proposeSaveLogin(_, let url, let username, let password):
+            guard vaultSession?.currentDatabase != nil else {
+                return .locked
+            }
             onSaveProposal?(url, username, password)
             return .saveProposalAccepted
         }

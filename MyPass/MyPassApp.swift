@@ -3,6 +3,7 @@ import AppKit
 import MyPassKit
 import SyncKit
 import ExtensionBridgeKit
+import os.log
 
 @main
 struct MyPassApp: App {
@@ -88,13 +89,32 @@ struct MyPassApp: App {
             tokenStore: ExtensionBridgeTokenStore(),
             handler: extensionBridgeService.handle
         )
-        try? extensionBridgeServer.start()
+        do {
+            try extensionBridgeServer.start()
+        } catch {
+            os_log(
+                "ExtensionBridgeServer failed to start: %{public}@",
+                log: OSLog(subsystem: "com.mypass.app", category: "ExtensionBridge"),
+                type: .error,
+                String(describing: error)
+            )
+        }
         AppDelegate.extensionBridgeServer = extensionBridgeServer
 
+        // Dev-workflow convenience only: registers the native-messaging host
+        // manifest pointing at the *unpacked* extension's auto-generated ID
+        // (`developmentPlaceholderExtensionID`), which only matches an
+        // extension loaded unpacked in Chrome during local development. This
+        // must never run in a Release build — a real, packaged/store
+        // extension ID has to be provisioned through a proper release
+        // mechanism (not yet built), not this placeholder. Gating behind
+        // `#if DEBUG` is a stopgap until that mechanism exists.
+        #if DEBUG
         try? NativeMessagingHostInstaller.installIfNeeded(
             hostBinaryPath: NativeMessagingHostInstaller.debugChromeHostBinaryPath,
             extensionID: NativeMessagingHostInstaller.developmentPlaceholderExtensionID
         )
+        #endif
         let navigationState = NavigationState()
         _navigationState = StateObject(wrappedValue: navigationState)
 

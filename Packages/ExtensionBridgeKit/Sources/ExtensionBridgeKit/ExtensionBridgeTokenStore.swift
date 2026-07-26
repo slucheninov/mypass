@@ -111,9 +111,15 @@ public final class ExtensionBridgeTokenStore: ExtensionBridgeTokenStoring {
         }
     }
 
+    /// `SecRandomCopyBytes` is documented as effectively infallible on macOS
+    /// in practice. This is a security-token generator, though, so silently
+    /// proceeding with a potentially-zero (unfilled) buffer on the extremely
+    /// rare error path would be worse than crashing: a weak/predictable token
+    /// would gate access to the loopback bridge. Hard-fail instead.
     public static func generateToken() -> String {
         var bytes = [UInt8](repeating: 0, count: 32)
-        _ = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        let status = SecRandomCopyBytes(kSecRandomDefault, bytes.count, &bytes)
+        precondition(status == errSecSuccess, "SecRandomCopyBytes failed with status \(status)")
         return Data(bytes).base64EncodedString()
     }
 }

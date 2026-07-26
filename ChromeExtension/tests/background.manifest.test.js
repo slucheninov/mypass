@@ -10,7 +10,10 @@ assert.strictEqual(manifest.name, 'MyPass');
 assert.ok(Array.isArray(manifest.permissions), 'permissions must be an array');
 assert.ok(manifest.permissions.includes('nativeMessaging'), 'missing nativeMessaging permission');
 assert.ok(manifest.permissions.includes('activeTab'), 'missing activeTab permission');
-assert.ok(manifest.permissions.includes('scripting'), 'missing scripting permission');
+assert.ok(
+  !manifest.permissions.includes('scripting'),
+  'scripting permission is unused (content_scripts already covers injection) and should not be requested'
+);
 assert.strictEqual(manifest.background.service_worker, 'background.js');
 assert.strictEqual(manifest.action.default_popup, 'popup.html');
 assert.strictEqual(manifest.content_scripts.length, 1);

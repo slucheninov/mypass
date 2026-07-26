@@ -3,7 +3,7 @@
   "name": "MyPass",
   "version": "0.1.0",
   "description": "Автозаполнение и сохранение логинов из MyPass",
-  "permissions": ["nativeMessaging", "activeTab", "scripting"],
+  "permissions": ["nativeMessaging", "activeTab"],
   "background": {
     "service_worker": "background.js"
   },
