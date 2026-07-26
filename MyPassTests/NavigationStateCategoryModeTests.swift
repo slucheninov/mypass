@@ -24,5 +24,18 @@ final class NavigationStateCategoryModeTests: XCTestCase {
         state.exitCategoryModeForGroupSelection()
         XCTAssertFalse(state.isCategoryMode)
         XCTAssertEqual(state.selectedSmartCategory, .all)
+        XCTAssertEqual(state.activeCategoryFilter, .all)
+    }
+
+    func testReSelectingSecurityPreservesGroupScope() {
+        let state = NavigationState()
+        state.selectSmartCategory(.security)
+        XCTAssertTrue(state.securityUsesGroupScope)
+        XCTAssertEqual(state.activeCategoryFilter, .all)
+
+        state.selectSmartCategory(.security)
+        XCTAssertTrue(state.securityUsesGroupScope)
+        XCTAssertEqual(state.activeCategoryFilter, .all)
+        XCTAssertEqual(state.selectedSmartCategory, .security)
     }
 }

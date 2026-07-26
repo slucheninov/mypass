@@ -30,7 +30,9 @@ final class NavigationState: ObservableObject {
 
     func selectSmartCategory(_ category: SmartCategory) {
         if category == .security {
-            securityUsesGroupScope = !isCategoryMode
+            if selectedSmartCategory != .security {
+                securityUsesGroupScope = !isCategoryMode
+            }
         } else {
             securityUsesGroupScope = false
         }
@@ -44,6 +46,7 @@ final class NavigationState: ObservableObject {
     func exitCategoryModeForGroupSelection() {
         isCategoryMode = false
         selectedSmartCategory = .all
+        activeCategoryFilter = .all
         securityUsesGroupScope = false
     }
 }
