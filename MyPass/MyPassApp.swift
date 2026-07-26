@@ -86,7 +86,14 @@ struct MyPassApp: App {
         )
         _vaultSession = StateObject(wrappedValue: session)
 
-        let extensionBridgeService = ExtensionBridgeService(vaultSession: session)
+        let pairingStore = KeychainExtensionPairingStore()
+        let pairingManager = ExtensionPairingManager(store: pairingStore)
+        AppDelegate.extensionPairingStore = pairingStore
+        AppDelegate.extensionPairingManager = pairingManager
+        let extensionBridgeService = ExtensionBridgeService(
+            vaultSession: session,
+            pairingManager: pairingManager
+        )
         let extensionBridgeServer = LoopbackServer(
             tokenStore: ExtensionBridgeTokenStore(),
             handler: extensionBridgeService.handle
@@ -121,7 +128,7 @@ struct MyPassApp: App {
                 defer { chromeDirectoryURL.stopAccessingSecurityScopedResource() }
                 do {
                     try NativeMessagingHostInstaller.installIfNeeded(
-                        hostBinaryPath: NativeMessagingHostInstaller.debugChromeHostBinaryPath,
+                        hostBinaryPath: NativeMessagingHostInstaller.chromeHostBinaryPath,
                         extensionID: chromeExtensionID,
                         directory: chromeDirectoryURL
                     )
@@ -161,8 +168,7 @@ struct MyPassApp: App {
         extensionBridgeService.onSaveProposal = { [weak navigationState] url, username, password in
             DispatchQueue.main.async {
                 navigationState?.pendingSaveProposal = PendingSaveProposal(url: url, username: username, password: password)
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first(where: { $0.isVisible || $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+                MainWindowActivator.request()
             }
         }
 
@@ -211,12 +217,13 @@ struct MyPassApp: App {
 
     @SceneBuilder
     private var mainWindow: some Scene {
-        WindowGroup {
+        WindowGroup(id: "main") {
             ContentView()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
                 .environmentObject(autoLockController)
                 .background(SettingsHotkeyObserver())
+                .background(OpenMainWindowOnDemand())
         }
     }
 
@@ -226,6 +233,7 @@ struct MyPassApp: App {
             MenuBarExtraContent()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
+                .background(OpenMainWindowOnDemand())
         }
         .menuBarExtraStyle(.window)
     }
@@ -258,8 +266,7 @@ private struct SettingsHotkeyObserver: View {
             showMyPassStorage: shortcutShowMyPass,
             lockMyPassStorage: shortcutLockMyPass,
             showHandler: {
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first { $0.canBecomeMain || $0.isVisible }?.makeKeyAndOrderFront(nil)
+                MainWindowActivator.request()
             },
             lockHandler: {
                 if case .unlocked = vaultSession.state {

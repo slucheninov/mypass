@@ -7,6 +7,7 @@ import ExtensionBridgeKit
 /// before a request ever reaches this type — `handle(_:)` trusts its caller.
 final class ExtensionBridgeService {
     weak var vaultSession: VaultSession?
+    private let pairingManager: ExtensionPairingManager
     /// Fired for `.proposeSaveLogin` requests. Wired to real window-activation +
     /// pre-filled create-entry UI in Task 13 (`MyPassApp.init()` sets this to a
     /// closure that populates `NavigationState.pendingSaveProposal` and brings
@@ -14,13 +15,28 @@ final class ExtensionBridgeService {
     var onSaveProposal: ((_ url: String, _ username: String, _ password: String) -> Void)?
     var onCredentialFilled: ((UUID) -> Void)?
 
-    init(vaultSession: VaultSession) {
+    init(vaultSession: VaultSession, pairingManager: ExtensionPairingManager) {
         self.vaultSession = vaultSession
+        self.pairingManager = pairingManager
     }
 
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
+        guard vaultSession?.currentDatabase != nil else {
+            return .locked
+        }
         switch request {
-        case .getCredentials(_, let url, _):
+        case .startPairing(_, let browser):
+            _ = pairingManager.startPairing(browser: browser)
+            return .pairingStarted
+        case .completePairing(_, let code):
+            if let secret = pairingManager.completePairing(code: code) {
+                return .paired(secret: secret)
+            }
+            return .error("invalid_code")
+        case .getCredentials(_, let url, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
             guard let database = vaultSession?.currentDatabase else {
                 return .locked
             }
@@ -30,7 +46,10 @@ final class ExtensionBridgeService {
             }
             return .credentialList(summaries)
 
-        case .fillCredential(_, let id, let url, _):
+        case .fillCredential(_, let id, let url, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
             guard let database = vaultSession?.currentDatabase else {
                 return .locked
             }
@@ -48,18 +67,12 @@ final class ExtensionBridgeService {
             vaultSession?.touchAccess(entryID: entry.uuid)
             return .credential(username: entry.login, password: entry.password, totp: nil)
 
-        case .proposeSaveLogin(_, let url, let username, let password, _):
-            guard vaultSession?.currentDatabase != nil else {
-                return .locked
+        case .proposeSaveLogin(_, let url, let username, let password, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
             }
             onSaveProposal?(url, username, password)
             return .saveProposalAccepted
-
-        case .startPairing(_, _):
-            return .error("not implemented")
-
-        case .completePairing:
-            return .error("not implemented")
         }
     }
 }

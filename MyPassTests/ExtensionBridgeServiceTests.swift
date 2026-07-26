@@ -1,3 +1,4 @@
+import CryptoKit
 import XCTest
 import MyPassKit
 import ExtensionBridgeKit
@@ -8,6 +9,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     var fileStore: VaultFileStore!
     var session: VaultSession!
     var service: ExtensionBridgeService!
+    var authorizedPairingSecret: String!
 
     override func setUpWithError() throws {
         tempDir = FileManager.default.temporaryDirectory
@@ -16,7 +18,16 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         fileStore = VaultFileStore(directory: tempDir)
         session = VaultSession(fileStore: fileStore)
         try session.unlock(password: "correct-horse")
-        service = ExtensionBridgeService(vaultSession: session)
+
+        let store = InMemoryExtensionPairingStore()
+        let manager = ExtensionPairingManager(store: store)
+        let secret = ExtensionBridgeTokenStore.generateToken()
+        let hash = SHA256.hash(data: Data(secret.utf8))
+            .compactMap { String(format: "%02x", $0) }
+            .joined()
+        try store.add(PairedBrowser(id: UUID(), label: "Test", createdAt: Date(), secretHash: hash))
+        authorizedPairingSecret = secret
+        service = ExtensionBridgeService(vaultSession: session, pairingManager: manager)
     }
 
     override func tearDownWithError() throws {
@@ -40,15 +51,68 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         return entry.uuid
     }
 
+    private func makeServiceWithPairing() -> (ExtensionBridgeService, InMemoryExtensionPairingStore, ExtensionPairingManager) {
+        let store = InMemoryExtensionPairingStore()
+        let manager = ExtensionPairingManager(store: store)
+        let service = ExtensionBridgeService(vaultSession: session, pairingManager: manager)
+        return (service, store, manager)
+    }
+
+    func testStartPairingReturnsLockedWhenVaultIsLocked() {
+        session.lock()
+        let (service, _, _) = makeServiceWithPairing()
+        XCTAssertEqual(service.handle(.startPairing(token: "t", browser: nil)), .locked)
+    }
+
+    func testStartPairingReturnsPairingStartedWhenUnlocked() {
+        let (service, _, _) = makeServiceWithPairing()
+        XCTAssertEqual(service.handle(.startPairing(token: "t", browser: "Google Chrome")), .pairingStarted)
+    }
+
+    func testGetCredentialsReturnsPairingRequiredWithoutSecret() {
+        _ = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let (service, _, _) = makeServiceWithPairing()
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: nil))
+        XCTAssertEqual(response, .pairingRequired)
+    }
+
+    func testGetCredentialsReturnsListWhenAuthorized() throws {
+        _ = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let (service, _, manager) = makeServiceWithPairing()
+        let code = manager.startPairing(browser: nil)
+        let secret = try XCTUnwrap(manager.completePairing(code: code))
+        _ = secret
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: secret))
+        guard case .credentialList(let summaries) = response else {
+            return XCTFail("expected credentialList, got \(response)")
+        }
+        XCTAssertEqual(summaries.count, 1)
+    }
+
+    func testCompletePairingReturnsPairedWithSecret() {
+        let (service, _, manager) = makeServiceWithPairing()
+        let code = manager.startPairing(browser: "Brave")
+        guard case .paired(let secret) = service.handle(.completePairing(token: "t", code: code)) else {
+            return XCTFail("expected paired response")
+        }
+        XCTAssertFalse(secret.isEmpty)
+    }
+
+    func testCompletePairingReturnsInvalidCodeOnMismatch() {
+        let (service, _, manager) = makeServiceWithPairing()
+        _ = manager.startPairing(browser: nil)
+        XCTAssertEqual(service.handle(.completePairing(token: "t", code: "000000")), .error("invalid_code"))
+    }
+
     func testGetCredentialsReturnsLockedWhenVaultIsLocked() {
         session.lock()
-        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: nil))
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .locked)
     }
 
     func testGetCredentialsReturnsMatchingSummariesWithoutPasswords() {
         _ = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
-        let response = service.handle(.getCredentials(token: "t", url: "https://example.com/login", pairing: nil))
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com/login", pairing: authorizedPairingSecret))
         guard case .credentialList(let summaries) = response else {
             return XCTFail("expected credentialList, got \(response)")
         }
@@ -59,13 +123,13 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     func testGetCredentialsExcludesNonMatchingDomain() {
         _ = addFixtureEntry(title: "Other", username: "bob", password: "pw", url: "https://other.com")
-        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: nil))
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .credentialList([]))
     }
 
     func testFillCredentialReturnsPasswordForMatchingEntry() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
-        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .credential(username: "alice", password: "s3cret", totp: nil))
     }
 
@@ -73,7 +137,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         var touchedIDs: [UUID] = []
         service.onCredentialFilled = { touchedIDs.append($0) }
-        _ = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
+        _ = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
         XCTAssertEqual(touchedIDs, [id])
     }
 
@@ -89,7 +153,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
                 db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DP"
             }
         }
-        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
         guard case .credential(_, _, let totp) = response else {
             return XCTFail("expected credential response, got \(response)")
         }
@@ -98,13 +162,13 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     func testFillCredentialReturnsErrorWhenDomainDoesNotMatch() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
-        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://not-example.com", pairing: nil))
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://not-example.com", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .error("entry not found or domain mismatch"))
     }
 
     func testFillCredentialReturnsLockedWhenVaultIsLocked() {
         session.lock()
-        let response = service.handle(.fillCredential(token: "t", id: UUID().uuidString, url: "https://example.com", pairing: nil))
+        let response = service.handle(.fillCredential(token: "t", id: UUID().uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .locked)
     }
 
@@ -114,7 +178,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             captured = (url, username, password)
         }
         let response = service.handle(.proposeSaveLogin(
-            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123", pairing: nil
+            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123", pairing: authorizedPairingSecret
         ))
         XCTAssertEqual(response, .saveProposalAccepted)
         XCTAssertEqual(captured?.url, "https://example.com/signup")
@@ -129,7 +193,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             wasInvoked = true
         }
         let response = service.handle(.proposeSaveLogin(
-            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123", pairing: nil
+            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123", pairing: authorizedPairingSecret
         ))
         XCTAssertEqual(response, .locked)
         XCTAssertFalse(wasInvoked, "onSaveProposal must not fire while the vault is locked")
