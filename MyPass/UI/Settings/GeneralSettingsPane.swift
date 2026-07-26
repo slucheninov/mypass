@@ -7,6 +7,7 @@ struct GeneralSettingsPane: View {
     @AppStorage("launchAtLogin") private var launchAtLogin = false
 
     @State private var loginStatusMessage: String?
+    @State private var isSyncingLoginItem = false
 
     private let clickActionOptions = ["menu": "Show a menu"]
 
@@ -25,6 +26,7 @@ struct GeneralSettingsPane: View {
             Section {
                 Toggle("Start MyPass at login", isOn: $launchAtLogin)
                     .onChange(of: launchAtLogin) { _, enabled in
+                        guard !isSyncingLoginItem else { return }
                         setLaunchAtLogin(enabled)
                     }
                 if let loginStatusMessage {
@@ -58,6 +60,9 @@ struct GeneralSettingsPane: View {
     }
 
     private func syncLaunchAtLoginFromService() {
+        isSyncingLoginItem = true
+        defer { isSyncingLoginItem = false }
+
         switch SMAppService.mainApp.status {
         case .enabled:
             launchAtLogin = true
@@ -82,8 +87,10 @@ struct GeneralSettingsPane: View {
             }
             syncLaunchAtLoginFromService()
         } catch {
+            isSyncingLoginItem = true
             launchAtLogin = false
             loginStatusMessage = "Could not update login item: \(error.localizedDescription)"
+            isSyncingLoginItem = false
         }
     }
 }
