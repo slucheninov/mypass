@@ -9,7 +9,7 @@ enum EntryEditSaveLogic {
         return ExtensionEntryMatcher.registrableDomain(from: url) ?? url
     }
 
-    static func applyOTP(to entry: inout KdbxEntry, otpauthInput: String, isEditingExisting: Bool) {
+    static func applyOTP(to entry: inout KdbxEntry, otpauthInput: String) {
         guard !otpauthInput.isEmpty else { return }
         if let parsed = TOTPCode.parse(otpauthURL: otpauthInput) {
             entry.totpSecretBase32 = TOTPCode.base32Encode(parsed.secret)

@@ -59,7 +59,13 @@ struct EntryListView: View {
         .toolbar {
             ToolbarItem {
                 Button("Add", systemImage: "plus") {
-                    navigationState.presentCreate(defaultGroupID: currentGroup.uuid)
+                    let binUUID = vaultSession.currentDatabase?.recycleBinGroupUUID
+                    let defaultGroupID = GroupTreeOperations.clampedDefaultGroupID(
+                        currentGroup.uuid,
+                        in: rootGroup,
+                        recycleBinGroupUUID: binUUID
+                    )
+                    navigationState.presentCreate(defaultGroupID: defaultGroupID)
                 }
             }
             ToolbarItem {

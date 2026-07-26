@@ -16,7 +16,8 @@ struct GroupPickerView: View {
 
     private var selectableGroups: [KdbxGroup] {
         flatten(rootGroup).filter { group in
-            !GroupTreeOperations.isRecycleBinGroup(group)
+            if let binUUID = recycleBinGroupUUID, group.uuid == binUUID { return false }
+            return !GroupTreeOperations.isRecycleBinGroup(group)
         }
     }
 

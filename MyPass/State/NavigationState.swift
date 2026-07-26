@@ -3,7 +3,7 @@ import Foundation
 /// A save-login proposal relayed from `ExtensionBridgeService.onSaveProposal`
 /// (Phase 4, Task 5/13), waiting to be shown as a pre-filled create-entry sheet
 /// by `ContentView`. `Identifiable` so it can drive `.sheet(item:)` directly.
-struct PendingSaveProposal: Identifiable, Equatable {
+struct PendingSaveProposal: Identifiable, Equatable, Hashable {
     let id = UUID()
     let url: String
     let username: String
@@ -23,7 +23,7 @@ extension PendingSaveProposal {
     }
 }
 
-enum DetailPresentation: Equatable {
+enum DetailPresentation: Equatable, Hashable {
     case browse
     case edit(entryID: UUID)
     case create(defaultGroupID: UUID?)

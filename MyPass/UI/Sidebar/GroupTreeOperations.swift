@@ -68,6 +68,17 @@ extension GroupTreeOperations {
         group.name == recycleBinGroupName || group.name == legacyRecycleBinGroupName
     }
 
+    /// Returns a group ID suitable as the default for create/edit pickers — never the Recycle Bin.
+    static func clampedDefaultGroupID(_ candidate: UUID, in root: KdbxGroup, recycleBinGroupUUID: UUID?) -> UUID {
+        if let binUUID = recycleBinGroupUUID, candidate == binUUID {
+            return root.uuid
+        }
+        if let group = findGroup(uuid: candidate, in: root), isRecycleBinGroup(group) {
+            return root.uuid
+        }
+        return candidate
+    }
+
     @discardableResult
     static func recycleBinGroup(in root: KdbxGroup, recycleBinGroupUUID: inout UUID?) -> KdbxGroup {
         if let uuid = recycleBinGroupUUID, let existing = findGroup(uuid: uuid, in: root) {

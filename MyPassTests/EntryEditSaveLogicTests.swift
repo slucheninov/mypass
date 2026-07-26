@@ -28,7 +28,7 @@ final class EntryEditSaveLogicTests: XCTestCase {
             creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: []
         )
         entry.totpSecretBase32 = "EXISTING"
-        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "", isEditingExisting: true)
+        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "")
         XCTAssertEqual(entry.totpSecretBase32, "EXISTING")
     }
 
@@ -38,7 +38,7 @@ final class EntryEditSaveLogicTests: XCTestCase {
             uuid: UUID(), iconID: 0, fields: [],
             creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: []
         )
-        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "", isEditingExisting: false)
+        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "")
         XCTAssertNil(entry.totpSecretBase32)
     }
 
@@ -48,7 +48,7 @@ final class EntryEditSaveLogicTests: XCTestCase {
             uuid: UUID(), iconID: 0, fields: [],
             creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: []
         )
-        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "JBSWY3DPEHPK3PXP", isEditingExisting: false)
+        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "JBSWY3DPEHPK3PXP")
         XCTAssertEqual(entry.totpSecretBase32, "JBSWY3DPEHPK3PXP")
     }
 }

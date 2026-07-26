@@ -32,6 +32,12 @@ struct ContentView: View {
                     navigationState.pendingSaveProposal = nil
                 }
             }
+            .onChange(of: navigationState.selectedEntryID) { oldID, newID in
+                guard navigationState.detailPresentation != .browse else { return }
+                if newID != oldID {
+                    navigationState.presentBrowse()
+                }
+            }
         }
     }
 }
@@ -83,15 +89,21 @@ private struct DetailColumnView: View {
                 navigationState.presentBrowse()
             }
         )
+        .id(navigationState.detailPresentation)
     }
 
     private func resolvedDefaultGroupID(existingID: UUID?, defaultGroupID: UUID?) -> UUID {
-        if let defaultGroupID { return defaultGroupID }
-        if let existingID,
-           let location = GroupTreeOperations.entryLocation(entryID: existingID, in: rootGroup) {
-            return location.group.uuid
+        let binUUID = vaultSession.currentDatabase?.recycleBinGroupUUID
+        let raw: UUID
+        if let defaultGroupID {
+            raw = defaultGroupID
+        } else if let existingID,
+                  let location = GroupTreeOperations.entryLocation(entryID: existingID, in: rootGroup) {
+            raw = location.group.uuid
+        } else {
+            raw = navigationState.selectedGroupID ?? rootGroup.uuid
         }
-        return navigationState.selectedGroupID ?? rootGroup.uuid
+        return GroupTreeOperations.clampedDefaultGroupID(raw, in: rootGroup, recycleBinGroupUUID: binUUID)
     }
 
     private func resolvedEntry(existingID: UUID?, proposal: PendingSaveProposal?) -> KdbxEntry? {

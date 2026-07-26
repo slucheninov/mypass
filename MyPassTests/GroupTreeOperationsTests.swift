@@ -213,4 +213,34 @@ final class GroupTreeOperationsTests: XCTestCase {
         XCTAssertNotEqual(deletedEntry?.locationChanged, originalLocationChanged, "locationChanged must be updated when entry is soft-deleted into the recycle bin")
         XCTAssertGreaterThan(deletedEntry!.locationChanged, originalLocationChanged)
     }
+
+    func testClampedDefaultGroupIDReturnsRootWhenCandidateIsRecycleBinUUID() {
+        let root = makeGroup(name: "Root")
+        var recycleBinUUID: UUID? = nil
+        let bin = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+
+        let clamped = GroupTreeOperations.clampedDefaultGroupID(bin.uuid, in: root, recycleBinGroupUUID: recycleBinUUID)
+
+        XCTAssertEqual(clamped, root.uuid)
+    }
+
+    func testClampedDefaultGroupIDReturnsCandidateWhenNotRecycleBin() {
+        let work = makeGroup(name: "Work")
+        let root = makeGroup(name: "Root", subgroups: [work])
+        var recycleBinUUID: UUID? = nil
+        _ = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+
+        let clamped = GroupTreeOperations.clampedDefaultGroupID(work.uuid, in: root, recycleBinGroupUUID: recycleBinUUID)
+
+        XCTAssertEqual(clamped, work.uuid)
+    }
+
+    func testClampedDefaultGroupIDFallsBackByNameWhenUUIDUntracked() {
+        let root = makeGroup(name: "Root")
+        let bin = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.recycleBinGroupName, to: root)
+
+        let clamped = GroupTreeOperations.clampedDefaultGroupID(bin.uuid, in: root, recycleBinGroupUUID: nil)
+
+        XCTAssertEqual(clamped, root.uuid)
+    }
 }

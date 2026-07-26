@@ -123,7 +123,7 @@ struct EntryEditView: View {
         entry.notes = notes
         entry.lastModificationTime = now
         entry.lastAccessTime = now
-        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: otpauthInput, isEditingExisting: existingEntry != nil)
+        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: otpauthInput)
 
         let standardKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp"]
         entry.fields.removeAll { !standardKeys.contains($0.key) }
