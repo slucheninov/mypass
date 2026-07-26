@@ -3,14 +3,16 @@ import Foundation
 // MARK: - Requests
 
 public enum ExtensionBridgeRequest: Equatable {
-    case getCredentials(token: String, url: String)
-    case fillCredential(token: String, id: String, url: String)
-    case proposeSaveLogin(token: String, url: String, username: String, password: String)
+    case getCredentials(token: String, url: String, pairing: String?)
+    case fillCredential(token: String, id: String, url: String, pairing: String?)
+    case proposeSaveLogin(token: String, url: String, username: String, password: String, pairing: String?)
+    case startPairing(token: String, browser: String?)
+    case completePairing(token: String, code: String)
 }
 
 extension ExtensionBridgeRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, token, url, id, username, password
+        case type, token, url, id, username, password, pairing, browser, code
     }
 
     public init(from decoder: Decoder) throws {
@@ -20,16 +22,25 @@ extension ExtensionBridgeRequest: Codable {
         switch type {
         case "getCredentials":
             let url = try container.decode(String.self, forKey: .url)
-            self = .getCredentials(token: token, url: url)
+            let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
+            self = .getCredentials(token: token, url: url, pairing: pairing)
         case "fillCredential":
             let id = try container.decode(String.self, forKey: .id)
             let url = try container.decode(String.self, forKey: .url)
-            self = .fillCredential(token: token, id: id, url: url)
+            let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
+            self = .fillCredential(token: token, id: id, url: url, pairing: pairing)
         case "proposeSaveLogin":
             let url = try container.decode(String.self, forKey: .url)
             let username = try container.decode(String.self, forKey: .username)
             let password = try container.decode(String.self, forKey: .password)
-            self = .proposeSaveLogin(token: token, url: url, username: username, password: password)
+            let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
+            self = .proposeSaveLogin(token: token, url: url, username: username, password: password, pairing: pairing)
+        case "startPairing":
+            let browser = try container.decodeIfPresent(String.self, forKey: .browser)
+            self = .startPairing(token: token, browser: browser)
+        case "completePairing":
+            let code = try container.decode(String.self, forKey: .code)
+            self = .completePairing(token: token, code: code)
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type, in: container, debugDescription: "Unknown ExtensionBridgeRequest type: \(type)"
@@ -40,21 +51,32 @@ extension ExtensionBridgeRequest: Codable {
     public func encode(to encoder: Encoder) throws {
         var container = encoder.container(keyedBy: CodingKeys.self)
         switch self {
-        case .getCredentials(let token, let url):
+        case .getCredentials(let token, let url, let pairing):
             try container.encode("getCredentials", forKey: .type)
             try container.encode(token, forKey: .token)
             try container.encode(url, forKey: .url)
-        case .fillCredential(let token, let id, let url):
+            try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .fillCredential(let token, let id, let url, let pairing):
             try container.encode("fillCredential", forKey: .type)
             try container.encode(token, forKey: .token)
             try container.encode(id, forKey: .id)
             try container.encode(url, forKey: .url)
-        case .proposeSaveLogin(let token, let url, let username, let password):
+            try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .proposeSaveLogin(let token, let url, let username, let password, let pairing):
             try container.encode("proposeSaveLogin", forKey: .type)
             try container.encode(token, forKey: .token)
             try container.encode(url, forKey: .url)
             try container.encode(username, forKey: .username)
             try container.encode(password, forKey: .password)
+            try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .startPairing(let token, let browser):
+            try container.encode("startPairing", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encodeIfPresent(browser, forKey: .browser)
+        case .completePairing(let token, let code):
+            try container.encode("completePairing", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encode(code, forKey: .code)
         }
     }
 }
@@ -77,6 +99,9 @@ public struct ExtensionCredentialSummary: Codable, Equatable {
 
 public enum ExtensionBridgeResponse: Equatable {
     case locked
+    case pairingRequired
+    case pairingStarted
+    case paired(secret: String)
     case credentialList([ExtensionCredentialSummary])
     case credential(username: String, password: String, totp: String?)
     case saveProposalAccepted
@@ -85,7 +110,7 @@ public enum ExtensionBridgeResponse: Equatable {
 
 extension ExtensionBridgeResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, credentials, username, password, totp, message
+        case type, credentials, username, password, totp, message, secret
     }
 
     public init(from decoder: Decoder) throws {
@@ -94,6 +119,13 @@ extension ExtensionBridgeResponse: Codable {
         switch type {
         case "locked":
             self = .locked
+        case "pairingRequired":
+            self = .pairingRequired
+        case "pairingStarted":
+            self = .pairingStarted
+        case "paired":
+            let secret = try container.decode(String.self, forKey: .secret)
+            self = .paired(secret: secret)
         case "credentialList":
             let credentials = try container.decode([ExtensionCredentialSummary].self, forKey: .credentials)
             self = .credentialList(credentials)
@@ -119,6 +151,13 @@ extension ExtensionBridgeResponse: Codable {
         switch self {
         case .locked:
             try container.encode("locked", forKey: .type)
+        case .pairingRequired:
+            try container.encode("pairingRequired", forKey: .type)
+        case .pairingStarted:
+            try container.encode("pairingStarted", forKey: .type)
+        case .paired(let secret):
+            try container.encode("paired", forKey: .type)
+            try container.encode(secret, forKey: .secret)
         case .credentialList(let credentials):
             try container.encode("credentialList", forKey: .type)
             try container.encode(credentials, forKey: .credentials)

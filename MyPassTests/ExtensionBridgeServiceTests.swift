@@ -42,13 +42,13 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     func testGetCredentialsReturnsLockedWhenVaultIsLocked() {
         session.lock()
-        let response = service.handle(.getCredentials(token: "t", url: "https://example.com"))
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: nil))
         XCTAssertEqual(response, .locked)
     }
 
     func testGetCredentialsReturnsMatchingSummariesWithoutPasswords() {
         _ = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
-        let response = service.handle(.getCredentials(token: "t", url: "https://example.com/login"))
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com/login", pairing: nil))
         guard case .credentialList(let summaries) = response else {
             return XCTFail("expected credentialList, got \(response)")
         }
@@ -59,13 +59,13 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     func testGetCredentialsExcludesNonMatchingDomain() {
         _ = addFixtureEntry(title: "Other", username: "bob", password: "pw", url: "https://other.com")
-        let response = service.handle(.getCredentials(token: "t", url: "https://example.com"))
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: nil))
         XCTAssertEqual(response, .credentialList([]))
     }
 
     func testFillCredentialReturnsPasswordForMatchingEntry() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
-        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com"))
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
         XCTAssertEqual(response, .credential(username: "alice", password: "s3cret", totp: nil))
     }
 
@@ -73,7 +73,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         var touchedIDs: [UUID] = []
         service.onCredentialFilled = { touchedIDs.append($0) }
-        _ = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com"))
+        _ = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
         XCTAssertEqual(touchedIDs, [id])
     }
 
@@ -89,7 +89,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
                 db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DP"
             }
         }
-        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com"))
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
         guard case .credential(_, _, let totp) = response else {
             return XCTFail("expected credential response, got \(response)")
         }
@@ -98,13 +98,13 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     func testFillCredentialReturnsErrorWhenDomainDoesNotMatch() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
-        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://not-example.com"))
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://not-example.com", pairing: nil))
         XCTAssertEqual(response, .error("entry not found or domain mismatch"))
     }
 
     func testFillCredentialReturnsLockedWhenVaultIsLocked() {
         session.lock()
-        let response = service.handle(.fillCredential(token: "t", id: UUID().uuidString, url: "https://example.com"))
+        let response = service.handle(.fillCredential(token: "t", id: UUID().uuidString, url: "https://example.com", pairing: nil))
         XCTAssertEqual(response, .locked)
     }
 
@@ -114,7 +114,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             captured = (url, username, password)
         }
         let response = service.handle(.proposeSaveLogin(
-            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123"
+            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123", pairing: nil
         ))
         XCTAssertEqual(response, .saveProposalAccepted)
         XCTAssertEqual(captured?.url, "https://example.com/signup")
@@ -129,7 +129,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             wasInvoked = true
         }
         let response = service.handle(.proposeSaveLogin(
-            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123"
+            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123", pairing: nil
         ))
         XCTAssertEqual(response, .locked)
         XCTAssertFalse(wasInvoked, "onSaveProposal must not fire while the vault is locked")

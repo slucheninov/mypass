@@ -20,7 +20,7 @@ final class ExtensionBridgeService {
 
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
         switch request {
-        case .getCredentials(_, let url):
+        case .getCredentials(_, let url, _):
             guard let database = vaultSession?.currentDatabase else {
                 return .locked
             }
@@ -30,7 +30,7 @@ final class ExtensionBridgeService {
             }
             return .credentialList(summaries)
 
-        case .fillCredential(_, let id, let url):
+        case .fillCredential(_, let id, let url, _):
             guard let database = vaultSession?.currentDatabase else {
                 return .locked
             }
@@ -48,12 +48,18 @@ final class ExtensionBridgeService {
             vaultSession?.touchAccess(entryID: entry.uuid)
             return .credential(username: entry.login, password: entry.password, totp: nil)
 
-        case .proposeSaveLogin(_, let url, let username, let password):
+        case .proposeSaveLogin(_, let url, let username, let password, _):
             guard vaultSession?.currentDatabase != nil else {
                 return .locked
             }
             onSaveProposal?(url, username, password)
             return .saveProposalAccepted
+
+        case .startPairing(_, _):
+            return .error("not implemented")
+
+        case .completePairing:
+            return .error("not implemented")
         }
     }
 }

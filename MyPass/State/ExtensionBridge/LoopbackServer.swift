@@ -184,9 +184,11 @@ final class LoopbackServer {
 
     private func requestToken(from request: ExtensionBridgeRequest) -> String {
         switch request {
-        case .getCredentials(let token, _): return token
-        case .fillCredential(let token, _, _): return token
-        case .proposeSaveLogin(let token, _, _, _): return token
+        case .getCredentials(let token, _, _): return token
+        case .fillCredential(let token, _, _, _): return token
+        case .proposeSaveLogin(let token, _, _, _, _): return token
+        case .startPairing(let token, _): return token
+        case .completePairing(let token, _): return token
         }
     }
 
