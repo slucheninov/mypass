@@ -3,24 +3,55 @@ import MyPassKit
 
 enum GroupTreeOperations {
     @discardableResult
-    static func addSubgroup(named name: String, to parent: KdbxGroup) -> KdbxGroup {
+    static func addGroup(named name: String, emoji: String?, to root: KdbxGroup) -> KdbxGroup {
         let now = Date()
-        let newGroup = KdbxGroup(uuid: UUID(), name: name, iconID: 0, creationTime: now, lastModificationTime: now, locationChanged: now, entries: [], subgroups: [])
-        parent.subgroups.append(newGroup)
-        parent.lastModificationTime = now
+        var newGroup = KdbxGroup(
+            uuid: UUID(), name: name, iconID: 0,
+            creationTime: now, lastModificationTime: now, locationChanged: now,
+            entries: [], subgroups: []
+        )
+        newGroup.emoji = emoji
+        root.subgroups.append(newGroup)
+        root.lastModificationTime = now
         return newGroup
     }
 
-    @discardableResult
-    static func removeSubgroup(withID id: UUID, from root: KdbxGroup) -> Bool {
-        if let index = root.subgroups.firstIndex(where: { $0.uuid == id }) {
-            root.subgroups.remove(at: index)
-            return true
+    static func updateGroup(withID id: UUID, name: String, emoji: String?, in root: KdbxGroup) -> Bool {
+        guard let group = findGroup(uuid: id, in: root) else { return false }
+        let now = Date()
+        group.name = name
+        group.emoji = emoji
+        group.lastModificationTime = now
+        return true
+    }
+
+    static func deleteGroup(
+        withID id: UUID,
+        in root: KdbxGroup,
+        deletedObjects: inout [KdbxDeletedObject],
+        recycleBinGroupUUID: inout UUID?
+    ) -> Bool {
+        guard id != root.uuid else { return false }
+        guard let group = findGroup(uuid: id, in: root) else { return false }
+        if isTheRecycleBin(group, recycleBinGroupUUID: recycleBinGroupUUID) { return false }
+
+        let bin = recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinGroupUUID)
+        let now = Date()
+
+        for var entry in collectEntriesInSubtree(group) {
+            removeEntry(withID: entry.uuid, from: root)
+            entry.locationChanged = now
+            bin.entries.append(entry)
+            deletedObjects.append(KdbxDeletedObject(uuid: entry.uuid, deletionTime: now))
         }
-        for subgroup in root.subgroups {
-            if removeSubgroup(withID: id, from: subgroup) { return true }
+
+        for subgroup in collectGroupsInSubtree(group) {
+            deletedObjects.append(KdbxDeletedObject(uuid: subgroup.uuid, deletionTime: now))
         }
-        return false
+
+        guard removeGroupNode(withID: id, from: root) else { return false }
+        root.lastModificationTime = now
+        return true
     }
 
     @discardableResult
@@ -34,6 +65,10 @@ enum GroupTreeOperations {
         sourceGroup.lastModificationTime = now
         destinationGroup.lastModificationTime = now
         return true
+    }
+
+    static func entryLocation(entryID: UUID, in root: KdbxGroup) -> (group: KdbxGroup, index: Int)? {
+        findEntryLocation(entryID: entryID, in: root)
     }
 
     private static func findEntryLocation(entryID: UUID, in group: KdbxGroup) -> (KdbxGroup, Int)? {
@@ -53,6 +88,37 @@ enum GroupTreeOperations {
         }
         return nil
     }
+
+    private static func removeGroupNode(withID id: UUID, from group: KdbxGroup) -> Bool {
+        if let index = group.subgroups.firstIndex(where: { $0.uuid == id }) {
+            group.subgroups.remove(at: index)
+            return true
+        }
+        for subgroup in group.subgroups {
+            if removeGroupNode(withID: id, from: subgroup) { return true }
+        }
+        return false
+    }
+
+    private static func collectGroupsInSubtree(_ group: KdbxGroup) -> [KdbxGroup] {
+        [group] + group.subgroups.flatMap { collectGroupsInSubtree($0) }
+    }
+
+    private static func collectEntriesInSubtree(_ group: KdbxGroup) -> [KdbxEntry] {
+        group.entries + group.subgroups.flatMap { collectEntriesInSubtree($0) }
+    }
+
+    @discardableResult
+    private static func removeEntry(withID entryID: UUID, from group: KdbxGroup) -> Bool {
+        if let index = group.entries.firstIndex(where: { $0.uuid == entryID }) {
+            group.entries.remove(at: index)
+            return true
+        }
+        for subgroup in group.subgroups {
+            if removeEntry(withID: entryID, from: subgroup) { return true }
+        }
+        return false
+    }
 }
 
 extension GroupTreeOperations {
@@ -64,6 +130,31 @@ extension GroupTreeOperations {
         group.name == recycleBinGroupName || group.name == legacyRecycleBinGroupName
     }
 
+    /// Whether this group is the vault's Recycle Bin for UI filtering.
+    /// When `recycleBinGroupUUID` is tracked, only that UUID matches; otherwise
+    /// falls back to the legacy name-based check.
+    static func isTheRecycleBin(_ group: KdbxGroup, recycleBinGroupUUID: UUID?) -> Bool {
+        if let binUUID = recycleBinGroupUUID {
+            return group.uuid == binUUID
+        }
+        return isRecycleBinGroup(group)
+    }
+
+    static func subtreeGroupIDs(of group: KdbxGroup) -> Set<UUID> {
+        Set(collectGroupsInSubtree(group).map(\.uuid))
+    }
+
+    /// Returns a group ID suitable as the default for create/edit pickers — never the Recycle Bin.
+    static func clampedDefaultGroupID(_ candidate: UUID, in root: KdbxGroup, recycleBinGroupUUID: UUID?) -> UUID {
+        if let binUUID = recycleBinGroupUUID, candidate == binUUID {
+            return root.uuid
+        }
+        if let group = findGroup(uuid: candidate, in: root), isRecycleBinGroup(group) {
+            return root.uuid
+        }
+        return candidate
+    }
+
     @discardableResult
     static func recycleBinGroup(in root: KdbxGroup, recycleBinGroupUUID: inout UUID?) -> KdbxGroup {
         if let uuid = recycleBinGroupUUID, let existing = findGroup(uuid: uuid, in: root) {
@@ -73,7 +164,7 @@ extension GroupTreeOperations {
             recycleBinGroupUUID = existingByName.uuid
             return existingByName
         }
-        let created = addSubgroup(named: recycleBinGroupName, to: root)
+        let created = addGroup(named: recycleBinGroupName, emoji: nil, to: root)
         recycleBinGroupUUID = created.uuid
         return created
     }

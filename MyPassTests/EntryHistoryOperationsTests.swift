@@ -23,4 +23,18 @@ final class EntryHistoryOperationsTests: XCTestCase {
         XCTAssertEqual(entry.history.first?.title, "New Title")
         XCTAssertEqual(entry.history.first?.history.count, 0)
     }
+
+    func testClearHistoryRemovesAllVersions() {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now,
+            history: []
+        )
+        var snapshot = entry
+        snapshot.title = "Old"
+        entry.history = [snapshot, snapshot]
+        EntryHistoryOperations.clearHistory(on: &entry)
+        XCTAssertTrue(entry.history.isEmpty)
+    }
 }

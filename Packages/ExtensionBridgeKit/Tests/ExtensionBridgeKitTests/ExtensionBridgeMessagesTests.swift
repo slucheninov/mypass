@@ -9,7 +9,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
     // MARK: - Requests
 
     func testGetCredentialsRoundTripsAndHasExpectedShape() throws {
-        let request = ExtensionBridgeRequest.getCredentials(token: "tok-1", url: "https://example.com")
+        let request = ExtensionBridgeRequest.getCredentials(token: "tok-1", url: "https://example.com", pairing: nil)
         let data = try JSONEncoder().encode(request)
         let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
         XCTAssertEqual(decoded, request)
@@ -21,7 +21,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
     }
 
     func testFillCredentialRoundTripsAndHasExpectedShape() throws {
-        let request = ExtensionBridgeRequest.fillCredential(token: "tok-2", id: "entry-1", url: "https://example.com/login")
+        let request = ExtensionBridgeRequest.fillCredential(token: "tok-2", id: "entry-1", url: "https://example.com/login", pairing: nil)
         let data = try JSONEncoder().encode(request)
         let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
         XCTAssertEqual(decoded, request)
@@ -35,7 +35,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
 
     func testProposeSaveLoginRoundTripsAndHasExpectedShape() throws {
         let request = ExtensionBridgeRequest.proposeSaveLogin(
-            token: "tok-3", url: "https://example.com/signup", username: "alice", password: "s3cret"
+            token: "tok-3", url: "https://example.com/signup", username: "alice", password: "s3cret", pairing: nil
         )
         let data = try JSONEncoder().encode(request)
         let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
@@ -51,6 +51,49 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
     func testDecodingUnknownRequestTypeThrows() {
         let data = Data("{\"type\":\"bogus\",\"token\":\"t\"}".utf8)
         XCTAssertThrowsError(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data))
+    }
+
+    func testGetCredentialsRoundTripsWithOptionalPairing() throws {
+        let request = ExtensionBridgeRequest.getCredentials(token: "tok-1", url: "https://example.com", pairing: "secret-b64")
+        let data = try JSONEncoder().encode(request)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["pairing"] as? String, "secret-b64")
+    }
+
+    func testGetCredentialsRoundTripsWithoutPairingKeyWhenNil() throws {
+        let request = ExtensionBridgeRequest.getCredentials(token: "tok-1", url: "https://example.com", pairing: nil)
+        let data = try JSONEncoder().encode(request)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+        XCTAssertNil(try jsonObject(from: data)["pairing"])
+    }
+
+    func testStartPairingRoundTripsAndHasExpectedShape() throws {
+        let request = ExtensionBridgeRequest.startPairing(token: "tok-p", browser: "Google Chrome")
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["type"] as? String, "startPairing")
+        XCTAssertEqual(object["token"] as? String, "tok-p")
+        XCTAssertEqual(object["browser"] as? String, "Google Chrome")
+    }
+
+    func testStartPairingRoundTripsWithoutBrowserKeyWhenNil() throws {
+        let request = ExtensionBridgeRequest.startPairing(token: "tok-p", browser: nil)
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
+        XCTAssertNil(try jsonObject(from: data)["browser"])
+    }
+
+    func testCompletePairingRoundTripsAndHasExpectedShape() throws {
+        let request = ExtensionBridgeRequest.completePairing(token: "tok-p", code: "123456")
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["type"] as? String, "completePairing")
+        XCTAssertEqual(object["code"] as? String, "123456")
     }
 
     // MARK: - Responses
@@ -113,5 +156,35 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         let object = try jsonObject(from: data)
         XCTAssertEqual(object["type"] as? String, "error")
         XCTAssertEqual(object["message"] as? String, "invalid token")
+    }
+
+    func testPairingRequiredRoundTrips() throws {
+        let response = ExtensionBridgeResponse.pairingRequired
+        let data = try JSONEncoder().encode(response)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
+        XCTAssertEqual(try jsonObject(from: data)["type"] as? String, "pairingRequired")
+    }
+
+    func testPairingStartedRoundTrips() throws {
+        let response = ExtensionBridgeResponse.pairingStarted
+        let data = try JSONEncoder().encode(response)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
+        XCTAssertEqual(try jsonObject(from: data)["type"] as? String, "pairingStarted")
+    }
+
+    func testPairedRoundTripsAndHasExpectedShape() throws {
+        let response = ExtensionBridgeResponse.paired(secret: "YWJj")
+        let data = try JSONEncoder().encode(response)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["type"] as? String, "paired")
+        XCTAssertEqual(object["secret"] as? String, "YWJj")
+    }
+
+    func testInvalidCodeErrorRoundTrips() throws {
+        let response = ExtensionBridgeResponse.error("invalid_code")
+        let data = try JSONEncoder().encode(response)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
+        XCTAssertEqual(try jsonObject(from: data)["message"] as? String, "invalid_code")
     }
 }

@@ -31,13 +31,25 @@ struct EntryDetailView: View {
     @EnvironmentObject var vaultSession: VaultSession
     @EnvironmentObject var navigationState: NavigationState
     @State private var isPasswordRevealed = false
+    @State private var revealedExtraFields: Set<String> = []
+    @State private var copiedField: CopiedField?
+    @State private var copyFlashTask: Task<Void, Never>?
     @State private var now = Date()
     @State private var showHistory = false
-    @State private var showEdit = false
+    @State private var lastTouchedEntryID: UUID?
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
     @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private enum CopiedField: Equatable {
+        case username
+        case password
+        case totp
+        case extra(String)
+    }
+
+    private static let standardFieldKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp"]
 
     private var currentEntry: KdbxEntry? {
         guard let database = vaultSession.currentDatabase, let id = navigationState.selectedEntryID else { return nil }
@@ -53,96 +65,417 @@ struct EntryDetailView: View {
         return bin.entries.contains(where: { $0.uuid == entry.uuid })
     }
 
+    private func groupName(for entry: KdbxEntry) -> String? {
+        guard let database = vaultSession.currentDatabase,
+              let location = GroupTreeOperations.entryLocation(entryID: entry.uuid, in: database.rootGroup) else {
+            return nil
+        }
+        return location.group.name
+    }
+
+    private func additionalFields(for entry: KdbxEntry) -> [KdbxField] {
+        entry.fields.filter { !Self.standardFieldKeys.contains($0.key) }
+    }
+
     var body: some View {
         if let entry = currentEntry {
-            Form {
-                LabeledContent("Title", value: entry.title)
-                HStack {
-                    LabeledContent("Username", value: entry.login)
-                    Button("Copy", systemImage: "doc.on.doc") { copy(entry.login) }
-                }
-                HStack {
-                    LabeledContent("Password", value: isPasswordRevealed ? entry.password : String(repeating: "•", count: max(entry.password.count, 8)))
-                    Button(isPasswordRevealed ? "Hide" : "Show") { isPasswordRevealed.toggle() }
-                    Button("Copy", systemImage: "doc.on.doc") { copy(entry.password) }
-                }
-                if !entry.url.isEmpty {
-                    HStack {
-                        LabeledContent("URL", value: entry.url)
-                        Button("Open") {
-                            if let url = URL(string: entry.url) { NSWorkspace.shared.open(url) }
+            ScrollView {
+                VStack(spacing: 20) {
+                    VStack(spacing: 12) {
+                        LetterAvatarView(
+                            title: entry.title.isEmpty ? "(untitled)" : entry.title,
+                            size: UIShellMetrics.detailHeroIconSize,
+                            cornerRadius: UIShellMetrics.detailHeroIconCornerRadius
+                        )
+                        Text(entry.title.isEmpty ? "(untitled)" : entry.title)
+                            .font(.system(size: 22, weight: .bold))
+                            .multilineTextAlignment(.center)
+                    }
+                    .padding(.top, 24)
+
+                    DetailFieldsCard {
+                        copyableFieldRow(
+                            label: "Username",
+                            field: .username,
+                            displayValue: entry.login,
+                            copyValue: entry.login
+                        )
+
+                        DetailFieldDivider()
+
+                        passwordRow(for: entry)
+
+                        if !entry.url.isEmpty {
+                            DetailFieldDivider()
+                            DetailFieldRow(label: "Website", value: entry.url, isLink: true)
+                        }
+
+                        if let groupName = groupName(for: entry) {
+                            DetailFieldDivider()
+                            DetailFieldRow(label: "Group", value: groupName)
+                        }
+
+                        ForEach(additionalFields(for: entry), id: \.key) { field in
+                            DetailFieldDivider()
+                            extraFieldRow(field)
+                        }
+
+                        DetailFieldDivider()
+
+                        DetailFieldRow(
+                            label: "Modified",
+                            value: entry.lastModificationTime.formatted(date: .abbreviated, time: .shortened)
+                        )
+
+                        if !entry.notes.isEmpty {
+                            DetailFieldDivider()
+                            DetailFieldRow(label: "Notes", value: entry.notes)
+                        }
+
+                        if let secret = entry.totpSecretBase32 {
+                            DetailFieldDivider()
+                            totpRow(secret: secret)
                         }
                     }
-                }
-                if !entry.notes.isEmpty {
-                    LabeledContent("Notes", value: entry.notes)
-                }
-                if let secret = entry.totpSecretBase32 {
-                    let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
-                    let remaining = TOTPCode.secondsRemaining(period: 30, now: now)
-                    HStack {
-                        Text("TOTP: \(code)")
-                        Text("(\(Int(remaining))s)")
-                            .foregroundStyle(.secondary)
-                        Button("Copy", systemImage: "doc.on.doc") { copy(code) }
-                    }
-                }
-                Button("History") { showHistory = true }
-                Button("Edit") { showEdit = true }
-                if isInRecycleBin(entry) {
-                    Button("Restore") {
-                        vaultSession.mutate { database in
-                            // The entry's original source group isn't tracked once soft-deleted,
-                            // so root is the safe, predictable restore destination.
-                            GroupTreeOperations.restoreEntry(withID: entry.uuid, to: database.rootGroup.uuid, in: database.rootGroup)
+
+                    Button("View History") { showHistory = true }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(Color.accentColor)
+
+                    SecurityWarningStubView()
+
+                    HStack(spacing: 16) {
+                        if isInRecycleBin(entry) {
+                            Button("Restore") {
+                                vaultSession.mutate { database in
+                                    // The entry's original source group isn't tracked once soft-deleted,
+                                    // so root is the safe, predictable restore destination.
+                                    GroupTreeOperations.restoreEntry(withID: entry.uuid, to: database.rootGroup.uuid, in: database.rootGroup)
+                                }
+                                navigationState.selectedEntryID = nil
+                            }
+                        } else {
+                            Button("Delete", role: .destructive) {
+                                vaultSession.mutate { database in
+                                    GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects, recycleBinGroupUUID: &database.recycleBinGroupUUID)
+                                }
+                                navigationState.selectedEntryID = nil
+                            }
                         }
-                        navigationState.selectedEntryID = nil
                     }
-                } else {
-                    Button("Delete", role: .destructive) {
-                        vaultSession.mutate { database in
-                            GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects, recycleBinGroupUUID: &database.recycleBinGroupUUID)
-                        }
-                        navigationState.selectedEntryID = nil
+                    .padding(.bottom, 24)
+                }
+                .frame(maxWidth: .infinity)
+                .padding(.horizontal, 24)
+            }
+            .background(UIShellMetrics.detailColumnBackground)
+            .toolbar {
+                ToolbarItemGroup(placement: .primaryAction) {
+                    Button("Edit", systemImage: "square.and.pencil") {
+                        navigationState.presentEdit(entryID: entry.uuid)
                     }
                 }
             }
-            .padding()
             .onReceive(timer) { now = $0 }
             .sheet(isPresented: $showHistory) {
-                HistoryView(entry: entry) { updated in
-                    vaultSession.mutate { database in
-                        replaceEntry(updated, in: database.rootGroup)
+                HistoryView(
+                    entry: entry,
+                    onRestore: { updated in
+                        vaultSession.mutate { database in
+                            EntryPersistence.replaceEntry(updated, in: database.rootGroup)
+                        }
+                        showHistory = false
+                    },
+                    onClearHistory: { updated in
+                        vaultSession.mutate { database in
+                            EntryPersistence.replaceEntry(updated, in: database.rootGroup)
+                        }
+                        showHistory = false
                     }
-                    showHistory = false
-                }
+                )
             }
-            .sheet(isPresented: $showEdit) {
-                EntryEditView(existingEntry: entry) { updated in
-                    vaultSession.mutate { database in
-                        replaceEntry(updated, in: database.rootGroup)
-                    }
-                    showEdit = false
+            .onChange(of: navigationState.selectedEntryID) { _, newID in
+                isPasswordRevealed = false
+                revealedExtraFields = []
+                copiedField = nil
+                copyFlashTask?.cancel()
+                if let newID, newID != lastTouchedEntryID {
+                    lastTouchedEntryID = newID
+                    vaultSession.touchAccess(entryID: newID)
                 }
             }
         } else {
-            Text("Select an entry")
+            DetailEmptyStateView()
+        }
+    }
+
+    private func copyableFieldRow(
+        label: String,
+        field: CopiedField,
+        displayValue: String,
+        copyValue: String
+    ) -> some View {
+        let shownValue = copiedField == field ? "Copied" : displayValue
+
+        return HStack(alignment: .center, spacing: 12) {
+            Text(label)
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Button {
+                copy(copyValue)
+                flashCopied(field)
+            } label: {
+                Text(shownValue)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Click to copy")
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func passwordRow(for entry: KdbxEntry) -> some View {
+        let displayText: String = {
+            if copiedField == .password { return "Copied" }
+            if isPasswordRevealed { return entry.password }
+            return String(repeating: "•", count: max(entry.password.count, 8))
+        }()
+
+        return HStack(alignment: .center, spacing: 12) {
+            Text("Password")
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Button {
+                copy(entry.password)
+                flashCopied(.password)
+            } label: {
+                Text(displayText)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Click to copy")
+            Button {
+                isPasswordRevealed.toggle()
+            } label: {
+                Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(isPasswordRevealed ? "Hide password" : "Show password")
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func extraFieldRow(_ field: KdbxField) -> some View {
+        let fieldCase = CopiedField.extra(field.key)
+        let isRevealed = revealedExtraFields.contains(field.key)
+        let displayText: String = {
+            if copiedField == fieldCase { return "Copied" }
+            if field.isProtected && !isRevealed {
+                return String(repeating: "•", count: max(field.value.count, 8))
+            }
+            return field.value
+        }()
+
+        return HStack(alignment: .center, spacing: 12) {
+            Text(field.key)
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Button {
+                copy(field.value)
+                flashCopied(fieldCase)
+            } label: {
+                Text(displayText)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Click to copy")
+            if field.isProtected {
+                Button {
+                    if isRevealed {
+                        revealedExtraFields.remove(field.key)
+                    } else {
+                        revealedExtraFields.insert(field.key)
+                    }
+                } label: {
+                    Image(systemName: isRevealed ? "eye.slash" : "eye")
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel(isRevealed ? "Hide \(field.key)" : "Show \(field.key)")
+            }
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func totpRow(secret: String) -> some View {
+        let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
+        let displayValue = copiedField == .totp ? "Copied" : code
+
+        return HStack(alignment: .center, spacing: 12) {
+            Text("Verification Code")
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Button {
+                copy(code)
+                flashCopied(.totp)
+            } label: {
+                HStack(spacing: 8) {
+                    Text(displayValue)
+                        .font(.system(.body, design: .monospaced))
+                    if copiedField != .totp {
+                        TOTPRingChrome()
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint("Click to copy")
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func flashCopied(_ field: CopiedField) {
+        copyFlashTask?.cancel()
+        copiedField = field
+        copyFlashTask = Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if copiedField == field {
+                    copiedField = nil
+                }
+            }
         }
     }
 
     private func copy(_ value: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
-        ClipboardAutoClear.schedule(value: value, after: 30, pasteboard: pasteboard, clock: clock)
+        ClipboardAutoClear.schedule(value: value, after: ClipboardClearInterval.seconds(), pasteboard: pasteboard, clock: clock)
+        if let id = navigationState.selectedEntryID {
+            vaultSession.touchAccess(entryID: id)
+        }
     }
 
-    private func replaceEntry(_ updated: KdbxEntry, in group: KdbxGroup) {
-        if let index = group.entries.firstIndex(where: { $0.uuid == updated.uuid }) {
-            group.entries[index] = updated
-            return
+}
+
+private struct DetailEmptyStateView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image("BrandKey")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(
+                    width: UIShellMetrics.emptyStateIconSize,
+                    height: UIShellMetrics.emptyStateIconSize
+                )
+                .saturation(0)
+                .opacity(0.45)
+                .accessibilityHidden(true)
+            Text("Nothing Selected")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("Select an entry from the list")
+                .font(.system(size: 13))
+                .foregroundStyle(.tertiary)
         }
-        for subgroup in group.subgroups {
-            replaceEntry(updated, in: subgroup)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(UIShellMetrics.detailColumnBackground)
+    }
+}
+
+private struct DetailFieldDivider: View {
+    var body: some View {
+        Divider().overlay(Color.primary.opacity(0.08))
+    }
+}
+
+private struct DetailFieldRow: View {
+    let label: String
+    let value: String
+    var isLink: Bool = false
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text(label)
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            if isLink, let url = URL(string: value), !value.isEmpty {
+                Link(value, destination: url)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            } else {
+                Text(value)
+                    .multilineTextAlignment(.trailing)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+}
+
+private struct DetailFieldsCard<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        VStack(spacing: 0) {
+            content()
+        }
+        .background(
+            RoundedRectangle(cornerRadius: UIShellMetrics.cardCornerRadius, style: .continuous)
+                .fill(Color(nsColor: .controlBackgroundColor))
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: UIShellMetrics.cardCornerRadius, style: .continuous)
+                .stroke(Color.primary.opacity(0.08), lineWidth: 0.5)
+        )
+        .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
+        .frame(maxWidth: UIShellMetrics.cardMaxWidth)
+    }
+}
+
+private struct TOTPRingChrome: View {
+    var body: some View {
+        Circle()
+            .stroke(Color.secondary.opacity(0.35), lineWidth: 2)
+            .frame(width: 22, height: 22)
+            .accessibilityHidden(true)
+    }
+}
+
+private struct SecurityWarningStubView: View {
+    var body: some View {
+        Text("Security warning (coming later)")
+            .font(.body.italic())
+            .foregroundStyle(.secondary)
+            .multilineTextAlignment(.center)
+            .padding(.vertical, 20)
+            .padding(.horizontal, 16)
+            .frame(maxWidth: UIShellMetrics.cardMaxWidth)
+            .background(
+                RoundedRectangle(cornerRadius: UIShellMetrics.cardCornerRadius, style: .continuous)
+                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: UIShellMetrics.cardCornerRadius, style: .continuous)
+                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
+                    .foregroundStyle(Color.secondary.opacity(0.5))
+            )
+            .accessibilityLabel(Text("Security warning placeholder"))
     }
 }

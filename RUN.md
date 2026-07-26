@@ -43,15 +43,48 @@
 | `MYPASS_SFTP_INTEGRATION_TESTS=1` | SFTP-інтеграція в SyncKit; перед запуском підняти Docker-фікстуру: `cd Packages/SyncKit/Tests/Fixtures/docker-sshd && ./run.sh` (зупинка: `./teardown.sh`) |
 | `MYPASS_ICLOUD_INTEGRATION_TESTS=1` | iCloud-інтеграційні тести SyncKit |
 
-## Chrome e2e (ручна перевірка)
+## Chrome-розширення
 
-1. Завантажити розпаковане розширення: **Chrome → Extensions → Load unpacked** → каталог [`ChromeExtension/`](ChromeExtension/).
-2. У **MyPass → Settings** вказати ID розширення, папку Native Messaging Hosts і встановити host (зібраний `ChromeHost`).
-3. Запустити фікстурний HTTP-сервер:
+### Автоматичне налаштування (рекомендовано)
+
+Розширення має закріплений (pinned) ID `hjijbabodfldconmhdcdphlbgaajkejn` завдяки полю `key` у `ChromeExtension/manifest.json`, тому з'єднання можна налаштувати одним скриптом:
+
+```sh
+./scripts/setup-chrome-extension.sh
+```
+
+Скрипт `./scripts/setup-chrome-extension.sh` встановлює native messaging manifest для **усіх встановлених Chromium-браузерів** (Chrome, Edge, Brave, Vivaldi, Opera, Arc тощо). Кожен браузер підключається окремо — у **Settings → Paired browsers** з'являється свій рядок з назвою цього браузера.
+
+1. У Chrome завантажте розпаковане розширення з `ChromeExtension/` (див. нижче) — його ID має бути `hjijbabodfldconmhdcdphlbgaajkejn`.
+2. Якщо розширення вже було додано раніше, перезавантажте його (reload) на `chrome://extensions`.
+
+### Підключення браузера (pairing)
+
+Перед першим автозаповненням або збереженням пароля розширення має бути **підключене** до розблокованого MyPass:
+
+1. Відкрийте popup розширення на будь-якій сторінці — з'явиться кнопка **Connect to MyPass**.
+2. Натисніть її; у головному вікні MyPass з'явиться **6-значний код** (дійсний 120 секунд).
+3. Введіть цей код у popup розширення та підтвердіть.
+
+Після успішного підключення popup показує збережені записи як раніше. Скасувати довіру можна в **MyPass → Settings → Browser → Paired browsers → Revoke**. Деталі протоколу: [spec pairing](docs/superpowers/specs/2026-07-26-mypass-extension-pairing-design.md).
+
+### Як додати в Chrome (розпаковане)
+
+1. **Передумова:** JS-розширення лежить у [`ChromeExtension/`](ChromeExtension/) — окремого кроку збірки для нього немає; завантажуйте цю папку як є. Native host (`ChromeHost`) збирається автоматично скриптом [`setup-chrome-extension.sh`](scripts/setup-chrome-extension.sh) (див. [Автоматичне налаштування](#автоматичне-налаштування-рекомендовано)).
+2. Відкрийте Chrome → перейдіть на `chrome://extensions` (або **Меню → Розширення → Керування розширеннями**).
+3. Увімкніть **Режим розробника** (Developer mode) — перемикач у правому верхньому куті.
+4. Натисніть **Завантажити розпаковане розширення** (Load unpacked).
+5. Оберіть каталог репозиторію [`ChromeExtension/`](ChromeExtension/) (повний шлях: `<repo>/ChromeExtension/`).
+6. Переконайтеся, що на картці відображається **MyPass** (версія 0.1.0) з ID `hjijbabodfldconmhdcdphlbgaajkejn`.
+7. Після змін у JS-файлах: на тій же сторінці натисніть іконку оновлення (reload) на картці MyPass.
+
+### Chrome e2e (ручна перевірка)
+
+1. Запустіть фікстурний HTTP-сервер:
    ```sh
    cd ChromeExtension/tests/fixtures && python3 -m http.server 8765
    ```
-4. Короткий чеклист:
+2. Короткий чеклист:
    - [ ] Popup показує збіги для домену фікстури
    - [ ] Autofill заповнює логін/пароль за явною дією користувача
    - [ ] Після входу пропонується зберегти новий запис
@@ -63,5 +96,5 @@
 
 - **`MyPass.xcodeproj` у `.gitignore`** — перед збіркою завжди потрібен `./scripts/generate.sh` (викликається автоматично з `build*.sh` і `test.sh`).
 - **Keychain sharing** — у `MyPass` і `ChromeHost` має бути однаковий Team ID під час підпису, інакше host не зчитає токен/порт з Keychain.
-- **Шлях ChromeHost** — installer може очікувати бінарник у фіксованому DerivedData-шляху; після зміни конфігурації Xcode шлях може не збігтися (перезберіть і перевстановіть host).
+- **Шлях ChromeHost** — скрипт `scripts/setup-chrome-extension.sh` копіює зібраний бінарник у `~/Library/Application Support/MyPass/ChromeHost`; після перезбірки ChromeHost перезапустіть скрипт, щоб оновити копію.
 - **iCloud entitlements** — у репозиторії можуть бути неповними; інтеграційні iCloud-тести потребують налаштованого середовища розробника.

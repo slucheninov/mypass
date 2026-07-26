@@ -5,7 +5,6 @@ import MyPassKit
 struct EntryListView: View {
     let rootGroup: KdbxGroup
     @EnvironmentObject var navigationState: NavigationState
-    @State private var isCreatingEntry = false
     @EnvironmentObject var vaultSession: VaultSession
 
     private var currentGroup: KdbxGroup {
@@ -13,40 +12,66 @@ struct EntryListView: View {
     }
 
     private var displayedEntries: [KdbxEntry] {
-        navigationState.searchText.isEmpty
-            ? currentGroup.entries
-            : EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
+        if navigationState.selectedSmartCategory == .security, navigationState.securityUsesGroupScope {
+            if navigationState.searchText.isEmpty {
+                return currentGroup.entries
+            }
+            return EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
+        }
+        if navigationState.isCategoryMode, let database = vaultSession.currentDatabase {
+            let scoped = EntryCategoryFilter.entries(for: navigationState.activeCategoryFilter, in: database)
+            if navigationState.searchText.isEmpty {
+                return scoped
+            }
+            return scoped.filter { EntrySearch.matches(entry: $0, query: navigationState.searchText) }
+        }
+        if navigationState.searchText.isEmpty {
+            return currentGroup.entries
+        }
+        return EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
+    }
+
+    private var headerTitle: String {
+        if navigationState.isCategoryMode {
+            return navigationState.selectedSmartCategory.title
+        }
+        return currentGroup.name
+    }
+
+    private func displayTitle(for entry: KdbxEntry) -> String {
+        entry.title.isEmpty ? "(untitled)" : entry.title
     }
 
     var body: some View {
         List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
-            VStack(alignment: .leading) {
-                Text(entry.title.isEmpty ? "(untitled)" : entry.title)
-                Text(entry.login)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            let isSelected = navigationState.selectedEntryID == entry.uuid
+            EntryListRow(
+                title: displayTitle(for: entry),
+                subtitle: entry.login
+            )
             .tag(entry.uuid)
+            .listRowBackground(EntryListRowBackground(isSelected: isSelected))
             .draggable(entry.uuid.uuidString) // full drag-and-drop wiring completed in Task 15
         }
+        .navigationTitle(headerTitle)
+        .frame(minWidth: UIShellMetrics.listColumnMinWidth)
         .searchable(text: $navigationState.searchText)
         .toolbar {
             ToolbarItem {
                 Button("Add", systemImage: "plus") {
-                    isCreatingEntry = true
+                    let binUUID = vaultSession.currentDatabase?.recycleBinGroupUUID
+                    let defaultGroupID = GroupTreeOperations.clampedDefaultGroupID(
+                        currentGroup.uuid,
+                        in: rootGroup,
+                        recycleBinGroupUUID: binUUID
+                    )
+                    navigationState.presentCreate(defaultGroupID: defaultGroupID)
                 }
             }
             ToolbarItem {
                 Menu("Import", systemImage: "square.and.arrow.down") {
                     Button("Import CSV…") { importCSV() }
                     Button("Open Existing .kdbx…") { openExistingVault() }
-                }
-            }
-        }
-        .sheet(isPresented: $isCreatingEntry) {
-            EntryEditView(existingEntry: nil) { newEntry in
-                vaultSession.mutate { database in
-                    addEntry(newEntry, toGroupWithID: currentGroup.uuid, in: database.rootGroup)
                 }
             }
         }
@@ -59,16 +84,6 @@ struct EntryListView: View {
             if let found = find(uuid: uuid, in: subgroup) { return found }
         }
         return nil
-    }
-
-    private func addEntry(_ entry: KdbxEntry, toGroupWithID groupID: UUID, in group: KdbxGroup) {
-        if group.uuid == groupID {
-            group.entries.append(entry)
-            return
-        }
-        for subgroup in group.subgroups {
-            addEntry(entry, toGroupWithID: groupID, in: subgroup)
-        }
     }
 
     private func importCSV() {
@@ -108,6 +123,49 @@ struct EntryListView: View {
             // A production alert would read: "Could not open file. MyPass supports
             // opening .kdbx files created by MyPass itself; third-party KeePassXC
             // files with a 32-byte Argon2id salt are not yet supported."
+        }
+    }
+}
+
+private struct EntryListRow: View {
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(spacing: 12) {
+            LetterAvatarView(
+                title: title,
+                size: UIShellMetrics.listIconSize,
+                cornerRadius: UIShellMetrics.listIconCornerRadius
+            )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+    }
+}
+
+private struct EntryListRowBackground: View {
+    let isSelected: Bool
+
+    var body: some View {
+        if isSelected {
+            HStack(spacing: 0) {
+                Color.accentColor
+                    .frame(width: UIShellMetrics.selectionAccentBarWidth)
+                Color.accentColor.opacity(0.12)
+            }
+        } else {
+            Color.clear
         }
     }
 }

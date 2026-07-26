@@ -17,6 +17,8 @@ struct MyPassApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
+
     @StateObject private var vaultSession: VaultSession
     @StateObject private var navigationState: NavigationState
     @StateObject private var autoLockController: AutoLockController
@@ -84,7 +86,16 @@ struct MyPassApp: App {
         )
         _vaultSession = StateObject(wrappedValue: session)
 
-        let extensionBridgeService = ExtensionBridgeService(vaultSession: session)
+        let pairingStore = KeychainExtensionPairingStore()
+        let pairingStoreModel = ExtensionPairingStoreModel(store: pairingStore)
+        let pairingManager = ExtensionPairingManager(store: pairingStore)
+        AppDelegate.extensionPairingStore = pairingStore
+        AppDelegate.extensionPairingStoreModel = pairingStoreModel
+        AppDelegate.extensionPairingManager = pairingManager
+        let extensionBridgeService = ExtensionBridgeService(
+            vaultSession: session,
+            pairingManager: pairingManager
+        )
         let extensionBridgeServer = LoopbackServer(
             tokenStore: ExtensionBridgeTokenStore(),
             handler: extensionBridgeService.handle
@@ -101,52 +112,20 @@ struct MyPassApp: App {
         }
         AppDelegate.extensionBridgeServer = extensionBridgeServer
 
-        // Phase 4: registers the Chrome native-messaging host manifest, using
-        // whatever real extension ID and security-scoped bookmark the user
-        // configured once via SettingsView's "Chrome extension" section
-        // (the sandbox blocks writing this manifest to the real Chrome
-        // directory any other way — see NativeMessagingHostInstaller's doc
-        // comments). No `#if DEBUG` gate and no placeholder ID: if Settings
-        // isn't configured yet, we simply skip and log, safe in both Debug
-        // and Release.
-        let chromeExtensionBridgeLog = OSLog(subsystem: "com.mypass.app", category: "ExtensionBridge")
-        let chromeExtensionID = defaults.string(forKey: "chromeExtensionID") ?? ""
-        let chromeBookmarkData = defaults.data(forKey: "chromeNativeMessagingDirectoryBookmark")
-        if !chromeExtensionID.isEmpty,
-           let chromeBookmarkData, !chromeBookmarkData.isEmpty,
-           let chromeDirectoryURL = NativeMessagingHostInstaller.resolveBookmarkedDirectory(bookmarkData: chromeBookmarkData) {
-            if chromeDirectoryURL.startAccessingSecurityScopedResource() {
-                defer { chromeDirectoryURL.stopAccessingSecurityScopedResource() }
-                do {
-                    try NativeMessagingHostInstaller.installIfNeeded(
-                        hostBinaryPath: NativeMessagingHostInstaller.debugChromeHostBinaryPath,
-                        extensionID: chromeExtensionID,
-                        directory: chromeDirectoryURL
-                    )
-                } catch {
-                    os_log(
-                        "NativeMessagingHostInstaller failed: %{public}@",
-                        log: chromeExtensionBridgeLog,
-                        type: .error,
-                        String(describing: error)
-                    )
-                }
-            } else {
-                os_log(
-                    "NativeMessagingHostInstaller: failed to access security-scoped Chrome directory bookmark",
-                    log: chromeExtensionBridgeLog,
-                    type: .error
-                )
-            }
-        } else {
-            os_log(
-                "NativeMessagingHostInstaller: skipping auto-install, Chrome extension ID/directory not configured in Settings",
-                log: chromeExtensionBridgeLog,
-                type: .debug
-            )
-        }
         let navigationState = NavigationState()
         _navigationState = StateObject(wrappedValue: navigationState)
+
+        pairingManager.onCodeGenerated = { [weak navigationState] code in
+            DispatchQueue.main.async {
+                navigationState?.pendingPairingCode = code
+                MainWindowActivator.request()
+            }
+        }
+        pairingManager.onPairingFinished = { [weak navigationState] in
+            DispatchQueue.main.async {
+                navigationState?.pendingPairingCode = nil
+            }
+        }
 
         // Phase 4, Task 13: real UI for ExtensionBridgeService.onSaveProposal (Task 5's
         // extension point). The dispatch to main is technically redundant here since
@@ -159,8 +138,7 @@ struct MyPassApp: App {
         extensionBridgeService.onSaveProposal = { [weak navigationState] url, username, password in
             DispatchQueue.main.async {
                 navigationState?.pendingSaveProposal = PendingSaveProposal(url: url, username: username, password: password)
-                NSApp.activate(ignoringOtherApps: true)
-                NSApp.windows.first(where: { $0.isVisible || $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+                MainWindowActivator.request()
             }
         }
 
@@ -202,23 +180,69 @@ struct MyPassApp: App {
     }
 
     var body: some Scene {
-        WindowGroup {
+        mainWindow
+        menuBarExtraScene
+        settingsWindow
+    }
+
+    @SceneBuilder
+    private var mainWindow: some Scene {
+        WindowGroup(id: "main") {
             ContentView()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
                 .environmentObject(autoLockController)
+                .background(SettingsHotkeyObserver())
+                .background(OpenMainWindowOnDemand())
         }
+    }
 
-        MenuBarExtra("MyPass", systemImage: "key.fill") {
+    @SceneBuilder
+    private var menuBarExtraScene: some Scene {
+        MenuBarExtra("MyPass", systemImage: "key.fill", isInserted: $showMenuBarExtra) {
             MenuBarExtraContent()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
+                .background(OpenMainWindowOnDemand())
         }
+        .menuBarExtraStyle(.window)
+    }
 
+    @SceneBuilder
+    private var settingsWindow: some Scene {
         Settings {
             SettingsView()
                 .environmentObject(autoLockController)
                 .environmentObject(vaultSession)
         }
+    }
+}
+
+private struct SettingsHotkeyObserver: View {
+    @AppStorage("shortcutShowMyPass") private var shortcutShowMyPass = ""
+    @AppStorage("shortcutLockMyPass") private var shortcutLockMyPass = "shift+command+L"
+    @EnvironmentObject private var vaultSession: VaultSession
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear { reloadGlobalHotkeys() }
+            .onChange(of: shortcutShowMyPass) { _, _ in reloadGlobalHotkeys() }
+            .onChange(of: shortcutLockMyPass) { _, _ in reloadGlobalHotkeys() }
+    }
+
+    private func reloadGlobalHotkeys() {
+        GlobalHotkeyManager.shared.reload(
+            showMyPassStorage: shortcutShowMyPass,
+            lockMyPassStorage: shortcutLockMyPass,
+            showHandler: {
+                MainWindowActivator.request()
+            },
+            lockHandler: {
+                if case .unlocked = vaultSession.state {
+                    vaultSession.lock()
+                }
+            }
+        )
     }
 }

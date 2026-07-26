@@ -37,7 +37,7 @@ final class LoopbackServerTests: XCTestCase {
 
         connection.stateUpdateHandler = { state in
             if state == .ready {
-                let request = ExtensionBridgeRequest.getCredentials(token: endpoint.token, url: "https://example.com")
+                let request = ExtensionBridgeRequest.getCredentials(token: endpoint.token, url: "https://example.com", pairing: nil)
                 let payload = try! JSONEncoder().encode(request)
                 connection.send(content: NativeMessagingCodec.encode(payload), completion: .contentProcessed { _ in })
             }
@@ -76,7 +76,7 @@ final class LoopbackServerTests: XCTestCase {
 
         connection.stateUpdateHandler = { state in
             if state == .ready {
-                let request = ExtensionBridgeRequest.getCredentials(token: "wrong-token", url: "https://example.com")
+                let request = ExtensionBridgeRequest.getCredentials(token: "wrong-token", url: "https://example.com", pairing: nil)
                 let payload = try! JSONEncoder().encode(request)
                 connection.send(content: NativeMessagingCodec.encode(payload), completion: .contentProcessed { _ in })
             }

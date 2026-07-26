@@ -11,11 +11,26 @@
     li:hover { background: #eee; }
     .title { font-weight: 600; }
     .username { font-size: 12px; color: #666; }
+    #pairing-panel { font-size: 13px; color: #444; }
+    #pairing-panel button { margin-top: 8px; cursor: pointer; }
+    #code-entry { margin-top: 8px; }
+    #code-hint { margin: 0 0 6px; font-size: 12px; color: #666; }
+    #code-input { width: 100%; box-sizing: border-box; font-size: 16px; letter-spacing: 2px; }
+    #pairing-error { color: #c00; font-size: 12px; margin: 6px 0 0; }
   </style>
 </head>
 <body>
   <div id="status"></div>
   <ul id="list"></ul>
+  <div id="pairing-panel" hidden>
+    <button id="connect-btn" type="button">Connect to MyPass</button>
+    <div id="code-entry" hidden>
+      <p id="code-hint">Enter the code shown in MyPass</p>
+      <input id="code-input" type="text" inputmode="numeric" maxlength="7" pattern="[0-9]{6}" />
+      <button id="submit-code-btn" type="button">Submit</button>
+    </div>
+    <p id="pairing-error" hidden></p>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

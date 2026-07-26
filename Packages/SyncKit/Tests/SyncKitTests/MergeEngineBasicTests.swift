@@ -166,4 +166,46 @@ final class MergeEngineBasicTests: XCTestCase {
         XCTAssertEqual(mergedChild.entries.count, 1)
         XCTAssertEqual(mergedChild.entries.first?.uuid, newEntryUUID, "child entry merge is independent of parent metadata winner")
     }
+
+    func testGroupCustomDataMergeUnionsDistinctKeysAndPrefersNewerOnConflict() {
+        let rootUUID = UUID()
+        let childGroupUUID = UUID()
+
+        var localChildGroup = KdbxGroup(
+            uuid: childGroupUUID,
+            name: "Work",
+            iconID: 0,
+            creationTime: Date(timeIntervalSince1970: 1_000),
+            lastModificationTime: Date(timeIntervalSince1970: 2_000),
+            locationChanged: Date(timeIntervalSince1970: 1_000),
+            entries: [],
+            subgroups: []
+        )
+        localChildGroup.customData[KdbxGroup.emojiCustomDataKey] = "🔐"
+        localChildGroup.customData["LocalOnlyKey"] = "local"
+
+        var remoteChildGroup = KdbxGroup(
+            uuid: childGroupUUID,
+            name: "Work",
+            iconID: 0,
+            creationTime: Date(timeIntervalSince1970: 1_000),
+            lastModificationTime: Date(timeIntervalSince1970: 4_000),
+            locationChanged: Date(timeIntervalSince1970: 1_000),
+            entries: [],
+            subgroups: []
+        )
+        remoteChildGroup.customData["RemoteOnlyKey"] = "remote"
+        remoteChildGroup.customData[KdbxGroup.emojiCustomDataKey] = "💼"
+
+        let local = makeDatabase(rootUUID: rootUUID, subgroups: [localChildGroup])
+        let remote = makeDatabase(rootUUID: rootUUID, subgroups: [remoteChildGroup])
+
+        let merged = MergeEngine.merge(local: local, remote: remote)
+
+        XCTAssertEqual(merged.rootGroup.subgroups.count, 1)
+        let mergedChild = merged.rootGroup.subgroups.first!
+        XCTAssertEqual(mergedChild.customData["LocalOnlyKey"], "local")
+        XCTAssertEqual(mergedChild.customData["RemoteOnlyKey"], "remote")
+        XCTAssertEqual(mergedChild.customData[KdbxGroup.emojiCustomDataKey], "💼", "conflicting same-key value must come from the newer metadataSource side")
+    }
 }
