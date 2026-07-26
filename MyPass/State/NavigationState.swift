@@ -3,7 +3,7 @@ import Foundation
 /// A save-login proposal relayed from `ExtensionBridgeService.onSaveProposal`
 /// (Phase 4, Task 5/13), waiting to be shown as a pre-filled create-entry sheet
 /// by `ContentView`. `Identifiable` so it can drive `.sheet(item:)` directly.
-struct PendingSaveProposal: Identifiable {
+struct PendingSaveProposal: Identifiable, Equatable {
     let id = UUID()
     let url: String
     let username: String
@@ -17,12 +17,26 @@ struct PendingSaveProposal: Identifiable {
     }
 }
 
+extension PendingSaveProposal {
+    static func == (lhs: PendingSaveProposal, rhs: PendingSaveProposal) -> Bool {
+        lhs.url == rhs.url && lhs.username == rhs.username && lhs.password == rhs.password
+    }
+}
+
+enum DetailPresentation: Equatable {
+    case browse
+    case edit(entryID: UUID)
+    case create(defaultGroupID: UUID?)
+    case createFromProposal(PendingSaveProposal)
+}
+
 final class NavigationState: ObservableObject {
     @Published var selectedGroupID: UUID?
     @Published var selectedEntryID: UUID?
     @Published var searchText: String = ""
     @Published var selectedSmartCategory: SmartCategory = .all
     @Published var pendingSaveProposal: PendingSaveProposal?
+    @Published var detailPresentation: DetailPresentation = .browse
     @Published var isCategoryMode: Bool = false
     @Published var activeCategoryFilter: SmartCategory = .all
     /// When Security is selected from group scope, keep list on the current group instead of vault-wide All.
@@ -48,5 +62,21 @@ final class NavigationState: ObservableObject {
         selectedSmartCategory = .all
         activeCategoryFilter = .all
         securityUsesGroupScope = false
+    }
+
+    func presentBrowse() {
+        detailPresentation = .browse
+    }
+
+    func presentEdit(entryID: UUID) {
+        detailPresentation = .edit(entryID: entryID)
+    }
+
+    func presentCreate(defaultGroupID: UUID?) {
+        detailPresentation = .create(defaultGroupID: defaultGroupID)
+    }
+
+    func presentCreateFromProposal(_ proposal: PendingSaveProposal) {
+        detailPresentation = .createFromProposal(proposal)
     }
 }

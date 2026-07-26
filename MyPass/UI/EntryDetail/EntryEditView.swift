@@ -3,6 +3,7 @@ import MyPassKit
 
 struct EntryEditView: View {
     let existingEntry: KdbxEntry?
+    let onCancel: (() -> Void)?
     let onSave: (KdbxEntry) -> Void
 
     @Environment(\.dismiss) private var dismiss
@@ -15,8 +16,9 @@ struct EntryEditView: View {
     @State private var extraFields: [(key: String, value: String)] = []
     @State private var showPasswordGenerator = false
 
-    init(existingEntry: KdbxEntry?, onSave: @escaping (KdbxEntry) -> Void) {
+    init(existingEntry: KdbxEntry?, onCancel: (() -> Void)? = nil, onSave: @escaping (KdbxEntry) -> Void) {
         self.existingEntry = existingEntry
+        self.onCancel = onCancel
         self.onSave = onSave
         _title = State(initialValue: existingEntry?.title ?? "")
         _login = State(initialValue: existingEntry?.login ?? "")
@@ -57,7 +59,9 @@ struct EntryEditView: View {
             }
 
             HStack {
-                Button("Cancel") { dismiss() }
+                Button("Cancel") {
+                    if let onCancel { onCancel() } else { dismiss() }
+                }
                 Button("Save", action: save)
                     .buttonStyle(.borderedProminent)
             }
@@ -106,6 +110,6 @@ struct EntryEditView: View {
         }
 
         onSave(entry)
-        dismiss()
+        if onCancel == nil { dismiss() }
     }
 }

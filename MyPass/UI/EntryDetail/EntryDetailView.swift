@@ -33,7 +33,6 @@ struct EntryDetailView: View {
     @State private var isPasswordRevealed = false
     @State private var now = Date()
     @State private var showHistory = false
-    @State private var showEdit = false
     @State private var lastTouchedEntryID: UUID?
 
     private let pasteboard = NSPasteboardClearing()
@@ -174,24 +173,18 @@ struct EntryDetailView: View {
                     Button("Share", systemImage: "square.and.arrow.up") { }
                         .disabled(true)
                         .help("Share is not available yet")
-                    Button("Edit", systemImage: "square.and.pencil") { showEdit = true }
+                    Button("Edit", systemImage: "square.and.pencil") {
+                        navigationState.presentEdit(entryID: entry.uuid)
+                    }
                 }
             }
             .onReceive(timer) { now = $0 }
             .sheet(isPresented: $showHistory) {
                 HistoryView(entry: entry) { updated in
                     vaultSession.mutate { database in
-                        replaceEntry(updated, in: database.rootGroup)
+                        EntryPersistence.replaceEntry(updated, in: database.rootGroup)
                     }
                     showHistory = false
-                }
-            }
-            .sheet(isPresented: $showEdit) {
-                EntryEditView(existingEntry: entry) { updated in
-                    vaultSession.mutate { database in
-                        replaceEntry(updated, in: database.rootGroup)
-                    }
-                    showEdit = false
                 }
             }
             .onChange(of: navigationState.selectedEntryID) { _, newID in
@@ -214,15 +207,6 @@ struct EntryDetailView: View {
         }
     }
 
-    private func replaceEntry(_ updated: KdbxEntry, in group: KdbxGroup) {
-        if let index = group.entries.firstIndex(where: { $0.uuid == updated.uuid }) {
-            group.entries[index] = updated
-            return
-        }
-        for subgroup in group.subgroups {
-            replaceEntry(updated, in: subgroup)
-        }
-    }
 }
 
 private struct DetailEmptyStateView: View {
