@@ -26,6 +26,15 @@ final class ExtensionPairingManagerTests: XCTestCase {
         XCTAssertTrue(manager.isAuthorized(pairing: secret))
     }
 
+    func testCompletePairingSucceedsWhenCodeContainsInternalSpace() throws {
+        let code = manager.startPairing(browser: nil)
+        var spacedCode = Array(code)
+        spacedCode.insert(" ", at: 3)
+        let secret = try XCTUnwrap(manager.completePairing(code: String(spacedCode)))
+        XCTAssertFalse(secret.isEmpty)
+        XCTAssertTrue(manager.isAuthorized(pairing: secret))
+    }
+
     func testCompletePairingUsesBrowserLabelFromStartPairing() throws {
         let code = manager.startPairing(browser: "Microsoft Edge")
         _ = try XCTUnwrap(manager.completePairing(code: code))

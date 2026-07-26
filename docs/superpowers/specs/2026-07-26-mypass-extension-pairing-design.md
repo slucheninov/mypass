@@ -66,8 +66,10 @@ pairing logic runs.
 - **Display:** grouped as `123 456` in the app UI (space for readability only; wire
   value is six digits without separator).
 - **TTL:** 120 seconds from `startPairing()`; expired codes are rejected.
-- **Attempts:** max 5 failed `completePairing` submissions per active challenge; on
-  the 5th failure the challenge is invalidated (user must tap Connect again).
+- **Attempts:** max 4 usable `completePairing` submissions per active challenge (the
+  attempt counter increments at the start of every call; the 5th call fails regardless
+  of code correctness); on exhaustion the challenge is invalidated (user must tap
+  Connect again).
 - **Vault state:** pairing may only start or complete while the vault is unlocked
   (enforced by the `.locked` gate in `ExtensionBridgeService`).
 
@@ -83,6 +85,10 @@ pairing logic runs.
 - **Validation:** `containsSecret(matching:)` hashes the presented secret and
   compares to stored hashes with **constant-time** comparison (`Data.timingSafeEqual`
   or equivalent).
+- **Residual risk:** the extension-side pairing secret lives in
+  `chrome.storage.local` in cleartext and is only usable together with the loopback
+  relay token (another local attacker with extension storage access could pair or
+  replay credential requests until revocation).
 - **Multiple browsers:** multiple Chromium-family browsers supported from day one;
   each browser instance pairs separately (its own `chrome.storage.local` secret) and
   appears as its own row in **Settings → Paired browsers**, labeled by self-reported

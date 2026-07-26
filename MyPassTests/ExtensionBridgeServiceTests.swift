@@ -76,12 +76,26 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(response, .pairingRequired)
     }
 
+    func testFillCredentialReturnsPairingRequiredWithoutSecret() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let (service, _, _) = makeServiceWithPairing()
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
+        XCTAssertEqual(response, .pairingRequired)
+    }
+
+    func testProposeSaveLoginReturnsPairingRequiredWithoutSecret() {
+        let (service, _, _) = makeServiceWithPairing()
+        let response = service.handle(.proposeSaveLogin(
+            token: "t", url: "https://example.com/signup", username: "carol", password: "pw123", pairing: nil
+        ))
+        XCTAssertEqual(response, .pairingRequired)
+    }
+
     func testGetCredentialsReturnsListWhenAuthorized() throws {
         _ = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         let (service, _, manager) = makeServiceWithPairing()
         let code = manager.startPairing(browser: nil)
         let secret = try XCTUnwrap(manager.completePairing(code: code))
-        _ = secret
         let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: secret))
         guard case .credentialList(let summaries) = response else {
             return XCTFail("expected credentialList, got \(response)")

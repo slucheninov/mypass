@@ -1,9 +1,42 @@
+const PAIRING_STARTED_AT_KEY = 'pairingStartedAt';
+const PAIRING_CHALLENGE_TTL_MS = 120_000;
+
 function classifyGetCredentialsResponse(response) {
   if (!response || response.type === 'error') return 'error';
   if (response.type === 'locked') return 'locked';
   if (response.type === 'pairingRequired') return 'pairingRequired';
   if (response.type === 'credentialList') return 'credentialList';
   return 'unknown';
+}
+
+function isPairingChallengeFresh(startedAt, now) {
+  if (startedAt == null || typeof startedAt !== 'number') return false;
+  return now - startedAt < PAIRING_CHALLENGE_TTL_MS;
+}
+
+function normalizePairingCode(raw) {
+  return String(raw).replace(/\D/g, '').slice(0, 6);
+}
+
+function getPairingStorageArea() {
+  if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
+    return chrome.storage.session;
+  }
+  return chrome.storage.local;
+}
+
+function readPairingStartedAt(cb) {
+  getPairingStorageArea().get(PAIRING_STARTED_AT_KEY, (result) => {
+    cb(result[PAIRING_STARTED_AT_KEY]);
+  });
+}
+
+function writePairingStartedAt(cb) {
+  getPairingStorageArea().set({ [PAIRING_STARTED_AT_KEY]: Date.now() }, cb);
+}
+
+function clearPairingStartedAt(cb) {
+  getPairingStorageArea().remove(PAIRING_STARTED_AT_KEY, cb);
 }
 
 if (typeof document !== 'undefined') {
@@ -51,6 +84,10 @@ if (typeof document !== 'undefined') {
     setPairingError('');
   }
 
+  function revealCodeEntry() {
+    codeEntry.hidden = false;
+  }
+
   function renderCredentials(credentials, url) {
     listEl.innerHTML = '';
     credentials.forEach((credential) => {
@@ -75,6 +112,44 @@ if (typeof document !== 'undefined') {
     });
   }
 
+  function startPairingFlow() {
+    resetPairingFlow();
+    chrome.runtime.sendMessage({ type: 'startPairing' }, (startResp) => {
+      if (startResp && startResp.type === 'pairingStarted') {
+        writePairingStartedAt(() => {
+          revealCodeEntry();
+        });
+        return;
+      }
+      if (startResp && startResp.type === 'locked') {
+        setPairingError('MyPass is locked.');
+        return;
+      }
+      setPairingError('Could not start pairing. Is MyPass running and unlocked?');
+    });
+  }
+
+  function submitPairingCode(url) {
+    setPairingError('');
+    const code = normalizePairingCode(codeInput.value);
+    chrome.runtime.sendMessage({ type: 'completePairing', code }, (completeResp) => {
+      if (completeResp && completeResp.type === 'paired') {
+        clearPairingStartedAt(() => {
+          hidePairingPanel();
+          queryCredentials(url);
+        });
+        return;
+      }
+      if (completeResp && completeResp.type === 'error' && completeResp.message === 'invalid_code') {
+        clearPairingStartedAt(() => {
+          setPairingError('Invalid code. Tap Connect to try again.');
+        });
+        return;
+      }
+      setPairingError('Could not complete pairing. Is MyPass running and unlocked?');
+    });
+  }
+
   function handleCredentialsResponse(response, url) {
     const kind = classifyGetCredentialsResponse(response);
     if (kind === 'error') {
@@ -87,27 +162,13 @@ if (typeof document !== 'undefined') {
     }
     if (kind === 'pairingRequired') {
       showPairingPanel();
-      connectBtn.onclick = () => {
-        resetPairingFlow();
-        chrome.runtime.sendMessage({ type: 'startPairing' }, (startResp) => {
-          if (startResp && startResp.type === 'pairingStarted') {
-            codeEntry.hidden = false;
-          }
-        });
-      };
-      submitCodeBtn.onclick = () => {
-        setPairingError('');
-        chrome.runtime.sendMessage({ type: 'completePairing', code: codeInput.value }, (completeResp) => {
-          if (completeResp && completeResp.type === 'paired') {
-            hidePairingPanel();
-            queryCredentials(url);
-            return;
-          }
-          if (completeResp && completeResp.type === 'error' && completeResp.message === 'invalid_code') {
-            setPairingError('Invalid code. Tap Connect to try again.');
-          }
-        });
-      };
+      connectBtn.onclick = startPairingFlow;
+      submitCodeBtn.onclick = () => submitPairingCode(url);
+      readPairingStartedAt((startedAt) => {
+        if (isPairingChallengeFresh(startedAt, Date.now())) {
+          revealCodeEntry();
+        }
+      });
       return;
     }
     if (kind === 'credentialList') {
@@ -137,5 +198,10 @@ if (typeof document !== 'undefined') {
 }
 
 if (typeof module !== 'undefined') {
-  module.exports = { classifyGetCredentialsResponse };
+  module.exports = {
+    classifyGetCredentialsResponse,
+    isPairingChallengeFresh,
+    normalizePairingCode,
+    PAIRING_CHALLENGE_TTL_MS
+  };
 }

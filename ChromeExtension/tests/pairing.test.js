@@ -41,7 +41,7 @@ const {
   sendPairingCompletion
 } = require('../background.js');
 
-const { classifyGetCredentialsResponse } = require('../popup.js');
+const { classifyGetCredentialsResponse, isPairingChallengeFresh, normalizePairingCode, PAIRING_CHALLENGE_TTL_MS } = require('../popup.js');
 
 assert.strictEqual(classifyGetCredentialsResponse(null), 'error');
 assert.strictEqual(classifyGetCredentialsResponse({ type: 'error', message: 'x' }), 'error');
@@ -49,6 +49,16 @@ assert.strictEqual(classifyGetCredentialsResponse({ type: 'locked' }), 'locked')
 assert.strictEqual(classifyGetCredentialsResponse({ type: 'pairingRequired' }), 'pairingRequired');
 assert.strictEqual(classifyGetCredentialsResponse({ type: 'credentialList', credentials: [] }), 'credentialList');
 assert.strictEqual(classifyGetCredentialsResponse({ type: 'unexpected' }), 'unknown');
+
+const now = 1_000_000;
+assert.strictEqual(isPairingChallengeFresh(now - 60_000, now), true);
+assert.strictEqual(isPairingChallengeFresh(now - PAIRING_CHALLENGE_TTL_MS, now), false);
+assert.strictEqual(isPairingChallengeFresh(undefined, now), false);
+assert.strictEqual(isPairingChallengeFresh(null, now), false);
+
+assert.strictEqual(normalizePairingCode('123 456'), '123456');
+assert.strictEqual(normalizePairingCode('1234567'), '123456');
+assert.strictEqual(normalizePairingCode('12a3b4c'), '1234');
 
 assert.strictEqual(attachPairingField({ type: 'getCredentials', url: 'https://example.com' }, 'sec').pairing, 'sec');
 assert.strictEqual(attachPairingField({ type: 'getCredentials', url: 'https://example.com' }, null).pairing, undefined);

@@ -48,7 +48,8 @@ final class ExtensionPairingManager {
             return nil
         }
 
-        guard code == activeCode else {
+        let normalizedCode = code.filter { !$0.isWhitespace }
+        guard normalizedCode == activeCode else {
             return nil
         }
 
@@ -90,7 +91,9 @@ final class ExtensionPairingManager {
 
     private func generateSixDigitCode() -> String {
         var random: UInt32 = 0
-        _ = SecRandomCopyBytes(kSecRandomDefault, MemoryLayout<UInt32>.size, &random)
+        let status = SecRandomCopyBytes(kSecRandomDefault, MemoryLayout<UInt32>.size, &random)
+        // Fail fast rather than emit a predictable code from an unfilled buffer.
+        precondition(status == errSecSuccess, "SecRandomCopyBytes failed with status \(status)")
         let value = random % 1_000_000
         return String(format: "%06d", value)
     }
