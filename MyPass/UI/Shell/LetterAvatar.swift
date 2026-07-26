@@ -13,7 +13,7 @@ enum LetterAvatar {
 
     static func color(for title: String) -> Color {
         let hash = title.utf8.reduce(0) { ($0 &+ Int($1)) &* 31 }
-        let index = abs(hash) % palette.count
+        let index = ((hash % palette.count) + palette.count) % palette.count
         return palette[index]
     }
 }
