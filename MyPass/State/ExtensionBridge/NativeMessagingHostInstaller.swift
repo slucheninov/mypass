@@ -7,15 +7,14 @@ enum NativeMessagingHostInstaller {
     /// Task 12 checklist. Not suitable for distribution as-is.
     static let developmentPlaceholderExtensionID = "REPLACE_WITH_UNPACKED_EXTENSION_ID"
 
-    /// Debug build product path convention for local development. Not a
-    /// stable path for distribution — revisit before shipping outside a dev
-    /// machine (e.g. resolve the real installed ChromeHost path instead).
+    /// Stable per-user path where `scripts/setup-chrome-extension.sh` copies
+    /// the built ChromeHost binary after each build.
     ///
     /// Uses `realHomeDirectoryPath` rather than `NSHomeDirectory()` — see
     /// that property's doc comment for why `NSHomeDirectory()` gives the
     /// wrong answer here under the App Sandbox.
-    static var debugChromeHostBinaryPath: String {
-        realHomeDirectoryPath + "/Library/Developer/Xcode/DerivedData/MyPass/Build/Products/Debug/ChromeHost"
+    static var chromeHostBinaryPath: String {
+        realHomeDirectoryPath + "/Library/Application Support/MyPass/ChromeHost"
     }
 
     /// The real (non-container-redirected) home directory path of the

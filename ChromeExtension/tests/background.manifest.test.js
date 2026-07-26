@@ -7,6 +7,11 @@ const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
 
 assert.strictEqual(manifest.manifest_version, 3, 'manifest_version must be 3');
 assert.strictEqual(manifest.name, 'MyPass');
+assert.strictEqual(
+  manifest.key,
+  'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA3g4jQjrf7R0zDFOQTwQGRpzY/Zl1iOChwlpfDJav6F6e5GiRJPy7S9/cC8yFvhJZsVLs49hQgLg+HqL206KziXRnSTFT1+SbxFzIGqwGjW1Q9u0koXFEzpE82kPQlxG6zeFqtjm35cPfhkCu6oqGFtImLBzP9JR2s4n5IMEQabVvKH2KxsKF84RK7+3MkBLJ/0bluRxXv+VpeG20QN6rQr/VTmC0B5YoIChLdM0ObWhBjzJl8VA64VCAYcaPfLVQ4ZSkLdrIFfNIi5Sc8/8Mtil8wJCON+W/ilWZnYakMvV5Y83fafu8lTHCeuNzbxGAObJFWeIoeaILkoiD1PCuRQIDAQAB',
+  'pinned key must match unpacked extension ID hjijbabodfldconmhdcdphlbgaajkejn'
+);
 assert.ok(Array.isArray(manifest.permissions), 'permissions must be an array');
 assert.ok(manifest.permissions.includes('nativeMessaging'), 'missing nativeMessaging permission');
 assert.ok(manifest.permissions.includes('activeTab'), 'missing activeTab permission');

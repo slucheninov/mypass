@@ -45,6 +45,20 @@
 
 ## Chrome-розширення
 
+### Автоматичне налаштування (рекомендовано)
+
+Розширення має закріплений (pinned) ID `hjijbabodfldconmhdcdphlbgaajkejn` завдяки полю `key` у `ChromeExtension/manifest.json`, тому з'єднання можна налаштувати одним скриптом:
+
+```sh
+./scripts/setup-chrome-extension.sh
+```
+
+Скрипт збере `ChromeHost` (якщо потрібно) і запише маніфест native messaging host у `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`. Після цього:
+
+1. У Chrome завантажте розпаковане розширення з `ChromeExtension/` (див. нижче) — його ID має бути `hjijbabodfldconmhdcdphlbgaajkejn`.
+2. Якщо розширення вже було додано раніше, перезавантажте його (reload) на `chrome://extensions`.
+3. Вставляти ID вручну в MyPass Settings більше не потрібно — поле вже заповнене цим ID за замовчуванням.
+
 ### Як додати в Chrome (розпаковане)
 
 1. **Передумова:** JS-розширення лежить у [`ChromeExtension/`](ChromeExtension/) — окремого кроку збірки для нього немає; завантажуйте цю папку як є. Native host (`ChromeHost`) — окремо; його збирають скриптами з розділу [Швидкий старт](#швидкий-старт) (див. нижче [Підключення до MyPass](#підключення-до-mypass-native-messaging)).
@@ -57,6 +71,8 @@
 8. Після змін у JS-файлах: на тій же сторінці натисніть іконку оновлення (reload) на картці MyPass.
 
 ### Підключення до MyPass (native messaging)
+
+Цей ручний шлях потрібен лише якщо ви не використали [автоматичне налаштування](#автоматичне-налаштування-рекомендовано) вище.
 
 1. Запустіть MyPass (див. [Швидкий старт](#швидкий-старт)).
 2. Відкрийте **MyPass → Settings**.
@@ -82,5 +98,5 @@
 
 - **`MyPass.xcodeproj` у `.gitignore`** — перед збіркою завжди потрібен `./scripts/generate.sh` (викликається автоматично з `build*.sh` і `test.sh`).
 - **Keychain sharing** — у `MyPass` і `ChromeHost` має бути однаковий Team ID під час підпису, інакше host не зчитає токен/порт з Keychain.
-- **Шлях ChromeHost** — installer може очікувати бінарник у фіксованому DerivedData-шляху; після зміни конфігурації Xcode шлях може не збігтися (перезберіть і перевстановіть host).
+- **Шлях ChromeHost** — скрипт `scripts/setup-chrome-extension.sh` копіює зібраний бінарник у `~/Library/Application Support/MyPass/ChromeHost`; після перезбірки ChromeHost перезапустіть скрипт, щоб оновити копію.
 - **iCloud entitlements** — у репозиторії можуть бути неповними; інтеграційні iCloud-тести потребують налаштованого середовища розробника.
