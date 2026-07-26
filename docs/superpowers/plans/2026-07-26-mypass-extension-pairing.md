@@ -36,7 +36,7 @@ public enum ExtensionBridgeRequest: Equatable {
     case getCredentials(token: String, url: String, pairing: String?)
     case fillCredential(token: String, id: String, url: String, pairing: String?)
     case proposeSaveLogin(token: String, url: String, username: String, password: String, pairing: String?)
-    case startPairing(token: String)
+    case startPairing(token: String, browser: String?)
     case completePairing(token: String, code: String)
 }
 public enum ExtensionBridgeResponse: Equatable {
@@ -74,12 +74,20 @@ Append to `ExtensionBridgeMessagesTests.swift`:
     }
 
     func testStartPairingRoundTripsAndHasExpectedShape() throws {
-        let request = ExtensionBridgeRequest.startPairing(token: "tok-p")
+        let request = ExtensionBridgeRequest.startPairing(token: "tok-p", browser: "Google Chrome")
         let data = try JSONEncoder().encode(request)
         XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
         let object = try jsonObject(from: data)
         XCTAssertEqual(object["type"] as? String, "startPairing")
         XCTAssertEqual(object["token"] as? String, "tok-p")
+        XCTAssertEqual(object["browser"] as? String, "Google Chrome")
+    }
+
+    func testStartPairingRoundTripsWithoutBrowserKeyWhenNil() throws {
+        let request = ExtensionBridgeRequest.startPairing(token: "tok-p", browser: nil)
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
+        XCTAssertNil(try jsonObject(from: data)["browser"])
     }
 
     func testCompletePairingRoundTripsAndHasExpectedShape() throws {
@@ -131,21 +139,23 @@ Expected: FAIL — new enum cases / associated values missing.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Update `ExtensionBridgeMessages.swift` — extend enum cases and Codable (add `pairing`, `code`, `secret` to `CodingKeys`; decode/encode new types). Pattern matches existing switch-on-`type` style:
+Update `ExtensionBridgeMessages.swift` — extend enum cases and Codable (add `pairing`, `browser`, `code`, `secret` to `CodingKeys`; decode/encode new types). Pattern matches existing switch-on-`type` style:
 
 ```swift
 public enum ExtensionBridgeRequest: Equatable {
     case getCredentials(token: String, url: String, pairing: String?)
     case fillCredential(token: String, id: String, url: String, pairing: String?)
     case proposeSaveLogin(token: String, url: String, username: String, password: String, pairing: String?)
-    case startPairing(token: String)
+    case startPairing(token: String, browser: String?)
     case completePairing(token: String, code: String)
 }
 ```
 
 In `init(from:)`, for data requests use `container.decodeIfPresent(String.self, forKey: .pairing)`.
+For `startPairing`, use `container.decodeIfPresent(String.self, forKey: .browser)`.
 
 In `encode(to:)`, use `encodeIfPresent(pairing, forKey: .pairing)` only when non-nil.
+For `startPairing`, use `encodeIfPresent(browser, forKey: .browser)` only when non-nil.
 
 Add response cases `pairingRequired`, `pairingStarted`, `paired(secret:)`.
 
@@ -157,25 +167,25 @@ Update `LoopbackServer.requestToken(from:)`:
         case .getCredentials(let token, _, _): return token
         case .fillCredential(let token, _, _, _): return token
         case .proposeSaveLogin(let token, _, _, _, _): return token
-        case .startPairing(let token): return token
+        case .startPairing(let token, _): return token
         case .completePairing(let token, _): return token
         }
     }
 ```
 
-Update `ExtensionBridgeService.handle` case labels (ignore `pairing` for now):
+Update `ExtensionBridgeService.handle` case labels (ignore `pairing` / `browser` for now):
 
 ```swift
         case .getCredentials(_, let url, _):
         case .fillCredential(_, let id, let url, _):
         case .proposeSaveLogin(_, let url, let username, let password, _):
-        case .startPairing:
+        case .startPairing(_, _):
             return .error("not implemented")
         case .completePairing:
             return .error("not implemented")
 ```
 
-Update all `ExtensionBridgeServiceTests` and `LoopbackServerTests` call sites to include `pairing: nil`.
+Update all `ExtensionBridgeServiceTests` and `LoopbackServerTests` call sites to include `pairing: nil` and `browser: nil` on `startPairing`.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -338,7 +348,7 @@ final class ExtensionPairingManager {
     init(store: ExtensionPairingStoring, now: @escaping () -> Date = Date.init)
     var onCodeGenerated: ((String) -> Void)?
     var onPairingFinished: (() -> Void)?
-    func startPairing() -> String
+    func startPairing(browser: String?) -> String
     func completePairing(code: String) -> String?
     func cancelPairing()
     func isAuthorized(pairing: String?) -> Bool
@@ -365,32 +375,44 @@ final class ExtensionPairingManagerTests: XCTestCase {
     }
 
     func testStartPairingProducesSixDigitCode() {
-        let code = manager.startPairing()
+        let code = manager.startPairing(browser: nil)
         XCTAssertEqual(code.count, 6)
         XCTAssertTrue(code.allSatisfy(\.isNumber))
     }
 
     func testCompletePairingSucceedsWithMatchingCode() throws {
-        let code = manager.startPairing()
+        let code = manager.startPairing(browser: nil)
         let secret = try XCTUnwrap(manager.completePairing(code: code))
         XCTAssertFalse(secret.isEmpty)
         XCTAssertTrue(manager.isAuthorized(pairing: secret))
     }
 
+    func testCompletePairingUsesBrowserLabelFromStartPairing() throws {
+        let code = manager.startPairing(browser: "Microsoft Edge")
+        _ = try XCTUnwrap(manager.completePairing(code: code))
+        XCTAssertEqual(store.list().map(\.label), ["Microsoft Edge"])
+    }
+
+    func testCompletePairingUsesFallbackLabelWhenBrowserNil() throws {
+        let code = manager.startPairing(browser: nil)
+        _ = try XCTUnwrap(manager.completePairing(code: code))
+        XCTAssertEqual(store.list().map(\.label), ["Chromium browser"])
+    }
+
     func testCompletePairingFailsAfterTTL() {
-        let code = manager.startPairing()
+        let code = manager.startPairing(browser: nil)
         now = now.addingTimeInterval(121)
         XCTAssertNil(manager.completePairing(code: code))
     }
 
     func testCompletePairingLocksOutAfterFiveFailedAttempts() {
-        let code = manager.startPairing()
+        let code = manager.startPairing(browser: nil)
         for _ in 0..<4 { XCTAssertNil(manager.completePairing(code: "000000")) }
         XCTAssertNil(manager.completePairing(code: code), "correct code must fail after 5 attempts")
     }
 
     func testCancelPairingClearsActiveChallenge() {
-        let code = manager.startPairing()
+        let code = manager.startPairing(browser: nil)
         manager.cancelPairing()
         XCTAssertNil(manager.completePairing(code: code))
     }
@@ -411,9 +433,9 @@ Expected: FAIL.
 
 Create `ExtensionPairingManager.swift`:
 
-- Private state: `activeCode: String?`, `expiry: Date?`, `attempts: Int`
-- `startPairing()`: generate 6 digits via `SecRandomCopyBytes` mod 1_000_000, zero-padded; set expiry = now()+120; attempts = 0; call `onCodeGenerated?`
-- `completePairing(code:)`: guard active + not expired; on mismatch increment attempts, if attempts >= 5 clear challenge + `onPairingFinished?`, return nil; on match generate secret via `ExtensionBridgeTokenStore.generateToken()`, hash with SHA-256, `store.add(PairedBrowser(...))`, clear challenge, `onPairingFinished?`, return secret
+- Private state: `activeCode: String?`, `expiry: Date?`, `attempts: Int`, `pendingBrowserLabel: String`
+- `startPairing(browser:)`: set `pendingBrowserLabel = browser ?? "Chromium browser"`; generate 6 digits via `SecRandomCopyBytes` mod 1_000_000, zero-padded; set expiry = now()+120; attempts = 0; call `onCodeGenerated?`
+- `completePairing(code:)`: guard active + not expired; on mismatch increment attempts, if attempts >= 5 clear challenge + `onPairingFinished?`, return nil; on match generate secret via `ExtensionBridgeTokenStore.generateToken()`, hash with SHA-256, `store.add(PairedBrowser(label: pendingBrowserLabel, createdAt: now(), secretHash: hash))`, clear challenge, `onPairingFinished?`, return secret
 - `cancelPairing()`: clear challenge, `onPairingFinished?`
 - `isAuthorized(pairing:)`: guard let secret = pairing else { return false }; return store.containsSecret(matching: secret)
 
@@ -457,12 +479,12 @@ Add to `ExtensionBridgeServiceTests.swift`:
     func testStartPairingReturnsLockedWhenVaultIsLocked() {
         session.lock()
         let (service, _, _) = makeServiceWithPairing()
-        XCTAssertEqual(service.handle(.startPairing(token: "t")), .locked)
+        XCTAssertEqual(service.handle(.startPairing(token: "t", browser: nil)), .locked)
     }
 
     func testStartPairingReturnsPairingStartedWhenUnlocked() {
         let (service, _, _) = makeServiceWithPairing()
-        XCTAssertEqual(service.handle(.startPairing(token: "t")), .pairingStarted)
+        XCTAssertEqual(service.handle(.startPairing(token: "t", browser: "Google Chrome")), .pairingStarted)
     }
 
     func testGetCredentialsReturnsPairingRequiredWithoutSecret() {
@@ -475,7 +497,7 @@ Add to `ExtensionBridgeServiceTests.swift`:
     func testGetCredentialsReturnsListWhenAuthorized() throws {
         _ = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         let (service, store, manager) = makeServiceWithPairing()
-        let code = manager.startPairing()
+        let code = manager.startPairing(browser: nil)
         let secret = try XCTUnwrap(manager.completePairing(code: code))
         _ = secret
         let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: secret))
@@ -487,7 +509,7 @@ Add to `ExtensionBridgeServiceTests.swift`:
 
     func testCompletePairingReturnsPairedWithSecret() {
         let (service, _, manager) = makeServiceWithPairing()
-        let code = manager.startPairing()
+        let code = manager.startPairing(browser: "Brave")
         guard case .paired(let secret) = service.handle(.completePairing(token: "t", code: code)) else {
             return XCTFail("expected paired response")
         }
@@ -496,7 +518,7 @@ Add to `ExtensionBridgeServiceTests.swift`:
 
     func testCompletePairingReturnsInvalidCodeOnMismatch() {
         let (service, _, manager) = makeServiceWithPairing()
-        _ = manager.startPairing()
+        _ = manager.startPairing(browser: nil)
         XCTAssertEqual(service.handle(.completePairing(token: "t", code: "000000")), .error("invalid_code"))
     }
 ```
@@ -528,8 +550,8 @@ final class ExtensionBridgeService {
             return .locked
         }
         switch request {
-        case .startPairing:
-            _ = pairingManager.startPairing()
+        case .startPairing(_, let browser):
+            _ = pairingManager.startPairing(browser: browser)
             return .pairingStarted
         case .completePairing(_, let code):
             if let secret = pairingManager.completePairing(code: code) {
@@ -794,7 +816,7 @@ git commit -m "feat(pairing): add paired browsers list to Browser settings"
 
 **Interfaces:**
 - Consumes: existing `sendNativeMessage`, `chrome.storage.local`.
-- Produces: pairing secret read/write, `pairing` field on data requests, popup message handlers.
+- Produces: pairing secret read/write, `pairing` field on data requests, popup message handlers, `detectBrowserName()`.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -831,11 +853,26 @@ const {
   PAIRING_STORAGE_KEY,
   attachPairingField,
   persistPairingResponse,
-  clearStaleSecretOnPairingRequired
+  clearStaleSecretOnPairingRequired,
+  detectBrowserName
 } = require('../background.js');
 
 assert.strictEqual(attachPairingField({ type: 'getCredentials', url: 'https://example.com' }, 'sec').pairing, 'sec');
 assert.strictEqual(attachPairingField({ type: 'getCredentials', url: 'https://example.com' }, null).pairing, undefined);
+
+global.navigator = {
+  userAgentData: {
+    brands: [
+      { brand: 'Google Chrome' },
+      { brand: 'Chromium' },
+      { brand: 'Not.A/Brand' }
+    ]
+  }
+};
+assert.strictEqual(detectBrowserName(), 'Google Chrome');
+
+delete global.navigator.userAgentData;
+assert.strictEqual(detectBrowserName(), 'Chromium browser');
 
 (async () => {
   await persistPairingResponse({ type: 'paired', secret: 'YWJj' });
@@ -847,7 +884,7 @@ assert.strictEqual(attachPairingField({ type: 'getCredentials', url: 'https://ex
 })();
 ```
 
-Refactor `background.js` to export `PAIRING_STORAGE_KEY`, `attachPairingField`, `persistPairingResponse`, and `clearStaleSecretOnPairingRequired` via `module.exports` under `typeof module !== 'undefined'` (same pattern as `content.js` exports `hostnameMatches`).
+Refactor `background.js` to export `PAIRING_STORAGE_KEY`, `attachPairingField`, `persistPairingResponse`, `clearStaleSecretOnPairingRequired`, and `detectBrowserName` via `module.exports` under `typeof module !== 'undefined'` (same pattern as `content.js` exports `hostnameMatches`).
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -860,6 +897,12 @@ Update `background.js`:
 
 ```javascript
 const PAIRING_STORAGE_KEY = "pairingSecret";
+
+function detectBrowserName() {
+  const brands = (navigator.userAgentData && navigator.userAgentData.brands) || [];
+  const brand = brands.find((b) => b.brand && b.brand !== "Chromium" && !/Not.?A.?Brand/i.test(b.brand));
+  return brand ? brand.brand : "Chromium browser";
+}
 
 function attachPairingField(message, pairingSecret) {
   if (!pairingSecret) return message;
@@ -906,6 +949,10 @@ async function sendNativeMessageWithPairing(message) {
 const knownTypes = ["getCredentials", "fillCredential", "proposeSaveLogin", "startPairing", "completePairing"];
 ```
 
+In the popup message listener, when handling `{ type: "startPairing" }`, forward
+`{ type: "startPairing", browser: detectBrowserName() }` via `sendNativeMessage`
+(before token injection by ChromeHost).
+
 Replace `sendNativeMessage(message)` in the listener with `sendNativeMessageWithPairing(message)`.
 
 Export at file bottom:
@@ -916,7 +963,8 @@ if (typeof module !== "undefined") {
     PAIRING_STORAGE_KEY,
     attachPairingField,
     persistPairingResponse,
-    clearStaleSecretOnPairingRequired
+    clearStaleSecretOnPairingRequired,
+    detectBrowserName
   };
 }
 ```
@@ -996,11 +1044,12 @@ git commit -m "feat(pairing): add Connect flow to extension popup"
 
 ---
 
-### Task 9: Docs + wiring finish (test.sh, RUN.md, cross-links)
+### Task 9: Docs + wiring finish (test.sh, RUN.md, multi-browser manifest install, cross-links)
 
 **Files:**
 - Modify: `scripts/test.sh`
-- Modify: `RUN.md` (Ukrainian paragraph only)
+- Modify: `scripts/setup-chrome-extension.sh`
+- Modify: `RUN.md` (Ukrainian paragraphs only)
 - Modify: `docs/superpowers/specs/2026-07-26-mypass-extension-pairing-design.md` (ensure plan link present — already at top)
 - Modify: `docs/superpowers/plans/2026-07-26-mypass-extension-pairing.md` (ensure spec link present — already in Goal)
 
@@ -1012,7 +1061,75 @@ In `scripts/test.sh`, after existing node tests:
   node ChromeExtension/tests/pairing.test.js
 ```
 
-- [ ] **Step 2: Add Ukrainian RUN.md paragraph**
+- [ ] **Step 2: Multi-browser native messaging manifest install**
+
+Replace the single-directory manifest write in `scripts/setup-chrome-extension.sh` (keep the `ChromeHost` build + stable copy steps unchanged). After copying `ChromeHost` to `$HOST_BINARY`, iterate Chromium-family base dirs:
+
+```bash
+APP_SUPPORT="${HOME}/Library/Application Support"
+
+CHROMIUM_BROWSER_BASES=(
+  "Google/Chrome"
+  "Google/Chrome Beta"
+  "Google/Chrome Canary"
+  "Google/Chrome Dev"
+  "Chromium"
+  "Microsoft Edge"
+  "Microsoft Edge Beta"
+  "Microsoft Edge Dev"
+  "Microsoft Edge Canary"
+  "BraveSoftware/Brave-Browser"
+  "BraveSoftware/Brave-Browser-Beta"
+  "BraveSoftware/Brave-Browser-Nightly"
+  "Vivaldi"
+  "Vivaldi Snapshot"
+  "com.operasoftware.Opera"
+  "com.operasoftware.OperaGX"
+  "Arc/User Data"
+)
+
+INSTALLED_MANIFESTS=()
+
+for base in "${CHROMIUM_BROWSER_BASES[@]}"; do
+  base_dir="${APP_SUPPORT}/${base}"
+  if [[ "$base" == "Google/Chrome" ]] || [[ -d "$base_dir" ]]; then
+    target_dir="${base_dir}/NativeMessagingHosts"
+    manifest_path="${target_dir}/com.mypass.chromehost.json"
+    mkdir -p "$target_dir"
+    python3 -c "
+import json
+
+manifest = {
+    'allowed_origins': ['chrome-extension://${EXTENSION_ID}/'],
+    'description': 'MyPass native messaging host',
+    'name': 'com.mypass.chromehost',
+    'path': '${HOST_BINARY}',
+    'type': 'stdio',
+}
+
+with open('${manifest_path}', 'w', encoding='utf-8') as f:
+    json.dump(manifest, f, indent=2, sort_keys=True)
+    f.write('\n')
+"
+    INSTALLED_MANIFESTS+=("$manifest_path")
+  fi
+done
+
+echo "Installed native messaging host manifests:"
+for manifest in "${INSTALLED_MANIFESTS[@]}"; do
+  echo "  $manifest"
+done
+```
+
+Remove the old single `TARGET_DIR` / `MANIFEST_PATH` variables and the one-off
+`mkdir` + `python3` block they guarded.
+
+Verify syntax:
+
+Run: `bash -n scripts/setup-chrome-extension.sh`
+Expected: PASS (no output).
+
+- [ ] **Step 3: Add Ukrainian RUN.md paragraphs**
 
 In the `## Chrome-розширення` section, after automatic setup or before e2e checklist, add:
 
@@ -1028,15 +1145,21 @@ In the `## Chrome-розширення` section, after automatic setup or before
 Після успішного підключення popup показує збережені записи як раніше. Скасувати довіру можна в **MyPass → Settings → Browser → Paired browsers → Revoke**. Деталі протоколу: [spec pairing](docs/superpowers/specs/2026-07-26-mypass-extension-pairing-design.md).
 ```
 
-- [ ] **Step 3: Run full test suite**
+In the **Автоматичне налаштування (рекомендовано)** subsection, add:
+
+```markdown
+Скрипт `./scripts/setup-chrome-extension.sh` встановлює native messaging manifest для **усіх встановлених Chromium-браузерів** (Chrome, Edge, Brave, Vivaldi, Opera, Arc тощо). Кожен браузер підключається окремо — у **Settings → Paired browsers** з’являється свій рядок з назвою цього браузера.
+```
+
+- [ ] **Step 4: Run full test suite**
 
 Run: `./scripts/test.sh`
 Expected: PASS (or document any pre-existing failures unrelated to pairing).
 
-- [ ] **Step 4: Commit**
+- [ ] **Step 5: Commit**
 
 ```bash
-git add scripts/test.sh RUN.md
+git add scripts/test.sh scripts/setup-chrome-extension.sh RUN.md
 git commit -m "docs(pairing): register pairing tests and RUN.md pairing steps"
 ```
 
@@ -1047,11 +1170,18 @@ git commit -m "docs(pairing): register pairing tests and RUN.md pairing steps"
 | Check | Status |
 |-------|--------|
 | Spec coverage — all spec sections map to Tasks 1–9 | OK |
+| Multi-browser manifest install — Task 9 + spec "Multi-browser installation" | OK |
+| `startPairing(token:browser:)` consistent in spec, Task 1 tests/code, Task 4 service gate | OK |
+| `startPairing(browser:)` consistent in spec, Task 3 manager + label tests, Task 4 gate | OK |
+| Optional `browser` JSON field on wire — Task 1 round-trip tests | OK |
+| `detectBrowserName()` — spec Extension UX, Task 7 implementation + unit tests | OK |
 | No placeholders / TBD / "similar to task N" | OK — each task repeats concrete paths and code |
 | Type consistency — Swift API matches spec exactly | OK |
 | RelayTokenInjector documented as generic (no allowlist) | OK — Global Constraints + Task 1 |
-| LoopbackServer `requestToken` updated | OK — Task 1 |
+| LoopbackServer `requestToken` updated for `startPairing(token, _)` | OK — Task 1 |
 | Keychain tests gated `MYPASS_KEYCHAIN_TESTS=1` | OK — Task 2 |
-| RUN.md additions in Ukrainian | OK — Task 9 |
+| RUN.md additions in Ukrainian (pairing steps + multi-browser setup note) | OK — Task 9 |
+| `bash -n scripts/setup-chrome-extension.sh` verification | OK — Task 9 |
 | English UI strings | OK |
 | Cross-links spec ↔ plan | OK |
+| Out of scope — Firefox/Safari (not Chromium-family) | OK — spec updated |

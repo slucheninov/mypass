@@ -83,7 +83,10 @@ pairing logic runs.
 - **Validation:** `containsSecret(matching:)` hashes the presented secret and
   compares to stored hashes with **constant-time** comparison (`Data.timingSafeEqual`
   or equivalent).
-- **Multiple browsers:** each successful pairing creates a new `PairedBrowser` record
+- **Multiple browsers:** multiple Chromium-family browsers supported from day one;
+  each browser instance pairs separately (its own `chrome.storage.local` secret) and
+  appears as its own row in **Settings → Paired browsers**, labeled by self-reported
+  browser name. Each successful pairing creates a new `PairedBrowser` record
   (separate Keychain item); any valid stored secret authorizes requests.
 - **Revocation:** Settings → Browser lists paired browsers; **Revoke** removes that
   Keychain item. The extension's stale secret then fails validation → popup returns
@@ -99,7 +102,7 @@ public enum ExtensionBridgeRequest: Equatable {
     case getCredentials(token: String, url: String, pairing: String?)
     case fillCredential(token: String, id: String, url: String, pairing: String?)
     case proposeSaveLogin(token: String, url: String, username: String, password: String, pairing: String?)
-    case startPairing(token: String)
+    case startPairing(token: String, browser: String?)
     case completePairing(token: String, code: String)
 }
 
@@ -122,11 +125,12 @@ public enum ExtensionBridgeResponse: Equatable {
 | `getCredentials` | `token`, `url`, optional `pairing` |
 | `fillCredential` | `token`, `id`, `url`, optional `pairing` |
 | `proposeSaveLogin` | `token`, `url`, `username`, `password`, optional `pairing` |
-| `startPairing` | `token` |
+| `startPairing` | `token`, optional `browser` |
 | `completePairing` | `token`, `code` |
 
 The optional `pairing` field is omitted or `null` when the extension has no stored
-secret yet.
+secret yet. The optional `browser` field on `startPairing` is omitted or `null` when
+the extension does not report a name (the app falls back to `"Chromium browser"`).
 
 ### Response wire shapes
 
@@ -194,7 +198,7 @@ final class ExtensionPairingManager {
     var onCodeGenerated: ((String) -> Void)?
     var onPairingFinished: (() -> Void)?
 
-    func startPairing() -> String
+    func startPairing(browser: String?) -> String
     func completePairing(code: String) -> String?
     func cancelPairing()
     func isAuthorized(pairing: String?) -> Bool
@@ -203,12 +207,13 @@ final class ExtensionPairingManager {
 
 Behavior:
 
-- `startPairing()` — generates new 6-digit code, sets expiry = `now() + 120s`,
-  resets attempts to 0, fires `onCodeGenerated(code)`, returns the code.
+- `startPairing(browser:)` — stores `pendingBrowserLabel = browser ?? "Chromium browser"`;
+  generates new 6-digit code, sets expiry = `now() + 120s`, resets attempts to 0,
+  fires `onCodeGenerated(code)`, returns the code.
 - `completePairing(code:)` — returns `nil` → service responds `.error("invalid_code")`
   when: no active challenge, expired, code mismatch, or attempts ≥ 5 after this
   failure. On success: generates 32-byte base64 secret, stores
-  `PairedBrowser(label: "Chrome", createdAt: now(), secretHash: sha256(secret))`,
+  `PairedBrowser(label: pendingBrowserLabel, createdAt: now(), secretHash: sha256(secret))`,
   clears active challenge, fires `onPairingFinished()`, returns the secret.
 - `cancelPairing()` — clears active challenge, fires `onPairingFinished()`.
 - `isAuthorized(pairing:)` — `nil` or unknown secret → `false`; else delegates to
@@ -221,8 +226,8 @@ dependency. Order of checks in `handle(_:)`:
 
 1. **Vault locked** (`vaultSession?.currentDatabase == nil`) → `.locked` for **all
    five** request types.
-2. **`startPairing`** → `manager.startPairing()` (side effect: UI callback), return
-   `.pairingStarted`.
+2. **`startPairing`** → `manager.startPairing(browser: browser)` (side effect: UI
+   callback), return `.pairingStarted`.
 3. **`completePairing`** → if let secret = `manager.completePairing(code:)` return
    `.paired(secret: secret)`; else `.error("invalid_code")`.
 4. **Data requests** (`getCredentials`, `fillCredential`, `proposeSaveLogin`) → if
@@ -298,7 +303,11 @@ pattern as `SecuritySettingsPane` receiving `vaultSession`).
 - Add optional `"pairing"` field to `getCredentials`, `fillCredential`,
   `proposeSaveLogin` when a secret exists.
 - Extend `knownTypes` to include `startPairing`, `completePairing`.
-- Handle popup messages `{type: "startPairing"}` and
+- Export `detectBrowserName()` — reads `navigator.userAgentData.brands`, picks the
+  first non-`Chromium` brand that is not a `Not.A.Brand` placeholder, otherwise
+  returns `"Chromium browser"`. The label is **self-reported** (informational for
+  Settings display, not a security boundary).
+- Handle popup messages `{type: "startPairing", browser: detectBrowserName()}` and
   `{type: "completePairing", code: "123456"}` by forwarding via `sendNativeMessage`.
 - On response `type === "paired"`: save `response.secret` to
   `chrome.storage.local` as `pairingSecret` before resolving to caller.
@@ -309,8 +318,9 @@ pattern as `SecuritySettingsPane` receiving `vaultSession`).
 
 - On `getCredentials` response `type === "pairingRequired"`: hide credential list,
   show **Connect to MyPass** button.
-- Connect click → send `{type: "startPairing"}` via `chrome.runtime.sendMessage`,
-  show 6-digit numeric input with hint **Enter the code shown in MyPass**.
+- Connect click → send `{type: "startPairing"}` via `chrome.runtime.sendMessage`
+  (background.js adds `browser: detectBrowserName()` before native relay), show
+  6-digit numeric input with hint **Enter the code shown in MyPass**.
 - Submit code → `{type: "completePairing", code}`; on `paired` → re-run credential
   query for the active tab URL.
 - Existing `locked` and `error` / `app_not_running` UX unchanged.
@@ -320,6 +330,20 @@ pattern as `SecuritySettingsPane` receiving `vaultSession`).
 Treat `pairingRequired` like `locked` for save-banner purposes: set
 `state.vaultLocked = true` (or equivalent flag) so the "Save password to MyPass?"
 banner does not appear when pairing is missing.
+
+## Multi-browser installation
+
+`scripts/setup-chrome-extension.sh` installs the native messaging manifest
+(`com.mypass.chromehost.json`) into **every installed Chromium-family browser** under
+`~/Library/Application Support`, not only Google Chrome. It iterates a fixed list of
+base directories (Chrome stable/beta/canary/dev, Chromium, Edge variants, Brave
+variants, Vivaldi, Opera, Opera GX, Arc) and writes
+`<base>/NativeMessagingHosts/com.mypass.chromehost.json` for each base directory that
+exists. Non-installed browsers are skipped, except **Google/Chrome** — that directory
+is always created if missing. The script prints each installed location. The same
+unpacked extension (pinned ID) loads in each browser; each browser pairs separately
+via its own `chrome.storage.local` secret and appears under **Settings → Paired
+browsers** with its self-reported name.
 
 ## Error Handling
 
@@ -337,9 +361,11 @@ banner does not appear when pairing is missing.
 ### Swift
 
 - **ExtensionBridgeMessagesTests** — round-trip all new request/response types; verify
-  JSON shapes (`pairing`, `code`, `secret`, `pairingRequired`, `invalid_code`).
+  JSON shapes (`pairing`, `browser`, `code`, `secret`, `pairingRequired`,
+  `invalid_code`).
 - **ExtensionPairingManagerTests** — injected `now()` clock: code format, TTL expiry,
-  5-attempt lockout, cancel, secret issuance, store write on success.
+  5-attempt lockout, cancel, secret issuance, store write on success; browser label
+  from `startPairing(browser:)` parameter and `"Chromium browser"` fallback when nil.
 - **ExtensionBridgeServiceTests** — gate ordering with `InMemoryExtensionPairingStore`:
   locked blocks all types; unauthorized data requests → `pairingRequired`; authorized
   → existing behavior; start/complete pairing flows.
@@ -358,12 +384,15 @@ MYPASS_KEYCHAIN_TESTS=1 swift test --filter KeychainExtensionPairingStoreTests  
 
 - **`ChromeExtension/tests/pairing.test.js`** — mock `chrome.storage.local` and
   `chrome.runtime.sendNativeMessage`; exercise background pairing message forwarding,
-  secret persistence on `paired`, stale-secret clearing on `pairingRequired`.
+  secret persistence on `paired`, stale-secret clearing on `pairingRequired`, and
+  `detectBrowserName()` (e.g. brands `[{brand:"Google Chrome"},{brand:"Chromium"},
+  {brand:"Not.A/Brand"}]` → `"Google Chrome"`; missing `userAgentData` →
+  `"Chromium browser"`).
 - Registered in `scripts/test.sh` alongside existing extension tests.
 
 ## Out of Scope
 
 - PAKE or encrypted pairing payloads
-- Pairing for browsers other than Chrome (Safari / Phase 4b)
+- Firefox and Safari (different native messaging manifest formats / extension APIs)
 - Chrome Web Store distribution concerns
 - UI localization (English strings in source until Phase 7)
