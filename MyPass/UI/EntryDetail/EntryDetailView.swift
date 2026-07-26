@@ -193,6 +193,14 @@ struct EntryDetailView: View {
                     showEdit = false
                 }
             }
+            .onChange(of: navigationState.selectedEntryID) { _, newID in
+                if let id = newID { vaultSession.touchAccess(entryID: id) }
+            }
+            .onAppear {
+                if let id = navigationState.selectedEntryID {
+                    vaultSession.touchAccess(entryID: id)
+                }
+            }
         } else {
             DetailEmptyStateView()
         }
@@ -202,6 +210,9 @@ struct EntryDetailView: View {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
         ClipboardAutoClear.schedule(value: value, after: ClipboardClearInterval.seconds(), pasteboard: pasteboard, clock: clock)
+        if let id = navigationState.selectedEntryID {
+            vaultSession.touchAccess(entryID: id)
+        }
     }
 
     private func replaceEntry(_ updated: KdbxEntry, in group: KdbxGroup) {

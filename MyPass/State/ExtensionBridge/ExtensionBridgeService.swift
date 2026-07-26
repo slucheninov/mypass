@@ -12,6 +12,7 @@ final class ExtensionBridgeService {
     /// closure that populates `NavigationState.pendingSaveProposal` and brings
     /// `MyPass.app` to the foreground) — not left as a bare extension point.
     var onSaveProposal: ((_ url: String, _ username: String, _ password: String) -> Void)?
+    var onCredentialFilled: ((UUID) -> Void)?
 
     init(vaultSession: VaultSession) {
         self.vaultSession = vaultSession
@@ -43,6 +44,8 @@ final class ExtensionBridgeService {
             // page's content-script world for a feature that doesn't exist
             // would be a pure liability. Always `nil` until TOTP-filling is
             // actually built.
+            onCredentialFilled?(entry.uuid)
+            vaultSession?.touchAccess(entryID: entry.uuid)
             return .credential(username: entry.login, password: entry.password, totp: nil)
 
         case .proposeSaveLogin(_, let url, let username, let password):

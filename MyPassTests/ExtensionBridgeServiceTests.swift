@@ -69,6 +69,14 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(response, .credential(username: "alice", password: "s3cret", totp: nil))
     }
 
+    func testFillCredentialTouchesAccessForMatchingEntry() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        var touchedIDs: [UUID] = []
+        service.onCredentialFilled = { touchedIDs.append($0) }
+        _ = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com"))
+        XCTAssertEqual(touchedIDs, [id])
+    }
+
     /// TOTP-filling isn't implemented anywhere downstream: the base32 seed
     /// must never be echoed back into `.credential`'s totp field, even when
     /// the matched entry has one set — sending a long-lived secret to a web
