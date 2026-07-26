@@ -20,10 +20,12 @@ struct UnlockView: View {
             Text("MyPass")
                 .font(.system(size: 28, weight: .semibold))
 
-            Image(systemName: "key.fill")
-                .font(.system(size: 40))
-                .foregroundStyle(.secondary)
+            Image("BrandKey")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 56, height: 56)
                 .padding(.bottom, 4)
+                .accessibilityHidden(true)
 
             SecureField("Master Password", text: $password)
                 .textFieldStyle(.roundedBorder)

@@ -4,6 +4,8 @@ import MyPassKit
 
 struct MenuBarUnlockedPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
+    @Environment(\.openWindow) private var openWindow
+    @Environment(\.openSettings) private var openSettings
 
     @State private var detailEntryID: UUID?
 
@@ -64,7 +66,8 @@ struct MenuBarUnlockedPanelView: View {
             }())
 
             menuRow("Settings…") {
-                NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
+                NSApp.activate(ignoringOtherApps: true)
+                openSettings()
             }
 
             menuRow("Quit MyPass") {
@@ -90,6 +93,6 @@ struct MenuBarUnlockedPanelView: View {
 
     private func activateMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
-        NSApp.windows.first { $0.canBecomeMain || $0.isVisible }?.makeKeyAndOrderFront(nil)
+        openWindow(id: "main")
     }
 }

@@ -8,27 +8,125 @@ final class GroupTreeOperationsTests: XCTestCase {
         return KdbxGroup(uuid: UUID(), name: name, iconID: 0, creationTime: now, lastModificationTime: now, locationChanged: now, entries: entries, subgroups: subgroups)
     }
 
-    func testAddSubgroupAppendsAndReturnsNewGroup() {
+    func testAddGroupAppendsToRootAndReturnsNewGroup() {
         let root = makeGroup(name: "Root")
-        let created = GroupTreeOperations.addSubgroup(named: "Work", to: root)
+        let created = GroupTreeOperations.addGroup(named: "Work", emoji: "💼", to: root)
         XCTAssertEqual(root.subgroups.count, 1)
         XCTAssertEqual(root.subgroups.first?.uuid, created.uuid)
         XCTAssertEqual(created.name, "Work")
+        XCTAssertEqual(created.emoji, "💼")
     }
 
-    func testRemoveSubgroupFindsNestedGroupAndRemovesIt() {
-        let grandchild = makeGroup(name: "Grandchild")
-        let child = makeGroup(name: "Child", subgroups: [grandchild])
+    func testAddGroupAlwaysLandsAtRootLevel() {
+        let nested = makeGroup(name: "Nested")
+        let child = makeGroup(name: "Child", subgroups: [nested])
         let root = makeGroup(name: "Root", subgroups: [child])
 
-        let removed = GroupTreeOperations.removeSubgroup(withID: grandchild.uuid, from: root)
-        XCTAssertTrue(removed)
-        XCTAssertEqual(child.subgroups.count, 0)
+        let created = GroupTreeOperations.addGroup(named: "Flat", emoji: nil, to: root)
+
+        XCTAssertEqual(root.subgroups.count, 2)
+        XCTAssertTrue(root.subgroups.contains { $0.uuid == created.uuid })
+        XCTAssertFalse(child.subgroups.contains { $0.uuid == created.uuid })
     }
 
-    func testRemoveSubgroupReturnsFalseWhenNotFound() {
+    func testUpdateGroupRenamesAndSetsEmoji() {
+        let work = makeGroup(name: "Work")
+        let root = makeGroup(name: "Root", subgroups: [work])
+
+        let updated = GroupTreeOperations.updateGroup(withID: work.uuid, name: "Personal", emoji: "🏠", in: root)
+
+        XCTAssertTrue(updated)
+        XCTAssertEqual(work.name, "Personal")
+        XCTAssertEqual(work.emoji, "🏠")
+    }
+
+    func testUpdateGroupClearsEmoji() {
+        var work = makeGroup(name: "Work")
+        work.emoji = "💼"
+        let root = makeGroup(name: "Root", subgroups: [work])
+
+        let updated = GroupTreeOperations.updateGroup(withID: work.uuid, name: "Work", emoji: nil, in: root)
+
+        XCTAssertTrue(updated)
+        XCTAssertNil(work.emoji)
+    }
+
+    func testUpdateGroupFindsNestedLegacyGroup() {
+        let nested = makeGroup(name: "Nested")
+        let child = makeGroup(name: "Child", subgroups: [nested])
+        let root = makeGroup(name: "Root", subgroups: [child])
+
+        let updated = GroupTreeOperations.updateGroup(withID: nested.uuid, name: "Renamed", emoji: "🔐", in: root)
+
+        XCTAssertTrue(updated)
+        XCTAssertEqual(nested.name, "Renamed")
+        XCTAssertEqual(nested.emoji, "🔐")
+    }
+
+    func testDeleteGroupMovesEntriesIncludingNestedOnesToRecycleBin() {
+        let now = Date()
+        let nestedEntry = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let directEntry = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let nested = makeGroup(name: "Nested", entries: [nestedEntry])
+        let work = makeGroup(name: "Work", entries: [directEntry], subgroups: [nested])
+        let root = makeGroup(name: "Root", subgroups: [work])
+        var deletedObjects: [KdbxDeletedObject] = []
+        var recycleBinUUID: UUID? = nil
+
+        let deleted = GroupTreeOperations.deleteGroup(withID: work.uuid, in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: &recycleBinUUID)
+
+        XCTAssertTrue(deleted)
+        XCTAssertFalse(root.subgroups.contains { $0.uuid == work.uuid })
+        let bin = root.subgroups.first { GroupTreeOperations.isRecycleBinGroup($0) }
+        XCTAssertNotNil(bin)
+        XCTAssertEqual(bin?.entries.count, 2)
+        XCTAssertTrue(bin!.entries.contains { $0.uuid == directEntry.uuid })
+        XCTAssertTrue(bin!.entries.contains { $0.uuid == nestedEntry.uuid })
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == work.uuid })
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == nested.uuid })
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == directEntry.uuid })
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == nestedEntry.uuid })
+    }
+
+    func testDeleteGroupRefusesToDeleteRecycleBin() {
         let root = makeGroup(name: "Root")
-        XCTAssertFalse(GroupTreeOperations.removeSubgroup(withID: UUID(), from: root))
+        var deletedObjects: [KdbxDeletedObject] = []
+        var recycleBinUUID: UUID? = nil
+        let bin = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+
+        let deleted = GroupTreeOperations.deleteGroup(withID: bin.uuid, in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: &recycleBinUUID)
+
+        XCTAssertFalse(deleted)
+        XCTAssertEqual(root.subgroups.count, 1)
+    }
+
+    func testDeleteGroupRefusesToDeleteRoot() {
+        let root = makeGroup(name: "Root")
+        var deletedObjects: [KdbxDeletedObject] = []
+        var recycleBinUUID: UUID? = nil
+
+        let deleted = GroupTreeOperations.deleteGroup(withID: root.uuid, in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: &recycleBinUUID)
+
+        XCTAssertFalse(deleted)
+    }
+
+    func testDeleteGroupRemovesLegacyNestedSubgroupDirectly() {
+        let now = Date()
+        let entry = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let nested = makeGroup(name: "Nested", entries: [entry])
+        let child = makeGroup(name: "Child", subgroups: [nested])
+        let root = makeGroup(name: "Root", subgroups: [child])
+        var deletedObjects: [KdbxDeletedObject] = []
+        var recycleBinUUID: UUID? = nil
+
+        let deleted = GroupTreeOperations.deleteGroup(withID: nested.uuid, in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: &recycleBinUUID)
+
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(child.subgroups.count, 0)
+        XCTAssertTrue(root.subgroups.contains { $0.uuid == child.uuid })
+        let bin = root.subgroups.first { GroupTreeOperations.isRecycleBinGroup($0) }
+        XCTAssertEqual(bin?.entries.first?.uuid, entry.uuid)
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == nested.uuid })
     }
 
     func testMoveEntryRelocatesFromSourceToDestination() {
@@ -81,9 +179,9 @@ final class GroupTreeOperationsTests: XCTestCase {
         let realBin = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
 
         // Decoy: a second group happens to share the bin's name, added
-        // directly via addSubgroup (bypassing recycleBinGroup) after the
+        // directly via addGroup (bypassing recycleBinGroup) after the
         // real bin's UUID is already tracked.
-        let decoy = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.recycleBinGroupName, to: root)
+        let decoy = GroupTreeOperations.addGroup(named: GroupTreeOperations.recycleBinGroupName, emoji: nil, to: root)
 
         let resolved = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
 
@@ -103,7 +201,7 @@ final class GroupTreeOperationsTests: XCTestCase {
         // Simulates a legacy/foreign file: the group already exists directly
         // under root, but was never registered via recycleBinGroup, so
         // recycleBinGroupUUID starts out nil.
-        let existingBin = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.recycleBinGroupName, to: root)
+        let existingBin = GroupTreeOperations.addGroup(named: GroupTreeOperations.recycleBinGroupName, emoji: nil, to: root)
 
         var recycleBinUUID: UUID? = nil
         let resolved = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
@@ -117,7 +215,7 @@ final class GroupTreeOperationsTests: XCTestCase {
     /// Russian recycle bin group name.
     func testRecycleBinGroupAdoptsLegacyRussianNameWhenUUIDUntracked() {
         let root = makeGroup(name: "Root")
-        let existingBin = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.legacyRecycleBinGroupName, to: root)
+        let existingBin = GroupTreeOperations.addGroup(named: GroupTreeOperations.legacyRecycleBinGroupName, emoji: nil, to: root)
 
         var recycleBinUUID: UUID? = nil
         let resolved = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
@@ -237,7 +335,7 @@ final class GroupTreeOperationsTests: XCTestCase {
 
     func testClampedDefaultGroupIDFallsBackByNameWhenUUIDUntracked() {
         let root = makeGroup(name: "Root")
-        let bin = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.recycleBinGroupName, to: root)
+        let bin = GroupTreeOperations.addGroup(named: GroupTreeOperations.recycleBinGroupName, emoji: nil, to: root)
 
         let clamped = GroupTreeOperations.clampedDefaultGroupID(bin.uuid, in: root, recycleBinGroupUUID: nil)
 

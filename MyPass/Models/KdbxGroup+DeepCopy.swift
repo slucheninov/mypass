@@ -16,7 +16,8 @@ extension KdbxGroup {
             lastModificationTime: lastModificationTime,
             locationChanged: locationChanged,
             entries: entries,
-            subgroups: subgroups.map { $0.deepCopy() }
+            subgroups: subgroups.map { $0.deepCopy() },
+            customData: customData
         )
     }
 }

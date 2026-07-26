@@ -185,15 +185,29 @@ public enum MergeEngine {
         deletedUUIDs: Set<UUID>
     ) -> KdbxGroup {
         let metadataSource: KdbxGroup
+        let olderGroup: KdbxGroup?
         switch (localGroup, remoteGroup) {
         case (let l?, let r?):
-            metadataSource = l.lastModificationTime >= r.lastModificationTime ? l : r
+            if l.lastModificationTime >= r.lastModificationTime {
+                metadataSource = l
+                olderGroup = r
+            } else {
+                metadataSource = r
+                olderGroup = l
+            }
         case (let l?, nil):
             metadataSource = l
+            olderGroup = nil
         case (nil, let r?):
             metadataSource = r
+            olderGroup = nil
         case (nil, nil):
             fatalError("mergeGroup called with no source for uuid \(uuid)")
+        }
+
+        var mergedCustomData = olderGroup?.customData ?? [:]
+        for (key, value) in metadataSource.customData {
+            mergedCustomData[key] = value
         }
 
         let localChildEntryUUIDs = Set(localGroup?.entries.map(\.uuid) ?? [])
@@ -241,7 +255,8 @@ public enum MergeEngine {
             lastModificationTime: metadataSource.lastModificationTime,
             locationChanged: metadataSource.locationChanged,
             entries: mergedEntries,
-            subgroups: mergedSubgroups
+            subgroups: mergedSubgroups,
+            customData: mergedCustomData
         )
     }
 }

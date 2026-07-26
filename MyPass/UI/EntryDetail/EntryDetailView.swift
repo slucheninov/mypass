@@ -171,9 +171,6 @@ struct EntryDetailView: View {
             .background(UIShellMetrics.detailColumnBackground)
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
-                    Button("Share", systemImage: "square.and.arrow.up") { }
-                        .disabled(true)
-                        .help("Share is not available yet")
                     Button("Edit", systemImage: "square.and.pencil") {
                         navigationState.presentEdit(entryID: entry.uuid)
                     }
@@ -378,9 +375,16 @@ struct EntryDetailView: View {
 private struct DetailEmptyStateView: View {
     var body: some View {
         VStack(spacing: 12) {
-            Image(systemName: "person.crop.circle.badge.key")
-                .font(.system(size: UIShellMetrics.emptyStateIconSize))
-                .foregroundStyle(.secondary.opacity(0.35))
+            Image("BrandKey")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(
+                    width: UIShellMetrics.emptyStateIconSize,
+                    height: UIShellMetrics.emptyStateIconSize
+                )
+                .saturation(0)
+                .opacity(0.45)
+                .accessibilityHidden(true)
             Text("Nothing Selected")
                 .font(.system(size: 17, weight: .semibold))
                 .foregroundStyle(.secondary)

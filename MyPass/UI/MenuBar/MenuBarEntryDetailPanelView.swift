@@ -4,6 +4,8 @@ import MyPassKit
 
 struct MenuBarEntryDetailPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
+    @EnvironmentObject private var navigationState: NavigationState
+    @Environment(\.openWindow) private var openWindow
 
     let entry: KdbxEntry
     let onBack: () -> Void
@@ -63,20 +65,22 @@ struct MenuBarEntryDetailPanelView: View {
 
             Spacer()
 
-            Menu {
-                Button("Edit") { }
-                    .disabled(true)
-                Button("Share") { }
-                    .disabled(true)
-            } label: {
-                Image(systemName: "ellipsis.circle")
+            Button(action: openEntryForEdit) {
+                Image(systemName: "square.and.pencil")
                     .foregroundStyle(.secondary)
             }
-            .menuStyle(.borderlessButton)
-            .fixedSize()
+            .buttonStyle(.plain)
+            .accessibilityLabel("Edit")
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 6)
+    }
+
+    private func openEntryForEdit() {
+        navigationState.selectedEntryID = entry.uuid
+        navigationState.presentEdit(entryID: entry.uuid)
+        NSApp.activate(ignoringOtherApps: true)
+        openWindow(id: "main")
     }
 
     private var heroSection: some View {

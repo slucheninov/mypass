@@ -15,6 +15,7 @@ public final class KdbxGroup: Equatable, Identifiable {
     public var locationChanged: Date
     public var entries: [KdbxEntry]
     public var subgroups: [KdbxGroup]
+    public var customData: [String: String]
 
     public init(
         uuid: UUID,
@@ -24,7 +25,8 @@ public final class KdbxGroup: Equatable, Identifiable {
         lastModificationTime: Date,
         locationChanged: Date,
         entries: [KdbxEntry],
-        subgroups: [KdbxGroup]
+        subgroups: [KdbxGroup],
+        customData: [String: String] = [:]
     ) {
         self.uuid = uuid
         self.name = name
@@ -34,6 +36,7 @@ public final class KdbxGroup: Equatable, Identifiable {
         self.locationChanged = locationChanged
         self.entries = entries
         self.subgroups = subgroups
+        self.customData = customData
     }
 
     public static func == (lhs: KdbxGroup, rhs: KdbxGroup) -> Bool {
@@ -44,8 +47,29 @@ public final class KdbxGroup: Equatable, Identifiable {
         lhs.lastModificationTime == rhs.lastModificationTime &&
         lhs.locationChanged == rhs.locationChanged &&
         lhs.entries == rhs.entries &&
-        lhs.subgroups == rhs.subgroups
+        lhs.subgroups == rhs.subgroups &&
+        lhs.customData == rhs.customData
     }
 
     public var id: UUID { uuid }
+}
+
+public extension KdbxGroup {
+    /// Emoji icon shown in the UI, stored in KDBX4 group CustomData so the
+    /// vault stays compatible with other KeePass clients.
+    static let emojiCustomDataKey = "MyPass.GroupEmoji"
+
+    var emoji: String? {
+        get {
+            guard let value = customData[Self.emojiCustomDataKey], !value.isEmpty else { return nil }
+            return value
+        }
+        set {
+            if let newValue, !newValue.isEmpty {
+                customData[Self.emojiCustomDataKey] = newValue
+            } else {
+                customData.removeValue(forKey: Self.emojiCustomDataKey)
+            }
+        }
+    }
 }

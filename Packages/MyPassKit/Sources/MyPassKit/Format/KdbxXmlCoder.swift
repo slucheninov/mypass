@@ -265,6 +265,17 @@ enum KdbxXmlCoder {
             lastAccessTime: nil,
             locationChanged: group.locationChanged
         ))
+        if !group.customData.isEmpty {
+            let customDataElement = XMLElement(name: "CustomData")
+            for key in group.customData.keys.sorted() {
+                guard let value = group.customData[key] else { continue }
+                let itemElement = XMLElement(name: "Item")
+                itemElement.addChild(textElement("Key", key))
+                itemElement.addChild(textElement("Value", value))
+                customDataElement.addChild(itemElement)
+            }
+            el.addChild(customDataElement)
+        }
         for entry in group.entries {
             el.addChild(entryElement(entry, obfuscate: obfuscate))
         }
@@ -354,6 +365,19 @@ enum KdbxXmlCoder {
         for entryEl in element.elements(forName: "Entry") {
             entries.append(try parseEntry(entryEl, deobfuscate: deobfuscate))
         }
+        var customData: [String: String] = [:]
+        if let customDataElement = element.elements(forName: "CustomData").first {
+            // Per-item children other than Key/Value (e.g. KDBX 4.1 LastModificationTime
+            // on each Item) are not preserved — a known limitation of this codec.
+            for itemEl in customDataElement.elements(forName: "Item") {
+                guard let key = itemEl.elements(forName: "Key").first?.stringValue,
+                      let value = itemEl.elements(forName: "Value").first?.stringValue else {
+                    continue
+                }
+                customData[key] = value
+            }
+        }
+
         var subgroups: [KdbxGroup] = []
         for groupEl in element.elements(forName: "Group") {
             subgroups.append(try parseGroup(groupEl, deobfuscate: deobfuscate))
@@ -361,7 +385,8 @@ enum KdbxXmlCoder {
         return KdbxGroup(
             uuid: uuid, name: name, iconID: iconID,
             creationTime: creationTime, lastModificationTime: lastModificationTime,
-            locationChanged: locationChanged, entries: entries, subgroups: subgroups
+            locationChanged: locationChanged, entries: entries, subgroups: subgroups,
+            customData: customData
         )
     }
 

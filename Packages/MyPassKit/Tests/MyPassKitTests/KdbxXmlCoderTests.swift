@@ -199,6 +199,49 @@ final class KdbxXmlCoderTests: XCTestCase {
         XCTAssertEqual(decoded.rootGroup.subgroups[0].iconID, 1)
     }
 
+    func testGroupCustomDataRoundTrips() throws {
+        var group = KdbxGroup(
+            uuid: UUID(), name: "Work", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [], subgroups: []
+        )
+        group.emoji = "🔐"
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [], subgroups: [group]
+        )
+        let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [])
+        let (obfuscate, deobfuscate) = passthroughStream()
+
+        let xml = KdbxXmlCoder.encode(payload, obfuscate: obfuscate)
+        let xmlString = String(data: xml, encoding: .utf8)!
+        XCTAssertTrue(xmlString.contains("<CustomData>"))
+        XCTAssertTrue(xmlString.contains("<Key>\(KdbxGroup.emojiCustomDataKey)</Key>"))
+        XCTAssertTrue(xmlString.contains("<Value>🔐</Value>"))
+
+        let decoded = try KdbxXmlCoder.decode(xml, deobfuscate: deobfuscate)
+        XCTAssertEqual(decoded.rootGroup.subgroups[0].emoji, "🔐")
+        XCTAssertEqual(decoded.rootGroup.subgroups[0].customData[KdbxGroup.emojiCustomDataKey], "🔐")
+    }
+
+    func testEmptyGroupCustomDataEmitsNoCustomDataElement() throws {
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [], subgroups: []
+        )
+        let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [])
+        let (obfuscate, deobfuscate) = passthroughStream()
+
+        let xml = KdbxXmlCoder.encode(payload, obfuscate: obfuscate)
+        let xmlString = String(data: xml, encoding: .utf8)!
+        XCTAssertFalse(xmlString.contains("<CustomData>"))
+
+        let decoded = try KdbxXmlCoder.decode(xml, deobfuscate: deobfuscate)
+        XCTAssertTrue(decoded.rootGroup.customData.isEmpty)
+    }
+
     func testDecodeMalformedXmlThrows() {
         let malformed = Data("not xml at all".utf8)
         XCTAssertThrowsError(try KdbxXmlCoder.decode(malformed) { $0 }) { error in

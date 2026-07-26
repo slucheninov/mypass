@@ -20,9 +20,11 @@ struct MenuBarUnlockPanelView: View {
             Text("MyPass is locked")
                 .font(.headline)
 
-            Image(systemName: "key.fill")
-                .font(.system(size: 36))
-                .foregroundStyle(.secondary)
+            Image("BrandKey")
+                .resizable()
+                .aspectRatio(contentMode: .fit)
+                .frame(width: 48, height: 48)
+                .accessibilityHidden(true)
 
             SecureField("Enter Password", text: $password)
                 .textFieldStyle(.roundedBorder)

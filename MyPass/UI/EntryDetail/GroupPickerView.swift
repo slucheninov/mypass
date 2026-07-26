@@ -9,15 +9,15 @@ struct GroupPickerView: View {
     var body: some View {
         Picker("Group", selection: $selectedGroupID) {
             ForEach(selectableGroups, id: \.uuid) { group in
-                Text(group.name).tag(group.uuid)
+                Text(group.name)
+                    .tag(group.uuid)
             }
         }
     }
 
     private var selectableGroups: [KdbxGroup] {
         flatten(rootGroup).filter { group in
-            if let binUUID = recycleBinGroupUUID, group.uuid == binUUID { return false }
-            return !GroupTreeOperations.isRecycleBinGroup(group)
+            !GroupTreeOperations.isTheRecycleBin(group, recycleBinGroupUUID: recycleBinGroupUUID)
         }
     }
 
