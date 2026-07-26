@@ -96,4 +96,9 @@ final class NavigationStateSearchTests: XCTestCase {
         let result = EntrySearch.entries(in: root, matching: "beta")
         XCTAssertEqual(result.map(\.title), ["Beta Entry"])
     }
+
+    func testNavigationStateDefaultsSelectedSmartCategoryToAll() {
+        let state = NavigationState()
+        XCTAssertEqual(state.selectedSmartCategory, .all)
+    }
 }
