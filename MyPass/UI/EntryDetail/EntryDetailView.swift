@@ -201,7 +201,7 @@ struct EntryDetailView: View {
     private func copy(_ value: String) {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
-        ClipboardAutoClear.schedule(value: value, after: 30, pasteboard: pasteboard, clock: clock)
+        ClipboardAutoClear.schedule(value: value, after: ClipboardClearInterval.seconds(), pasteboard: pasteboard, clock: clock)
     }
 
     private func replaceEntry(_ updated: KdbxEntry, in group: KdbxGroup) {

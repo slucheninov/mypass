@@ -42,7 +42,7 @@ struct PasswordGeneratorView: View {
                     Button("Copy", systemImage: "doc.on.doc") {
                         NSPasteboard.general.clearContents()
                         NSPasteboard.general.setString(generatedPassword, forType: .string)
-                        ClipboardAutoClear.schedule(value: generatedPassword, after: 30, pasteboard: pasteboard, clock: clock)
+                        ClipboardAutoClear.schedule(value: generatedPassword, after: ClipboardClearInterval.seconds(), pasteboard: pasteboard, clock: clock)
                     }
                     Button("Use") {
                         onGenerate(generatedPassword)
