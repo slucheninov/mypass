@@ -31,12 +31,13 @@ struct EntryListView: View {
 
     var body: some View {
         List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
+            let isSelected = navigationState.selectedEntryID == entry.uuid
             EntryListRow(
                 title: displayTitle(for: entry),
-                subtitle: entry.login,
-                isSelected: navigationState.selectedEntryID == entry.uuid
+                subtitle: entry.login
             )
             .tag(entry.uuid)
+            .listRowBackground(EntryListRowBackground(isSelected: isSelected))
             .draggable(entry.uuid.uuidString) // full drag-and-drop wiring completed in Task 15
         }
         .navigationTitle(headerTitle)
@@ -127,7 +128,6 @@ struct EntryListView: View {
 private struct EntryListRow: View {
     let title: String
     let subtitle: String
-    let isSelected: Bool
 
     var body: some View {
         HStack(spacing: 12) {
@@ -149,11 +149,13 @@ private struct EntryListRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
-        .listRowBackground(rowBackground)
     }
+}
 
-    @ViewBuilder
-    private var rowBackground: some View {
+private struct EntryListRowBackground: View {
+    let isSelected: Bool
+
+    var body: some View {
         if isSelected {
             HStack(spacing: 0) {
                 Color.accentColor

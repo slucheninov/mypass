@@ -14,8 +14,7 @@ struct GroupSidebarView: View {
                     SmartCategorySidebarRow(
                         category: category,
                         isSelected: navigationState.selectedSmartCategory == category
-                    )
-                    .onTapGesture {
+                    ) {
                         // Wave 1: visual selection only — entry list filtering is unchanged.
                         navigationState.selectedSmartCategory = category
                     }
@@ -71,6 +70,10 @@ struct GroupSidebarView: View {
         }
         .listStyle(.sidebar)
         .frame(minWidth: UIShellMetrics.sidebarPreferredWidth)
+        .onChange(of: navigationState.selectedGroupID) { _, _ in
+            // Group selection is real navigation; clear stale category header.
+            navigationState.selectedSmartCategory = .all
+        }
     }
 }
 
@@ -87,26 +90,31 @@ private struct SidebarSectionHeader: View {
 private struct SmartCategorySidebarRow: View {
     let category: SmartCategory
     let isSelected: Bool
+    let action: () -> Void
 
     var body: some View {
-        HStack(spacing: 8) {
-            Circle()
-                .fill(category.accentColor)
-                .frame(width: 8, height: 8)
-            Text(category.title)
-                .foregroundStyle(.primary)
-            Spacer(minLength: 4)
-            Text(category.placeholderCount)
-                .font(.caption)
-                .foregroundStyle(.secondary)
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Circle()
+                    .fill(category.accentColor)
+                    .frame(width: 8, height: 8)
+                Text(category.title)
+                    .foregroundStyle(.primary)
+                Spacer(minLength: 4)
+                Text(category.placeholderCount)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(
+                RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    .fill(isSelected ? category.accentColor.opacity(0.18) : Color.clear)
+            )
+            .contentShape(Rectangle())
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 5)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? category.accentColor.opacity(0.18) : Color.clear)
-        )
-        .contentShape(Rectangle())
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? [.isButton, .isSelected] : .isButton)
     }
 }
 

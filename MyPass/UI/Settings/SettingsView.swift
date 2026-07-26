@@ -69,65 +69,63 @@ struct SettingsView: View {
     }
 
     var body: some View {
-        ScrollView {
-            Form {
-                Section {
-                    Stepper("Timeout: \(Int(autoLockTimeoutMinutes)) min", value: $autoLockTimeoutMinutes, in: 1...120)
-                    SettingsHelperText(text: "Lock the vault automatically after inactivity so passwords stay protected when you step away.")
-                    SettingsHelperText(text: "Copied usernames and passwords are cleared from the clipboard after 30 seconds when copied from an entry.")
-                } header: {
-                    Text("Auto-Lock")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-
-                Section {
-                    Stepper("Keep last: \(backupCount)", value: $backupCount, in: 1...50)
-                    SettingsHelperText(text: "Rotate local backup copies of your vault file so you can recover from a corrupted save.")
-                } header: {
-                    Text("Backups")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-
-                Section {
-                    Picker("Backend", selection: $syncBackendRawValue) {
-                        ForEach(SyncBackendOption.allCases) { option in
-                            Text(option.rawValue).tag(option.rawValue)
-                        }
-                    }
-                    switch selectedOption {
-                    case .local:
-                        localFolderSection
-                    case .iCloud:
-                        iCloudSection
-                    case .sftp:
-                        sftpSection
-                    }
-                    Button("Sync Now") {
-                        vaultSession.triggerBackgroundSync()
-                        manualSyncStatusMessage = "Started…"
-                    }
-                    if let manualSyncStatusMessage {
-                        Text(manualSyncStatusMessage)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    SettingsHelperText(text: "Choose where the encrypted vault is mirrored and run an immediate sync when you change devices or paths.")
-                } header: {
-                    Text("Sync")
-                        .font(.system(size: 13, weight: .semibold))
-                }
-
-                Section {
-                    chromeExtensionSection
-                    SettingsHelperText(text: "Install the native messaging host so the Chrome extension can request matches and save proposals from the browser.")
-                } header: {
-                    Text("Chrome Extension")
-                        .font(.system(size: 13, weight: .semibold))
-                }
+        Form {
+            Section {
+                Stepper("Timeout: \(Int(autoLockTimeoutMinutes)) min", value: $autoLockTimeoutMinutes, in: 1...120)
+                SettingsHelperText(text: "Lock the vault automatically after inactivity so passwords stay protected when you step away.")
+                SettingsHelperText(text: "Copied usernames and passwords are cleared from the clipboard after 30 seconds when copied from an entry.")
+            } header: {
+                Text("Auto-Lock")
+                    .font(.system(size: 13, weight: .semibold))
             }
-            .formStyle(.grouped)
-            .padding()
+
+            Section {
+                Stepper("Keep last: \(backupCount)", value: $backupCount, in: 1...50)
+                SettingsHelperText(text: "Rotate local backup copies of your vault file so you can recover from a corrupted save.")
+            } header: {
+                Text("Backups")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            Section {
+                Picker("Backend", selection: $syncBackendRawValue) {
+                    ForEach(SyncBackendOption.allCases) { option in
+                        Text(option.rawValue).tag(option.rawValue)
+                    }
+                }
+                switch selectedOption {
+                case .local:
+                    localFolderSection
+                case .iCloud:
+                    iCloudSection
+                case .sftp:
+                    sftpSection
+                }
+                Button("Sync Now") {
+                    vaultSession.triggerBackgroundSync()
+                    manualSyncStatusMessage = "Started…"
+                }
+                if let manualSyncStatusMessage {
+                    Text(manualSyncStatusMessage)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                SettingsHelperText(text: "Choose where the encrypted vault is mirrored and run an immediate sync when you change devices or paths.")
+            } header: {
+                Text("Sync")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+
+            Section {
+                chromeExtensionSection
+                SettingsHelperText(text: "Install the native messaging host so the Chrome extension can request matches and save proposals from the browser.")
+            } header: {
+                Text("Chrome Extension")
+                    .font(.system(size: 13, weight: .semibold))
+            }
         }
+        .formStyle(.grouped)
+        .padding()
         .frame(minWidth: 420)
         .onAppear {
             autoLockController.timeout = autoLockTimeoutMinutes * 60
