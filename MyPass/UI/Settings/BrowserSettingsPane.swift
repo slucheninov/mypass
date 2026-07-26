@@ -7,13 +7,6 @@ struct BrowserSettingsPane: View {
     var body: some View {
         Form {
             Section {
-                SettingsHelperText(text: "Run ./scripts/setup-chrome-extension.sh from the project folder to install the native messaging host for all Chromium browsers, then click Connect to MyPass in the extension popup to pair.")
-            } header: {
-                Text("Chrome Extension")
-                    .font(.system(size: 13, weight: .semibold))
-            }
-
-            Section {
                 if pairedBrowsers.isEmpty {
                     Text("No paired browsers.")
                         .foregroundStyle(.secondary)
