@@ -112,50 +112,6 @@ struct MyPassApp: App {
         }
         AppDelegate.extensionBridgeServer = extensionBridgeServer
 
-        // Phase 4: registers the Chrome native-messaging host manifest, using
-        // whatever real extension ID and security-scoped bookmark the user
-        // configured once via SettingsView's "Chrome extension" section
-        // (the sandbox blocks writing this manifest to the real Chrome
-        // directory any other way — see NativeMessagingHostInstaller's doc
-        // comments). No `#if DEBUG` gate and no placeholder ID: if Settings
-        // isn't configured yet, we simply skip and log, safe in both Debug
-        // and Release.
-        let chromeExtensionBridgeLog = OSLog(subsystem: "com.mypass.app", category: "ExtensionBridge")
-        let chromeExtensionID = defaults.string(forKey: "chromeExtensionID") ?? ""
-        let chromeBookmarkData = defaults.data(forKey: "chromeNativeMessagingDirectoryBookmark")
-        if !chromeExtensionID.isEmpty,
-           let chromeBookmarkData, !chromeBookmarkData.isEmpty,
-           let chromeDirectoryURL = NativeMessagingHostInstaller.resolveBookmarkedDirectory(bookmarkData: chromeBookmarkData) {
-            if chromeDirectoryURL.startAccessingSecurityScopedResource() {
-                defer { chromeDirectoryURL.stopAccessingSecurityScopedResource() }
-                do {
-                    try NativeMessagingHostInstaller.installIfNeeded(
-                        hostBinaryPath: NativeMessagingHostInstaller.chromeHostBinaryPath,
-                        extensionID: chromeExtensionID,
-                        directory: chromeDirectoryURL
-                    )
-                } catch {
-                    os_log(
-                        "NativeMessagingHostInstaller failed: %{public}@",
-                        log: chromeExtensionBridgeLog,
-                        type: .error,
-                        String(describing: error)
-                    )
-                }
-            } else {
-                os_log(
-                    "NativeMessagingHostInstaller: failed to access security-scoped Chrome directory bookmark",
-                    log: chromeExtensionBridgeLog,
-                    type: .error
-                )
-            }
-        } else {
-            os_log(
-                "NativeMessagingHostInstaller: skipping auto-install, Chrome extension ID/directory not configured in Settings",
-                log: chromeExtensionBridgeLog,
-                type: .debug
-            )
-        }
         let navigationState = NavigationState()
         _navigationState = StateObject(wrappedValue: navigationState)
 
