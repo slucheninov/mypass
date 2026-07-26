@@ -71,7 +71,7 @@ struct MenuBarUnlockedPanelView: View {
                 NSApplication.shared.terminate(nil)
             }
         }
-        .frame(width: 300)
+        .frame(width: 320)
     }
 
     @ViewBuilder

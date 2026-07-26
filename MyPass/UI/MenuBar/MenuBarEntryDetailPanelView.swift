@@ -15,6 +15,11 @@ struct MenuBarEntryDetailPanelView: View {
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
 
+    private var menuBarPanelMaxHeight: CGFloat {
+        let screenHeight = NSScreen.main?.visibleFrame.height ?? 400
+        return min(440, screenHeight * 0.55)
+    }
+
     private var displayTitle: String {
         entry.title.isEmpty ? "(untitled)" : entry.title
     }
@@ -23,15 +28,17 @@ struct MenuBarEntryDetailPanelView: View {
         VStack(spacing: 0) {
             topBar
             ScrollView {
-                VStack(spacing: 16) {
+                VStack(spacing: 12) {
                     heroSection
                     fieldsCard
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
             }
+            .frame(maxHeight: .infinity)
         }
-        .frame(width: 300)
+        .frame(width: 320)
+        .frame(maxHeight: menuBarPanelMaxHeight)
         .onReceive(timer) { now = $0 }
     }
 
@@ -56,26 +63,26 @@ struct MenuBarEntryDetailPanelView: View {
             .fixedSize()
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.vertical, 6)
     }
 
     private var heroSection: some View {
-        VStack(spacing: 8) {
+        VStack(spacing: 4) {
             LetterAvatarView(
                 title: displayTitle,
-                size: 56,
-                cornerRadius: 12
+                size: 40,
+                cornerRadius: 10
             )
             Text(displayTitle)
-                .font(.system(size: 20, weight: .bold))
+                .font(.system(size: 16, weight: .semibold))
                 .multilineTextAlignment(.center)
                 .lineLimit(2)
             Text("Last modified: \(entry.lastModificationTime.formatted(date: .abbreviated, time: .shortened))")
-                .font(.caption)
+                .font(.system(size: 11))
                 .foregroundStyle(.secondary)
         }
         .frame(maxWidth: .infinity)
-        .padding(.top, 4)
+        .padding(.top, 2)
     }
 
     private var fieldsCard: some View {
@@ -109,46 +116,52 @@ struct MenuBarEntryDetailPanelView: View {
     }
 
     private var passwordRow: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 6) {
             Text("Password")
                 .foregroundStyle(.secondary)
-                .frame(width: 72, alignment: .leading)
+                .frame(width: 70, alignment: .leading)
             Text(isPasswordRevealed ? entry.password : String(repeating: "•", count: max(entry.password.count, 8)))
                 .lineLimit(1)
+                .truncationMode(.middle)
+                .layoutPriority(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button(isPasswordRevealed ? "Hide" : "Show") { isPasswordRevealed.toggle() }
-                .buttonStyle(.borderless)
-            Button("Copy", systemImage: "doc.on.doc") { copy(entry.password) }
-                .buttonStyle(.borderless)
+            Button {
+                isPasswordRevealed.toggle()
+            } label: {
+                Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel(isPasswordRevealed ? "Hide" : "Show")
+            copyButton { copy(entry.password) }
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
     }
 
     private func totpRow(secret: String) -> some View {
         let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
-        return HStack(alignment: .center, spacing: 8) {
+        return HStack(alignment: .center, spacing: 6) {
             Text("Code")
                 .foregroundStyle(.secondary)
-                .frame(width: 72, alignment: .leading)
+                .frame(width: 70, alignment: .leading)
             Text(code)
                 .font(.system(.body, design: .monospaced))
+                .layoutPriority(1)
             MenuBarTOTPRingChrome()
             Spacer(minLength: 0)
-            Button("Copy", systemImage: "doc.on.doc") { copy(code) }
-                .buttonStyle(.borderless)
+            copyButton { copy(code) }
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
     }
 
     private var websiteRow: some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 6) {
             Text("Website")
                 .foregroundStyle(.secondary)
-                .frame(width: 72, alignment: .leading)
+                .frame(width: 70, alignment: .leading)
             if let url = URL(string: entry.url), !entry.url.isEmpty {
                 Link(destination: url) {
                     HStack(spacing: 4) {
@@ -167,23 +180,31 @@ struct MenuBarEntryDetailPanelView: View {
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
     }
 
     private func fieldRow(label: String, value: String, copyAction: @escaping () -> Void) -> some View {
-        HStack(alignment: .center, spacing: 8) {
+        HStack(alignment: .center, spacing: 6) {
             Text(label)
                 .foregroundStyle(.secondary)
-                .frame(width: 72, alignment: .leading)
+                .frame(width: 70, alignment: .leading)
             Text(value)
                 .lineLimit(1)
+                .layoutPriority(1)
                 .frame(maxWidth: .infinity, alignment: .leading)
-            Button("Copy", systemImage: "doc.on.doc", action: copyAction)
-                .buttonStyle(.borderless)
+            copyButton(action: copyAction)
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
-        .padding(.vertical, 10)
+        .padding(.vertical, 7)
+    }
+
+    private func copyButton(action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: "doc.on.doc")
+        }
+        .buttonStyle(.borderless)
+        .accessibilityLabel("Copy")
     }
 
     private func fieldDivider() -> some View {
