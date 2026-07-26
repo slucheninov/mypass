@@ -52,9 +52,14 @@ struct MenuBarEntryDetailPanelView: View {
 
     private var topBar: some View {
         HStack {
-            Button("< Back", action: onBack)
+            Button(action: onBack) {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.primary)
+            }
             .buttonStyle(.plain)
             .keyboardShortcut(.escape, modifiers: [])
+            .accessibilityLabel("Back")
 
             Spacer()
 
@@ -75,22 +80,23 @@ struct MenuBarEntryDetailPanelView: View {
     }
 
     private var heroSection: some View {
-        VStack(spacing: 4) {
+        HStack(alignment: .center, spacing: 12) {
             LetterAvatarView(
                 title: displayTitle,
-                size: 40,
+                size: 44,
                 cornerRadius: 10
             )
-            Text(displayTitle)
-                .font(.system(size: 16, weight: .semibold))
-                .multilineTextAlignment(.center)
-                .lineLimit(2)
-            Text("Last modified: \(entry.lastModificationTime.formatted(date: .abbreviated, time: .shortened))")
-                .font(.system(size: 11))
-                .foregroundStyle(.secondary)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(displayTitle)
+                    .font(.headline)
+                    .lineLimit(2)
+                Text("Last modified: \(entry.lastModificationTime.formatted(date: .abbreviated, time: .shortened))")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
         }
-        .frame(maxWidth: .infinity)
-        .padding(.top, 2)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 
     private var fieldsCard: some View {
