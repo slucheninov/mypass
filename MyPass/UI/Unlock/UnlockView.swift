@@ -16,25 +16,47 @@ struct UnlockView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
+        VStack(spacing: 20) {
             Text("MyPass")
-                .font(.largeTitle)
+                .font(.system(size: 28, weight: .semibold))
+
+            Image(systemName: "key.fill")
+                .font(.system(size: 40))
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 4)
+
             SecureField("Master Password", text: $password)
                 .textFieldStyle(.roundedBorder)
-                .frame(width: 280)
+                .frame(maxWidth: 320)
                 .onSubmit(attemptUnlock)
+
             if let errorMessage {
                 Text(errorMessage)
                     .foregroundStyle(.red)
                     .font(.caption)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 320)
             }
+
             Button("Unlock", action: attemptUnlock)
                 .buttonStyle(.borderedProminent)
+                .frame(maxWidth: 320)
+
             if hasStoredBiometricKey {
                 Button("Touch ID", systemImage: "touchid", action: attemptBiometricUnlock)
+                    .buttonStyle(.bordered)
+                    .frame(maxWidth: 320)
             }
+
+            Text("Vault is locked. Enter your master password or use Touch ID.")
+                .font(.system(size: 11))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 340)
+                .padding(.top, 8)
         }
-        .padding(40)
+        .padding(48)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
     private func attemptUnlock() {
