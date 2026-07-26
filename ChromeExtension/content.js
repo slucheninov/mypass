@@ -100,7 +100,7 @@
         // matches for this site" — conflating the two lets the save-banner
         // logic below offer to save a duplicate when the vault was simply
         // locked at page-load time.
-        state.vaultLocked = !!(response && response.type === 'locked');
+        state.vaultLocked = !!(response && (response.type === 'locked' || response.type === 'pairingRequired'));
         state.lastCredentialList = (response && response.type === 'credentialList') ? response.credentials : [];
       });
     }

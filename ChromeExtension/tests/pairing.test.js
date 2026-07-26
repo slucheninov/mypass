@@ -41,6 +41,15 @@ const {
   sendPairingCompletion
 } = require('../background.js');
 
+const { classifyGetCredentialsResponse } = require('../popup.js');
+
+assert.strictEqual(classifyGetCredentialsResponse(null), 'error');
+assert.strictEqual(classifyGetCredentialsResponse({ type: 'error', message: 'x' }), 'error');
+assert.strictEqual(classifyGetCredentialsResponse({ type: 'locked' }), 'locked');
+assert.strictEqual(classifyGetCredentialsResponse({ type: 'pairingRequired' }), 'pairingRequired');
+assert.strictEqual(classifyGetCredentialsResponse({ type: 'credentialList', credentials: [] }), 'credentialList');
+assert.strictEqual(classifyGetCredentialsResponse({ type: 'unexpected' }), 'unknown');
+
 assert.strictEqual(attachPairingField({ type: 'getCredentials', url: 'https://example.com' }, 'sec').pairing, 'sec');
 assert.strictEqual(attachPairingField({ type: 'getCredentials', url: 'https://example.com' }, null).pairing, undefined);
 
