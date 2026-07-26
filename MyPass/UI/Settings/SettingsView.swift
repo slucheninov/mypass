@@ -36,6 +36,8 @@ struct SettingsView: View {
             GeneralSettingsPane()
         case .security:
             SecuritySettingsPane()
+                .environmentObject(autoLockController)
+                .environmentObject(vaultSession)
         case .browser:
             BrowserSettingsPane()
         case .sync:

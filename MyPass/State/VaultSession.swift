@@ -55,6 +55,10 @@ final class VaultSession: ObservableObject {
         return db
     }
 
+    func loadVaultData() throws -> Data? {
+        try fileStore.load()
+    }
+
     func unlock(password: String) throws {
         if let existingData = try fileStore.load() {
             let db = try KdbxDatabase.open(data: existingData, password: password)

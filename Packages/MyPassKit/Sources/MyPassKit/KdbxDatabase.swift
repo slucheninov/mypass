@@ -74,26 +74,14 @@ public struct KdbxDatabase {
     }
 
     public static func open(data: Data, password: String) throws -> KdbxDatabase {
+        let transformedKey = try deriveTransformedKey(fromVaultData: data, password: password)
+
         guard data.count >= 12 else {
             throw KdbxDatabaseError.corruptFile("file too short for KDBX signature")
         }
 
         // Step 1: Signature + Version (Task 4).
         let signatureEnd = data.index(data.startIndex, offsetBy: 12)
-        do {
-            _ = try KdbxSignature.parse(Data(data[data.startIndex..<signatureEnd]))
-        } catch {
-            throw KdbxDatabaseError.corruptFile("signature/version: \(error)")
-        }
-
-        // Step 1 (cont'd): Outer header TLV fields (Task 4). `rawHeaderStart`
-        // is explicitly `data.startIndex` (NOT `signatureEnd`) so that
-        // `rawHeaderBytes` spans Signature + Version + OuterHeaderFields
-        // through EndOfHeader inclusive — the exact byte range that
-        // `HeaderSHA256`/`HeaderHMAC-SHA256` are computed over. Passing
-        // `signatureEnd` here instead would silently exclude the 12-byte
-        // signature/version prefix from that range and produce a header
-        // authentication that can never match a real KDBX4 file.
         var offset = signatureEnd
         let outerHeader: KdbxOuterHeader
         do {
@@ -101,7 +89,6 @@ public struct KdbxDatabase {
         } catch {
             throw KdbxDatabaseError.corruptFile("outer header: \(error)")
         }
-        let rawHeaderBytes = outerHeader.rawHeaderBytes
 
         // Step 2: Header authentication values follow immediately after the
         // outer header: HeaderSHA256 (32 bytes) then HeaderHMAC-SHA256 (32 bytes).
@@ -109,40 +96,11 @@ public struct KdbxDatabase {
             throw KdbxDatabaseError.corruptFile("truncated header authentication values")
         }
         let storedSha256End = data.index(offset, offsetBy: 32)
-        let storedSha256 = Data(data[offset..<storedSha256End])
         offset = storedSha256End
         let storedHmacEnd = data.index(offset, offsetBy: 32)
-        let storedHmac = Data(data[offset..<storedHmacEnd])
         offset = storedHmacEnd
 
-        // Verify the header's own integrity tag BEFORE trusting anything
-        // else in the file (deferred here from Tasks 5/7 per design).
-        guard KdbxHeaderAuthentication.sha256(ofHeader: rawHeaderBytes) == storedSha256 else {
-            throw KdbxDatabaseError.corruptFile("header SHA-256 mismatch")
-        }
-
-        // Step 3: Key derivation (Task 6). Composite key for a password-only
-        // database is SHA256(SHA256(passwordUTF8Bytes)) — KeePass's
-        // CompositeKey hashes each sub-key (PasswordKey::rawKey() =
-        // SHA256(password)) and then hashes the concatenation of all sub-key
-        // hashes; with a single sub-key that concatenation is just that one
-        // hash, so the composite key is the double SHA-256.
-        let compositeKey = Self.compositeKey(fromPassword: password)
-        let transformedKey: Data
-        do {
-            transformedKey = try KeyDerivation.transformedKey(compositeKey: compositeKey, kdfParameters: outerHeader.kdfParameters)
-        } catch let error as KeyDerivationError {
-            throw KdbxDatabaseError.unsupportedFeature("KDF: \(error)")
-        }
         let hmacKeyBase = KeyDerivation.hmacKeyBase(masterSeed: outerHeader.masterSeed, transformedKey: transformedKey)
-
-        // Header HMAC is keyed off the password-derived hmacKeyBase, so a
-        // mismatch here — given the SHA-256 check above already passed —
-        // means the password is wrong, not that the file is corrupt.
-        guard KdbxHeaderAuthentication.hmacSHA256(ofHeader: rawHeaderBytes, hmacKeyBase: hmacKeyBase) == storedHmac else {
-            throw KdbxDatabaseError.wrongPassword
-        }
-
         let masterKey = KeyDerivation.masterKey(masterSeed: outerHeader.masterSeed, transformedKey: transformedKey)
 
         // Step 4: HMAC block stream (Task 7/8).
@@ -288,6 +246,59 @@ public struct KdbxDatabase {
         out.append(blockStream)
 
         return out
+    }
+
+    /// Derives the KDF `transformedKey` from on-disk vault bytes and verifies
+    /// the password via outer-header authentication. Used for Touch ID
+    /// enrollment (store this key in Keychain) without decrypting the vault.
+    public static func deriveTransformedKey(fromVaultData data: Data, password: String) throws -> Data {
+        guard data.count >= 12 else {
+            throw KdbxDatabaseError.corruptFile("file too short for KDBX signature")
+        }
+
+        let signatureEnd = data.index(data.startIndex, offsetBy: 12)
+        do {
+            _ = try KdbxSignature.parse(Data(data[data.startIndex..<signatureEnd]))
+        } catch {
+            throw KdbxDatabaseError.corruptFile("signature/version: \(error)")
+        }
+
+        var offset = signatureEnd
+        let outerHeader: KdbxOuterHeader
+        do {
+            outerHeader = try KdbxOuterHeader.parse(from: data, startingAt: &offset, rawHeaderStart: data.startIndex)
+        } catch {
+            throw KdbxDatabaseError.corruptFile("outer header: \(error)")
+        }
+        let rawHeaderBytes = outerHeader.rawHeaderBytes
+
+        guard data.distance(from: offset, to: data.endIndex) >= 64 else {
+            throw KdbxDatabaseError.corruptFile("truncated header authentication values")
+        }
+        let storedSha256End = data.index(offset, offsetBy: 32)
+        let storedSha256 = Data(data[offset..<storedSha256End])
+        offset = storedSha256End
+        let storedHmacEnd = data.index(offset, offsetBy: 32)
+        let storedHmac = Data(data[offset..<storedHmacEnd])
+
+        guard KdbxHeaderAuthentication.sha256(ofHeader: rawHeaderBytes) == storedSha256 else {
+            throw KdbxDatabaseError.corruptFile("header SHA-256 mismatch")
+        }
+
+        let compositeKey = Self.compositeKey(fromPassword: password)
+        let transformedKey: Data
+        do {
+            transformedKey = try KeyDerivation.transformedKey(compositeKey: compositeKey, kdfParameters: outerHeader.kdfParameters)
+        } catch let error as KeyDerivationError {
+            throw KdbxDatabaseError.unsupportedFeature("KDF: \(error)")
+        }
+        let hmacKeyBase = KeyDerivation.hmacKeyBase(masterSeed: outerHeader.masterSeed, transformedKey: transformedKey)
+
+        guard KdbxHeaderAuthentication.hmacSHA256(ofHeader: rawHeaderBytes, hmacKeyBase: hmacKeyBase) == storedHmac else {
+            throw KdbxDatabaseError.wrongPassword
+        }
+
+        return transformedKey
     }
 
     // MARK: - Private helpers

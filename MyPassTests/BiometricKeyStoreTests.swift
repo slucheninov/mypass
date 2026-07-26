@@ -13,4 +13,21 @@ final class BiometricKeyStoreTests: XCTestCase {
         let store = FakeBiometricKeyStore()
         XCTAssertNil(try store.retrieve(account: "missing"))
     }
+
+    func testFakeRemoveClearsStoredKey() throws {
+        let store = FakeBiometricKeyStore()
+        let key = Data([0x01, 0x02, 0x03])
+        try store.store(derivedKey: key, account: "master")
+        XCTAssertTrue(try store.hasStoredKey(account: "master"))
+
+        try store.remove(account: "master")
+
+        XCTAssertFalse(try store.hasStoredKey(account: "master"))
+        XCTAssertNil(try store.retrieve(account: "master"))
+    }
+
+    func testFakeHasStoredKeyReturnsFalseForMissingAccount() throws {
+        let store = FakeBiometricKeyStore()
+        XCTAssertFalse(try store.hasStoredKey(account: "missing"))
+    }
 }

@@ -5,6 +5,8 @@ import LocalAuthentication
 protocol BiometricKeyStoring {
     func store(derivedKey: Data, account: String) throws
     func retrieve(account: String) throws -> Data?
+    func remove(account: String) throws
+    func hasStoredKey(account: String) throws -> Bool
 }
 
 enum BiometricKeyStoreError: Error {
@@ -67,6 +69,37 @@ final class BiometricKeyStore: BiometricKeyStoring {
         }
         return result as? Data
     }
+
+    func remove(account: String) throws {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+        let status = SecItemDelete(query as CFDictionary)
+        guard status == errSecSuccess || status == errSecItemNotFound else {
+            throw BiometricKeyStoreError.keychainWrite(status)
+        }
+    }
+
+    func hasStoredKey(account: String) throws -> Bool {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account,
+            kSecReturnAttributes as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+        var result: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &result)
+        if status == errSecItemNotFound {
+            return false
+        }
+        guard status == errSecSuccess else {
+            throw BiometricKeyStoreError.keychainRead(status)
+        }
+        return true
+    }
 }
 
 final class FakeBiometricKeyStore: BiometricKeyStoring {
@@ -78,5 +111,13 @@ final class FakeBiometricKeyStore: BiometricKeyStoring {
 
     func retrieve(account: String) throws -> Data? {
         storage[account]
+    }
+
+    func remove(account: String) throws {
+        storage.removeValue(forKey: account)
+    }
+
+    func hasStoredKey(account: String) throws -> Bool {
+        storage[account] != nil
     }
 }
