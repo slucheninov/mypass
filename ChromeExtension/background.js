@@ -12,7 +12,7 @@ function sendNativeMessage(message) {
   });
 }
 
-function relayFillToActiveTab(credentialResponse) {
+function relayFillToActiveTab(credentialResponse, requestUrl) {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
     if (!activeTab || activeTab.id === undefined) return;
@@ -20,7 +20,8 @@ function relayFillToActiveTab(credentialResponse) {
       type: "applyFill",
       username: credentialResponse.username,
       password: credentialResponse.password,
-      totp: credentialResponse.totp || null
+      totp: credentialResponse.totp || null,
+      url: requestUrl
     });
   });
 }
@@ -33,7 +34,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   sendNativeMessage(message).then((response) => {
     if (message.type === "fillCredential" && response && response.type === "credential") {
-      relayFillToActiveTab(response);
+      relayFillToActiveTab(response, message.url);
     }
     sendResponse(response);
   });

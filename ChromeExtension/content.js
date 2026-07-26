@@ -40,6 +40,17 @@
     return { form, passwordInput, usernameInput };
   }
 
+  function hostnameMatches(messageUrl, pageUrl) {
+    if (!messageUrl) return false;
+    try {
+      const messageHost = new URL(messageUrl).hostname.toLowerCase();
+      const pageHost = new URL(pageUrl).hostname.toLowerCase();
+      return messageHost === pageHost;
+    } catch (e) {
+      return false;
+    }
+  }
+
   function setNativeValue(input, value) {
     input.value = value;
     input.dispatchEvent(new Event('input', { bubbles: true }));
@@ -102,6 +113,10 @@
 
     chrome.runtime.onMessage.addListener((message) => {
       if (message.type === 'applyFill') {
+        if (!hostnameMatches(message.url, location.href)) {
+          console.warn('MyPass: applyFill rejected — message URL does not match the current page hostname');
+          return;
+        }
         const loginForm = findLoginForm();
         if (!loginForm) return;
         if (loginForm.usernameInput && message.username) {
@@ -122,6 +137,6 @@
   }
 
   if (typeof module !== 'undefined') {
-    module.exports = { scoreUsernameLikeness, findBestUsernameInput };
+    module.exports = { scoreUsernameLikeness, findBestUsernameInput, hostnameMatches };
   }
 })();
