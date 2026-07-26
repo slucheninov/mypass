@@ -54,6 +54,20 @@ final class NativeMessagingHostInstallerTests: XCTestCase {
         XCTAssertEqual(firstContent, secondContent, "content should be byte-identical after a no-op reinstall")
     }
 
+    /// Regression guard for the sandbox-redirection bug: `NSHomeDirectory()`
+    /// resolves to `~/Library/Containers/<bundle-id>/Data` under the App
+    /// Sandbox, which `getpwuid`-based `realHomeDirectoryPath` must not.
+    /// This doesn't exercise the sandboxed-app runtime path directly (the
+    /// XCTest host process isn't itself sandboxed the same way), but it does
+    /// confirm the `getpwuid` codepath returns a real, non-container path in
+    /// this test environment rather than silently falling back to the
+    /// broken `NSHomeDirectory()` value.
+    func testRealHomeDirectoryPathDoesNotContainContainers() {
+        let path = NativeMessagingHostInstaller.realHomeDirectoryPath
+        XCTAssertFalse(path.isEmpty)
+        XCTAssertFalse(path.contains("Containers"), "expected the real POSIX home directory, got: \(path)")
+    }
+
     func testInstallRewritesWhenContentChanges() throws {
         try NativeMessagingHostInstaller.installIfNeeded(
             hostBinaryPath: "/usr/local/bin/ChromeHost", extensionID: "abcdefghijklmnop", directory: tempDir

@@ -34,9 +34,21 @@ struct SettingsView: View {
     // field), kept only so the chosen path survives across Settings reopens.
     @AppStorage("syncSFTPCertificatePath") private var sftpCertificatePath: String = ""
 
+    // Фаза 4: native-messaging host manifest install target. MyPass.app is
+    // sandboxed, so the real "~/Library/Application Support/Google/Chrome/
+    // NativeMessagingHosts" path can only be reached via a security-scoped
+    // bookmark the user grants explicitly here — same pattern as
+    // `syncLocalFolderBookmark` above / `LocalFolderBackend.createBookmark`.
+    @AppStorage("chromeNativeMessagingDirectoryBookmark") private var chromeNativeMessagingDirectoryBookmarkData: Data?
+    // Cannot be discovered automatically — the user copies this from
+    // chrome://extensions after loading the unpacked extension (or from the
+    // Web Store listing once published). See Task 8/12's plan notes.
+    @AppStorage("chromeExtensionID") private var chromeExtensionID: String = ""
+
     @State private var sftpPrivateKeyPEM: String = ""
     @State private var sftpPassphrase: String = ""
     @State private var connectionTestState: ConnectionTestState = .idle
+    @State private var chromeInstallStatusMessage: String?
 
     @State private var iCloudContainerAvailable: Bool = true
     @State private var iCloudContainerCheckMessage: String?
@@ -90,6 +102,9 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
+            Section("Chrome-расширение") {
+                chromeExtensionSection
+            }
         }
         .padding()
         .frame(width: 420)
@@ -124,6 +139,39 @@ struct SettingsView: View {
                 if panel.runModal() == .OK, let folderURL = panel.url {
                     syncLocalFolderBookmarkData = try? LocalFolderBackend.createBookmark(for: folderURL)
                 }
+            }
+        }
+    }
+
+    private var chromeExtensionSection: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            TextField("ID расширения (chrome://extensions)", text: $chromeExtensionID)
+
+            if let bookmarkData = chromeNativeMessagingDirectoryBookmarkData, !bookmarkData.isEmpty,
+               NativeMessagingHostInstaller.resolveBookmarkedDirectory(bookmarkData: bookmarkData) != nil {
+                Text("Папка выбрана.")
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Папка не выбрана.")
+                    .foregroundStyle(.secondary)
+            }
+            Button("Выбрать папку…") {
+                let panel = NSOpenPanel()
+                panel.canChooseFiles = false
+                panel.canChooseDirectories = true
+                panel.allowsMultipleSelection = false
+                if panel.runModal() == .OK, let folderURL = panel.url {
+                    chromeNativeMessagingDirectoryBookmarkData = try? LocalFolderBackend.createBookmark(for: folderURL)
+                }
+            }
+
+            Button("Установить/обновить native messaging host") {
+                installChromeNativeMessagingHost()
+            }
+            if let chromeInstallStatusMessage {
+                Text(chromeInstallStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
     }
@@ -251,6 +299,35 @@ struct SettingsView: View {
                     connectionTestState = .failure("\(error)")
                 }
             }
+        }
+    }
+
+    private func installChromeNativeMessagingHost() {
+        guard !chromeExtensionID.isEmpty else {
+            chromeInstallStatusMessage = "Укажите ID расширения."
+            return
+        }
+        guard let bookmarkData = chromeNativeMessagingDirectoryBookmarkData, !bookmarkData.isEmpty,
+              let directoryURL = NativeMessagingHostInstaller.resolveBookmarkedDirectory(bookmarkData: bookmarkData) else {
+            chromeInstallStatusMessage = "Сначала выберите папку NativeMessagingHosts."
+            return
+        }
+
+        guard directoryURL.startAccessingSecurityScopedResource() else {
+            chromeInstallStatusMessage = "Не удалось получить доступ к выбранной папке."
+            return
+        }
+        defer { directoryURL.stopAccessingSecurityScopedResource() }
+
+        do {
+            try NativeMessagingHostInstaller.installIfNeeded(
+                hostBinaryPath: NativeMessagingHostInstaller.debugChromeHostBinaryPath,
+                extensionID: chromeExtensionID,
+                directory: directoryURL
+            )
+            chromeInstallStatusMessage = "Манифест установлен."
+        } catch {
+            chromeInstallStatusMessage = "Ошибка установки: \(error)"
         }
     }
 
