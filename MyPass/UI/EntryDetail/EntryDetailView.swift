@@ -126,7 +126,7 @@ struct EntryDetailView: View {
                 }
             }
         } else {
-            Text("Select an entry")
+            DetailEmptyStateView()
         }
     }
 
@@ -144,5 +144,23 @@ struct EntryDetailView: View {
         for subgroup in group.subgroups {
             replaceEntry(updated, in: subgroup)
         }
+    }
+}
+
+private struct DetailEmptyStateView: View {
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "person.crop.circle.badge.key")
+                .font(.system(size: UIShellMetrics.emptyStateIconSize))
+                .foregroundStyle(.secondary.opacity(0.35))
+            Text("Nothing Selected")
+                .font(.system(size: 17, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Text("Select an entry from the list")
+                .font(.system(size: 13))
+                .foregroundStyle(.tertiary)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(UIShellMetrics.detailColumnBackground)
     }
 }
