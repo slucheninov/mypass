@@ -18,17 +18,29 @@ struct EntryListView: View {
             : EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
     }
 
+    private var headerTitle: String {
+        if navigationState.selectedSmartCategory != .all {
+            return navigationState.selectedSmartCategory.title
+        }
+        return currentGroup.name
+    }
+
+    private func displayTitle(for entry: KdbxEntry) -> String {
+        entry.title.isEmpty ? "(untitled)" : entry.title
+    }
+
     var body: some View {
         List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
-            VStack(alignment: .leading) {
-                Text(entry.title.isEmpty ? "(untitled)" : entry.title)
-                Text(entry.login)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
+            EntryListRow(
+                title: displayTitle(for: entry),
+                subtitle: entry.login,
+                isSelected: navigationState.selectedEntryID == entry.uuid
+            )
             .tag(entry.uuid)
             .draggable(entry.uuid.uuidString) // full drag-and-drop wiring completed in Task 15
         }
+        .navigationTitle(headerTitle)
+        .frame(minWidth: UIShellMetrics.listColumnMinWidth)
         .searchable(text: $navigationState.searchText)
         .toolbar {
             ToolbarItem {
@@ -108,6 +120,48 @@ struct EntryListView: View {
             // A production alert would read: "Could not open file. MyPass supports
             // opening .kdbx files created by MyPass itself; third-party KeePassXC
             // files with a 32-byte Argon2id salt are not yet supported."
+        }
+    }
+}
+
+private struct EntryListRow: View {
+    let title: String
+    let subtitle: String
+    let isSelected: Bool
+
+    var body: some View {
+        HStack(spacing: 12) {
+            LetterAvatarView(
+                title: title,
+                size: UIShellMetrics.listIconSize,
+                cornerRadius: UIShellMetrics.listIconCornerRadius
+            )
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.body.weight(.semibold))
+                    .foregroundStyle(.primary)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.system(size: 12))
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, 4)
+        .listRowBackground(rowBackground)
+    }
+
+    @ViewBuilder
+    private var rowBackground: some View {
+        if isSelected {
+            HStack(spacing: 0) {
+                Color.accentColor
+                    .frame(width: UIShellMetrics.selectionAccentBarWidth)
+                Color.accentColor.opacity(0.12)
+            }
+        } else {
+            Color.clear
         }
     }
 }
