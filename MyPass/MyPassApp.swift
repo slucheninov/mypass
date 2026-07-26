@@ -157,6 +157,18 @@ struct MyPassApp: App {
         let navigationState = NavigationState()
         _navigationState = StateObject(wrappedValue: navigationState)
 
+        pairingManager.onCodeGenerated = { [weak navigationState] code in
+            DispatchQueue.main.async {
+                navigationState?.pendingPairingCode = code
+                MainWindowActivator.request()
+            }
+        }
+        pairingManager.onPairingFinished = { [weak navigationState] in
+            DispatchQueue.main.async {
+                navigationState?.pendingPairingCode = nil
+            }
+        }
+
         // Phase 4, Task 13: real UI for ExtensionBridgeService.onSaveProposal (Task 5's
         // extension point). The dispatch to main is technically redundant here since
         // LoopbackServer (Task 6) already dispatches onto the main thread before

@@ -36,6 +36,7 @@ final class NavigationState: ObservableObject {
     @Published var searchText: String = ""
     @Published var selectedSmartCategory: SmartCategory = .all
     @Published var pendingSaveProposal: PendingSaveProposal?
+    @Published var pendingPairingCode: String?
     @Published var detailPresentation: DetailPresentation = .browse
     @Published var isCategoryMode: Bool = false
     @Published var activeCategoryFilter: SmartCategory = .all

@@ -38,6 +38,16 @@ struct ContentView: View {
                     navigationState.presentBrowse()
                 }
             }
+            .sheet(isPresented: Binding(
+                get: { navigationState.pendingPairingCode != nil },
+                set: { if !$0 { navigationState.pendingPairingCode = nil } }
+            )) {
+                if let code = navigationState.pendingPairingCode {
+                    PairingCodeSheet(code: code) {
+                        AppDelegate.extensionPairingManager?.cancelPairing()
+                    }
+                }
+            }
         }
     }
 }
