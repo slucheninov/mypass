@@ -70,7 +70,18 @@ struct EntryDetailView: View {
                     .padding(.top, 24)
 
                     DetailFieldsCard {
-                        DetailFieldRow(label: "Username", value: entry.login)
+                        HStack(alignment: .center, spacing: 12) {
+                            Text("Username")
+                                .foregroundStyle(.secondary)
+                                .frame(width: 100, alignment: .leading)
+                            Text(entry.login)
+                                .frame(maxWidth: .infinity, alignment: .trailing)
+                            Button("Copy", systemImage: "doc.on.doc") { copy(entry.login) }
+                                .buttonStyle(.borderless)
+                        }
+                        .font(.body)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 10)
 
                         DetailFieldDivider()
 
