@@ -17,6 +17,8 @@ struct MyPassApp: App {
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
 
+    @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
+
     @StateObject private var vaultSession: VaultSession
     @StateObject private var navigationState: NavigationState
     @StateObject private var autoLockController: AutoLockController
@@ -202,23 +204,67 @@ struct MyPassApp: App {
     }
 
     var body: some Scene {
+        mainWindow
+        menuBarExtraScene
+        settingsWindow
+    }
+
+    @SceneBuilder
+    private var mainWindow: some Scene {
         WindowGroup {
             ContentView()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
                 .environmentObject(autoLockController)
+                .background(SettingsHotkeyObserver())
         }
+    }
 
-        MenuBarExtra("MyPass", systemImage: "key.fill") {
+    @SceneBuilder
+    private var menuBarExtraScene: some Scene {
+        MenuBarExtra("MyPass", systemImage: "key.fill", isInserted: $showMenuBarExtra) {
             MenuBarExtraContent()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
         }
+    }
 
+    @SceneBuilder
+    private var settingsWindow: some Scene {
         Settings {
             SettingsView()
                 .environmentObject(autoLockController)
                 .environmentObject(vaultSession)
         }
+    }
+}
+
+private struct SettingsHotkeyObserver: View {
+    @AppStorage("shortcutShowMyPass") private var shortcutShowMyPass = ""
+    @AppStorage("shortcutLockMyPass") private var shortcutLockMyPass = "shift+command+L"
+    @EnvironmentObject private var vaultSession: VaultSession
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .onAppear { reloadGlobalHotkeys() }
+            .onChange(of: shortcutShowMyPass) { _, _ in reloadGlobalHotkeys() }
+            .onChange(of: shortcutLockMyPass) { _, _ in reloadGlobalHotkeys() }
+    }
+
+    private func reloadGlobalHotkeys() {
+        GlobalHotkeyManager.shared.reload(
+            showMyPassStorage: shortcutShowMyPass,
+            lockMyPassStorage: shortcutLockMyPass,
+            showHandler: {
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.windows.first { $0.canBecomeMain || $0.isVisible }?.makeKeyAndOrderFront(nil)
+            },
+            lockHandler: {
+                if case .unlocked = vaultSession.state {
+                    vaultSession.lock()
+                }
+            }
+        )
     }
 }
