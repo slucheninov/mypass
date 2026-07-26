@@ -53,11 +53,21 @@
 ./scripts/setup-chrome-extension.sh
 ```
 
-Скрипт збере `ChromeHost` (якщо потрібно) і запише маніфест native messaging host у `~/Library/Application Support/Google/Chrome/NativeMessagingHosts/`. Після цього:
+Скрипт `./scripts/setup-chrome-extension.sh` встановлює native messaging manifest для **усіх встановлених Chromium-браузерів** (Chrome, Edge, Brave, Vivaldi, Opera, Arc тощо). Кожен браузер підключається окремо — у **Settings → Paired browsers** з'являється свій рядок з назвою цього браузера.
 
 1. У Chrome завантажте розпаковане розширення з `ChromeExtension/` (див. нижче) — його ID має бути `hjijbabodfldconmhdcdphlbgaajkejn`.
 2. Якщо розширення вже було додано раніше, перезавантажте його (reload) на `chrome://extensions`.
 3. Вставляти ID вручну в MyPass Settings більше не потрібно — поле вже заповнене цим ID за замовчуванням.
+
+### Підключення браузера (pairing)
+
+Перед першим автозаповненням або збереженням пароля розширення має бути **підключене** до розблокованого MyPass:
+
+1. Відкрийте popup розширення на будь-якій сторінці — з'явиться кнопка **Connect to MyPass**.
+2. Натисніть її; у головному вікні MyPass з'явиться **6-значний код** (дійсний 120 секунд).
+3. Введіть цей код у popup розширення та підтвердіть.
+
+Після успішного підключення popup показує збережені записи як раніше. Скасувати довіру можна в **MyPass → Settings → Browser → Paired browsers → Revoke**. Деталі протоколу: [spec pairing](docs/superpowers/specs/2026-07-26-mypass-extension-pairing-design.md).
 
 ### Як додати в Chrome (розпаковане)
 

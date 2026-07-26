@@ -7,9 +7,6 @@ EXTENSION_ID="hjijbabodfldconmhdcdphlbgaajkejn"
 STABLE_DIR="${HOME}/Library/Application Support/MyPass"
 # Must match NativeMessagingHostInstaller.chromeHostBinaryPath in the app.
 HOST_BINARY="${STABLE_DIR}/ChromeHost"
-TARGET_DIR="${HOME}/Library/Application Support/Google/Chrome/NativeMessagingHosts"
-MANIFEST_PATH="${TARGET_DIR}/com.mypass.chromehost.json"
-
 "$REPO_ROOT/scripts/build-chrome-host.sh"
 
 TARGET_BUILD_DIR="$(cd "$REPO_ROOT" && xcodebuild -project MyPass.xcodeproj -scheme ChromeHost -destination 'platform=macOS' -showBuildSettings 2>/dev/null | sed -n 's/^ *TARGET_BUILD_DIR = //p' | head -n 1)"
@@ -28,9 +25,37 @@ mkdir -p "$STABLE_DIR"
 cp "$TARGET_BUILD_DIR/ChromeHost" "$HOST_BINARY"
 chmod 755 "$HOST_BINARY"
 
-mkdir -p "$TARGET_DIR"
+APP_SUPPORT="${HOME}/Library/Application Support"
 
-python3 -c "
+CHROMIUM_BROWSER_BASES=(
+  "Google/Chrome"
+  "Google/Chrome Beta"
+  "Google/Chrome Canary"
+  "Google/Chrome Dev"
+  "Chromium"
+  "Microsoft Edge"
+  "Microsoft Edge Beta"
+  "Microsoft Edge Dev"
+  "Microsoft Edge Canary"
+  "BraveSoftware/Brave-Browser"
+  "BraveSoftware/Brave-Browser-Beta"
+  "BraveSoftware/Brave-Browser-Nightly"
+  "Vivaldi"
+  "Vivaldi Snapshot"
+  "com.operasoftware.Opera"
+  "com.operasoftware.OperaGX"
+  "Arc/User Data"
+)
+
+INSTALLED_MANIFESTS=()
+
+for base in "${CHROMIUM_BROWSER_BASES[@]}"; do
+  base_dir="${APP_SUPPORT}/${base}"
+  if [[ "$base" == "Google/Chrome" ]] || [[ -d "$base_dir" ]]; then
+    target_dir="${base_dir}/NativeMessagingHosts"
+    manifest_path="${target_dir}/com.mypass.chromehost.json"
+    mkdir -p "$target_dir"
+    python3 -c "
 import json
 
 manifest = {
@@ -41,13 +66,18 @@ manifest = {
     'type': 'stdio',
 }
 
-with open('${MANIFEST_PATH}', 'w', encoding='utf-8') as f:
+with open('${manifest_path}', 'w', encoding='utf-8') as f:
     json.dump(manifest, f, indent=2, sort_keys=True)
     f.write('\n')
 "
+    INSTALLED_MANIFESTS+=("$manifest_path")
+  fi
+done
 
-echo "Installed native messaging host manifest:"
-echo "  $MANIFEST_PATH"
+echo "Installed native messaging host manifests:"
+for manifest in "${INSTALLED_MANIFESTS[@]}"; do
+  echo "  $manifest"
+done
 echo
 echo "Next steps:"
 echo "  1. In Chrome, open chrome://extensions and load (or reload) the unpacked"
