@@ -1,11 +1,29 @@
 import SwiftUI
 import AppKit
+import MyPassKit
 
 struct MenuBarUnlockedPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
-    @EnvironmentObject private var navigationState: NavigationState
+
+    @State private var detailEntryID: UUID?
+
+    private var detailEntry: KdbxEntry? {
+        guard let database = vaultSession.currentDatabase, let id = detailEntryID else { return nil }
+        return EntrySearch.allEntries(in: database.rootGroup).first { $0.uuid == id }
+    }
 
     var body: some View {
+        Group {
+            if let entry = detailEntry {
+                MenuBarEntryDetailPanelView(entry: entry, onBack: { detailEntryID = nil })
+            } else {
+                listContent
+            }
+        }
+        .padding(.vertical, detailEntry == nil ? 8 : 0)
+    }
+
+    private var listContent: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let database = vaultSession.currentDatabase {
                 let recents = RecentEntriesQuery.recent(in: database)
@@ -13,7 +31,8 @@ struct MenuBarUnlockedPanelView: View {
                     VStack(spacing: 0) {
                         ForEach(recents, id: \.uuid) { entry in
                             MenuBarRecentEntryRow(entry: entry) {
-                                openEntry(entry.uuid)
+                                detailEntryID = entry.uuid
+                                vaultSession.touchAccess(entryID: entry.uuid)
                             }
                         }
                     }
@@ -53,7 +72,6 @@ struct MenuBarUnlockedPanelView: View {
             }
         }
         .frame(width: 300)
-        .padding(.vertical, 8)
     }
 
     @ViewBuilder
@@ -73,11 +91,5 @@ struct MenuBarUnlockedPanelView: View {
     private func activateMainWindow() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.windows.first { $0.canBecomeMain || $0.isVisible }?.makeKeyAndOrderFront(nil)
-    }
-
-    private func openEntry(_ id: UUID) {
-        activateMainWindow()
-        navigationState.selectedEntryID = id
-        vaultSession.touchAccess(entryID: id)
     }
 }
