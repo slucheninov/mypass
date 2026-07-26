@@ -60,22 +60,38 @@ private struct DetailColumnView: View {
         defaultGroupID: UUID? = nil,
         proposal: PendingSaveProposal? = nil
     ) -> some View {
-        let targetGroupID = defaultGroupID ?? navigationState.selectedGroupID ?? rootGroup.uuid
+        let targetGroupID = resolvedDefaultGroupID(existingID: existingID, defaultGroupID: defaultGroupID)
         EntryEditView(
             existingEntry: resolvedEntry(existingID: existingID, proposal: proposal),
+            rootGroup: rootGroup,
+            recycleBinGroupUUID: vaultSession.currentDatabase?.recycleBinGroupUUID,
+            defaultGroupID: targetGroupID,
             onCancel: { navigationState.presentBrowse() },
-            onSave: { saved in
+            onSave: { saved, selectedGroupID in
                 vaultSession.mutate { database in
-                    if existingID != nil {
+                    if let existingID {
                         EntryPersistence.replaceEntry(saved, in: database.rootGroup)
+                        if let location = GroupTreeOperations.entryLocation(entryID: existingID, in: database.rootGroup),
+                           location.group.uuid != selectedGroupID {
+                            GroupTreeOperations.moveEntry(withID: saved.uuid, to: selectedGroupID, in: database.rootGroup)
+                        }
                     } else {
-                        EntryPersistence.addEntry(saved, toGroupWithID: targetGroupID, in: database.rootGroup)
+                        EntryPersistence.addEntry(saved, toGroupWithID: selectedGroupID, in: database.rootGroup)
                     }
                 }
                 navigationState.selectedEntryID = saved.uuid
                 navigationState.presentBrowse()
             }
         )
+    }
+
+    private func resolvedDefaultGroupID(existingID: UUID?, defaultGroupID: UUID?) -> UUID {
+        if let defaultGroupID { return defaultGroupID }
+        if let existingID,
+           let location = GroupTreeOperations.entryLocation(entryID: existingID, in: rootGroup) {
+            return location.group.uuid
+        }
+        return navigationState.selectedGroupID ?? rootGroup.uuid
     }
 
     private func resolvedEntry(existingID: UUID?, proposal: PendingSaveProposal?) -> KdbxEntry? {

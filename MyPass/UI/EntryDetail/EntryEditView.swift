@@ -3,10 +3,14 @@ import MyPassKit
 
 struct EntryEditView: View {
     let existingEntry: KdbxEntry?
-    let onCancel: (() -> Void)?
-    let onSave: (KdbxEntry) -> Void
+    let rootGroup: KdbxGroup
+    let recycleBinGroupUUID: UUID?
+    let defaultGroupID: UUID
+    let onCancel: () -> Void
+    let onSave: (KdbxEntry, UUID) -> Void
 
-    @Environment(\.dismiss) private var dismiss
+    @State private var selectedGroupID: UUID
+    @State private var showOTPField: Bool
     @State private var title: String = ""
     @State private var login: String = ""
     @State private var password: String = ""
@@ -16,10 +20,22 @@ struct EntryEditView: View {
     @State private var extraFields: [(key: String, value: String)] = []
     @State private var showPasswordGenerator = false
 
-    init(existingEntry: KdbxEntry?, onCancel: (() -> Void)? = nil, onSave: @escaping (KdbxEntry) -> Void) {
+    init(
+        existingEntry: KdbxEntry?,
+        rootGroup: KdbxGroup,
+        recycleBinGroupUUID: UUID?,
+        defaultGroupID: UUID,
+        onCancel: @escaping () -> Void,
+        onSave: @escaping (KdbxEntry, UUID) -> Void
+    ) {
         self.existingEntry = existingEntry
+        self.rootGroup = rootGroup
+        self.recycleBinGroupUUID = recycleBinGroupUUID
+        self.defaultGroupID = defaultGroupID
         self.onCancel = onCancel
         self.onSave = onSave
+        _selectedGroupID = State(initialValue: defaultGroupID)
+        _showOTPField = State(initialValue: existingEntry?.totpSecretBase32?.isEmpty == false)
         _title = State(initialValue: existingEntry?.title ?? "")
         _login = State(initialValue: existingEntry?.login ?? "")
         _password = State(initialValue: existingEntry?.password ?? "")
@@ -33,6 +49,11 @@ struct EntryEditView: View {
 
     var body: some View {
         Form {
+            GroupPickerView(
+                rootGroup: rootGroup,
+                recycleBinGroupUUID: recycleBinGroupUUID,
+                selectedGroupID: $selectedGroupID
+            )
             TextField("Title", text: $title)
             TextField("Username", text: $login)
             HStack {
@@ -41,7 +62,13 @@ struct EntryEditView: View {
             }
             TextField("URL", text: $url)
             TextField("Notes", text: $notes, axis: .vertical)
-            TextField("otpauth:// or secret", text: $otpauthInput)
+                .lineLimit(3...8)
+                .frame(minHeight: 80)
+            if showOTPField {
+                TextField("otpauth:// or secret", text: $otpauthInput)
+            } else {
+                Button("+ Add one-time password") { showOTPField = true }
+            }
 
             Section("Additional Fields") {
                 ForEach(extraFields.indices, id: \.self) { index in
@@ -57,16 +84,18 @@ struct EntryEditView: View {
                     extraFields.append((key: "", value: ""))
                 }
             }
-
-            HStack {
-                Button("Cancel") {
-                    if let onCancel { onCancel() } else { dismiss() }
-                }
-                Button("Save", action: save)
-                    .buttonStyle(.borderedProminent)
-            }
         }
         .padding()
+        .navigationTitle(existingEntry == nil ? "New Entry" : "Edit Entry")
+        .toolbar {
+            ToolbarItem(placement: .cancellationAction) {
+                Button("Cancel", action: onCancel)
+            }
+            ToolbarItem(placement: .confirmationAction) {
+                Button("Save", action: save)
+                    .keyboardShortcut(.return, modifiers: .command)
+            }
+        }
         .sheet(isPresented: $showPasswordGenerator) {
             PasswordGeneratorView { generated in
                 password = generated
@@ -87,21 +116,14 @@ struct EntryEditView: View {
             locationChanged: now,
             history: []
         )
-        entry.title = title
+        entry.title = EntryEditSaveLogic.resolvedTitle(draftTitle: title, url: url)
         entry.login = login
         entry.password = password
         entry.url = url
         entry.notes = notes
         entry.lastModificationTime = now
         entry.lastAccessTime = now
-
-        if !otpauthInput.isEmpty {
-            if let parsed = TOTPCode.parse(otpauthURL: otpauthInput) {
-                entry.totpSecretBase32 = TOTPCode.base32Encode(parsed.secret)
-            } else {
-                entry.totpSecretBase32 = otpauthInput // treat as a raw Base32 secret pasted directly
-            }
-        }
+        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: otpauthInput, isEditingExisting: existingEntry != nil)
 
         let standardKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp"]
         entry.fields.removeAll { !standardKeys.contains($0.key) }
@@ -109,7 +131,6 @@ struct EntryEditView: View {
             entry.fields.append(KdbxField(key: field.key, value: field.value, isProtected: false))
         }
 
-        onSave(entry)
-        if onCancel == nil { dismiss() }
+        onSave(entry, selectedGroupID)
     }
 }
