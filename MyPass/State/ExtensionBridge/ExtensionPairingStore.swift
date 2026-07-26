@@ -77,21 +77,48 @@ final class InMemoryExtensionPairingStore: ExtensionPairingStoring {
 
 final class KeychainExtensionPairingStore: ExtensionPairingStoring {
     private let service = "com.mypass.extension.pairing"
+    // App-only access group (distinct from ExtensionBridgeTokenStore's shared
+    // "com.mypass.app.keychain") — ChromeHost must never read pairing secrets.
+    private let accessGroup = "com.mypass.app.pairing"
 
     init() {}
 
     func list() -> [PairedBrowser] {
-        let query: [String: Any] = [
+        // SecItemCopyMatching with kSecMatchLimitAll + kSecReturnData together
+        // returns errSecParam (-50) for this generic-password query shape on
+        // this sandboxed data-protection keychain, even though the exact same
+        // query with kSecReturnAttributes succeeds. Work around it by listing
+        // account identifiers first, then fetching each item's data with a
+        // kSecMatchLimitOne query (the shape that is known to work, mirroring
+        // ExtensionBridgeTokenStore.load()).
+        let attributeQuery: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecReturnData as String: true,
+            kSecAttrAccessGroup as String: accessGroup,
+            kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitAll
         ]
-        var result: AnyObject?
-        let status = SecItemCopyMatching(query as CFDictionary, &result)
-        if status == errSecItemNotFound { return [] }
-        guard status == errSecSuccess, let items = result as? [Data] else { return [] }
-        return items.compactMap { try? JSONDecoder().decode(PairedBrowser.self, from: $0) }
+        var attributeResult: AnyObject?
+        let attributeStatus = SecItemCopyMatching(attributeQuery as CFDictionary, &attributeResult)
+        if attributeStatus == errSecItemNotFound { return [] }
+        guard attributeStatus == errSecSuccess, let attributeDicts = attributeResult as? [[String: Any]] else {
+            return []
+        }
+        let accounts = attributeDicts.compactMap { $0[kSecAttrAccount as String] as? String }
+        return accounts.compactMap { account in
+            let dataQuery: [String: Any] = [
+                kSecClass as String: kSecClassGenericPassword,
+                kSecAttrService as String: service,
+                kSecAttrAccount as String: account,
+                kSecAttrAccessGroup as String: accessGroup,
+                kSecReturnData as String: true,
+                kSecMatchLimit as String: kSecMatchLimitOne
+            ]
+            var dataResult: AnyObject?
+            let dataStatus = SecItemCopyMatching(dataQuery as CFDictionary, &dataResult)
+            guard dataStatus == errSecSuccess, let data = dataResult as? Data else { return nil }
+            return try? JSONDecoder().decode(PairedBrowser.self, from: data)
+        }
     }
 
     func add(_ browser: PairedBrowser) throws {
@@ -101,7 +128,8 @@ final class KeychainExtensionPairingStore: ExtensionPairingStoring {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: browser.id.uuidString
+            kSecAttrAccount as String: browser.id.uuidString,
+            kSecAttrAccessGroup as String: accessGroup
         ]
         SecItemDelete(query as CFDictionary)
 
@@ -118,7 +146,8 @@ final class KeychainExtensionPairingStore: ExtensionPairingStoring {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: id.uuidString
+            kSecAttrAccount as String: id.uuidString,
+            kSecAttrAccessGroup as String: accessGroup
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
