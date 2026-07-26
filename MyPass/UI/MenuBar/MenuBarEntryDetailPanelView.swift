@@ -8,12 +8,20 @@ struct MenuBarEntryDetailPanelView: View {
     let entry: KdbxEntry
     let onBack: () -> Void
 
-    @State private var isPasswordRevealed = false
+    @State private var copiedField: CopiedField?
+    @State private var isPasswordHovered = false
+    @State private var copyFlashTask: Task<Void, Never>?
     @State private var now = Date()
     @State private var timer = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
+
+    private enum CopiedField {
+        case username
+        case password
+        case totp
+    }
 
     private var menuBarPanelMaxHeight: CGFloat {
         let screenHeight = NSScreen.main?.visibleFrame.height ?? 400
@@ -87,9 +95,12 @@ struct MenuBarEntryDetailPanelView: View {
 
     private var fieldsCard: some View {
         VStack(spacing: 0) {
-            fieldRow(label: "Username", value: entry.login) {
-                copy(entry.login)
-            }
+            copyableFieldRow(
+                label: "Username",
+                field: .username,
+                displayValue: entry.login,
+                copyValue: entry.login
+            )
 
             fieldDivider()
 
@@ -120,37 +131,64 @@ struct MenuBarEntryDetailPanelView: View {
             Text("Password")
                 .foregroundStyle(.secondary)
                 .frame(width: 70, alignment: .leading)
-            Text(isPasswordRevealed ? entry.password : String(repeating: "•", count: max(entry.password.count, 8)))
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .layoutPriority(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+
             Button {
-                isPasswordRevealed.toggle()
+                copy(entry.password)
+                flashCopied(.password)
             } label: {
-                Image(systemName: isPasswordRevealed ? "eye.slash" : "eye")
+                Text(passwordDisplayText)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
-            .accessibilityLabel(isPasswordRevealed ? "Hide" : "Show")
-            copyButton { copy(entry.password) }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+            .accessibilityHint("Click to copy")
+            .onHover { isPasswordHovered = $0 }
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
     }
 
+    private var passwordDisplayText: String {
+        if copiedField == .password {
+            return "Copied"
+        }
+        if isPasswordHovered {
+            return entry.password
+        }
+        return String(repeating: "•", count: max(entry.password.count, 8))
+    }
+
     private func totpRow(secret: String) -> some View {
         let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
+        let displayValue = copiedField == .totp ? "Copied" : code
+
         return HStack(alignment: .center, spacing: 6) {
             Text("Code")
                 .foregroundStyle(.secondary)
                 .frame(width: 70, alignment: .leading)
-            Text(code)
-                .font(.system(.body, design: .monospaced))
-                .layoutPriority(1)
-            MenuBarTOTPRingChrome()
-            Spacer(minLength: 0)
-            copyButton { copy(code) }
+
+            Button {
+                copy(code)
+                flashCopied(.totp)
+            } label: {
+                HStack(spacing: 6) {
+                    Text(displayValue)
+                        .font(.system(.body, design: .monospaced))
+                        .lineLimit(1)
+                    if copiedField != .totp {
+                        MenuBarTOTPRingChrome()
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+            .accessibilityHint("Click to copy")
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
@@ -183,32 +221,53 @@ struct MenuBarEntryDetailPanelView: View {
         .padding(.vertical, 7)
     }
 
-    private func fieldRow(label: String, value: String, copyAction: @escaping () -> Void) -> some View {
-        HStack(alignment: .center, spacing: 6) {
+    private func copyableFieldRow(
+        label: String,
+        field: CopiedField,
+        displayValue: String,
+        copyValue: String
+    ) -> some View {
+        let shownValue = copiedField == field ? "Copied" : displayValue
+
+        return HStack(alignment: .center, spacing: 6) {
             Text(label)
                 .foregroundStyle(.secondary)
                 .frame(width: 70, alignment: .leading)
-            Text(value)
-                .lineLimit(1)
-                .layoutPriority(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
-            copyButton(action: copyAction)
+
+            Button {
+                copy(copyValue)
+                flashCopied(field)
+            } label: {
+                Text(shownValue)
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .layoutPriority(1)
+            .accessibilityHint("Click to copy")
         }
         .font(.system(size: 13))
         .padding(.horizontal, 12)
         .padding(.vertical, 7)
     }
 
-    private func copyButton(action: @escaping () -> Void) -> some View {
-        Button(action: action) {
-            Image(systemName: "doc.on.doc")
-        }
-        .buttonStyle(.borderless)
-        .accessibilityLabel("Copy")
-    }
-
     private func fieldDivider() -> some View {
         Divider().overlay(Color.primary.opacity(0.08))
+    }
+
+    private func flashCopied(_ field: CopiedField) {
+        copyFlashTask?.cancel()
+        copiedField = field
+        copyFlashTask = Task {
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            guard !Task.isCancelled else { return }
+            await MainActor.run {
+                if copiedField == field {
+                    copiedField = nil
+                }
+            }
+        }
     }
 
     private func copy(_ value: String) {
