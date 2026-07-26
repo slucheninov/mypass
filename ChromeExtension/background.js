@@ -61,6 +61,12 @@ async function sendNativeMessageWithPairing(message) {
   return response;
 }
 
+async function sendPairingCompletion(message) {
+  const response = await sendNativeMessage(message);
+  await persistPairingResponse(response);
+  return response;
+}
+
 // Mirrors content.js's `hostnameMatches` — duplicated rather than shared
 // because a service worker and a content script don't share a module system
 // in this MV3 extension without a build step.
@@ -135,6 +141,13 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return true;
   }
 
+  if (message.type === "completePairing") {
+    sendPairingCompletion(message).then((response) => {
+      sendResponse(response);
+    });
+    return true;
+  }
+
   sendNativeMessageWithPairing(message).then((response) => {
     if (message.type === "fillCredential" && response && response.type === "credential") {
       relayFillToActiveTab(response, message.url);
@@ -153,6 +166,7 @@ if (typeof module !== "undefined") {
     attachPairingField,
     persistPairingResponse,
     clearStaleSecretOnPairingRequired,
-    detectBrowserName
+    detectBrowserName,
+    sendPairingCompletion
   };
 }

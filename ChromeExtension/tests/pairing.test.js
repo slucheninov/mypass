@@ -1,6 +1,7 @@
 const assert = require('node:assert');
 
 const storage = {};
+const sentNativeMessages = [];
 global.chrome = {
   storage: {
     local: {
@@ -23,7 +24,11 @@ global.chrome = {
   },
   runtime: {
     lastError: null,
-    onMessage: { addListener: () => {} }
+    onMessage: { addListener: () => {} },
+    sendNativeMessage: (_host, message, cb) => {
+      sentNativeMessages.push(message);
+      cb({ type: 'paired', secret: 'newSecret' });
+    }
   }
 };
 
@@ -32,7 +37,8 @@ const {
   attachPairingField,
   persistPairingResponse,
   clearStaleSecretOnPairingRequired,
-  detectBrowserName
+  detectBrowserName,
+  sendPairingCompletion
 } = require('../background.js');
 
 assert.strictEqual(attachPairingField({ type: 'getCredentials', url: 'https://example.com' }, 'sec').pairing, 'sec');
@@ -59,5 +65,15 @@ assert.strictEqual(detectBrowserName(), 'Chromium browser');
   storage[PAIRING_STORAGE_KEY] = 'stale';
   await clearStaleSecretOnPairingRequired({ type: 'pairingRequired' }, 'stale');
   assert.strictEqual(storage[PAIRING_STORAGE_KEY], undefined);
+
+  storage[PAIRING_STORAGE_KEY] = 'stale';
+  sentNativeMessages.length = 0;
+  await sendPairingCompletion({ type: 'completePairing', code: '123456' });
+  assert.strictEqual(sentNativeMessages.length, 1);
+  assert.strictEqual(sentNativeMessages[0].type, 'completePairing');
+  assert.strictEqual(sentNativeMessages[0].code, '123456');
+  assert.strictEqual(sentNativeMessages[0].pairing, undefined);
+  assert.strictEqual(storage[PAIRING_STORAGE_KEY], 'newSecret');
+
   console.log('pairing.test.js OK');
 })();
