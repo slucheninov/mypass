@@ -13,11 +13,10 @@ struct GroupSidebarView: View {
                 ForEach(SmartCategory.allCases) { category in
                     SmartCategorySidebarRow(
                         category: category,
-                        countText: vaultSession.currentDatabase.map { category.countDisplay(for: $0) } ?? "0",
+                        countText: countText(for: category),
                         isSelected: navigationState.selectedSmartCategory == category
                     ) {
-                        // Wave 1: visual selection only — entry list filtering is unchanged.
-                        navigationState.selectedSmartCategory = category
+                        navigationState.selectSmartCategory(category)
                     }
                 }
             } header: {
@@ -72,9 +71,13 @@ struct GroupSidebarView: View {
         .listStyle(.sidebar)
         .frame(minWidth: UIShellMetrics.sidebarPreferredWidth)
         .onChange(of: navigationState.selectedGroupID) { _, _ in
-            // Group selection is real navigation; clear stale category header.
-            navigationState.selectedSmartCategory = .all
+            navigationState.exitCategoryModeForGroupSelection()
         }
+    }
+
+    private func countText(for category: SmartCategory) -> String {
+        guard let database = vaultSession.currentDatabase else { return "0" }
+        return category.countDisplay(for: database)
     }
 }
 

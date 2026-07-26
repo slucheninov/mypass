@@ -13,13 +13,27 @@ struct EntryListView: View {
     }
 
     private var displayedEntries: [KdbxEntry] {
-        navigationState.searchText.isEmpty
-            ? currentGroup.entries
-            : EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
+        if navigationState.selectedSmartCategory == .security, navigationState.securityUsesGroupScope {
+            if navigationState.searchText.isEmpty {
+                return currentGroup.entries
+            }
+            return EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
+        }
+        if navigationState.isCategoryMode, let database = vaultSession.currentDatabase {
+            let scoped = EntryCategoryFilter.entries(for: navigationState.activeCategoryFilter, in: database)
+            if navigationState.searchText.isEmpty {
+                return scoped
+            }
+            return scoped.filter { EntrySearch.matches(entry: $0, query: navigationState.searchText) }
+        }
+        if navigationState.searchText.isEmpty {
+            return currentGroup.entries
+        }
+        return EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
     }
 
     private var headerTitle: String {
-        if navigationState.selectedSmartCategory != .all {
+        if navigationState.isCategoryMode {
             return navigationState.selectedSmartCategory.title
         }
         return currentGroup.name

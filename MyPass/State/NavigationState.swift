@@ -23,4 +23,27 @@ final class NavigationState: ObservableObject {
     @Published var searchText: String = ""
     @Published var selectedSmartCategory: SmartCategory = .all
     @Published var pendingSaveProposal: PendingSaveProposal?
+    @Published var isCategoryMode: Bool = false
+    @Published var activeCategoryFilter: SmartCategory = .all
+    /// When Security is selected from group scope, keep list on the current group instead of vault-wide All.
+    @Published private(set) var securityUsesGroupScope: Bool = false
+
+    func selectSmartCategory(_ category: SmartCategory) {
+        if category == .security {
+            securityUsesGroupScope = !isCategoryMode
+        } else {
+            securityUsesGroupScope = false
+        }
+        selectedSmartCategory = category
+        isCategoryMode = true
+        if category != .security {
+            activeCategoryFilter = category
+        }
+    }
+
+    func exitCategoryModeForGroupSelection() {
+        isCategoryMode = false
+        selectedSmartCategory = .all
+        securityUsesGroupScope = false
+    }
 }
