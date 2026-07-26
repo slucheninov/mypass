@@ -34,6 +34,7 @@ struct EntryDetailView: View {
     @State private var now = Date()
     @State private var showHistory = false
     @State private var showEdit = false
+    @State private var lastTouchedEntryID: UUID?
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
@@ -194,11 +195,9 @@ struct EntryDetailView: View {
                 }
             }
             .onChange(of: navigationState.selectedEntryID) { _, newID in
-                if let id = newID { vaultSession.touchAccess(entryID: id) }
-            }
-            .onAppear {
-                if let id = navigationState.selectedEntryID {
-                    vaultSession.touchAccess(entryID: id)
+                if let newID, newID != lastTouchedEntryID {
+                    lastTouchedEntryID = newID
+                    vaultSession.touchAccess(entryID: newID)
                 }
             }
         } else {

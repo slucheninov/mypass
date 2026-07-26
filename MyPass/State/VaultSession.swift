@@ -45,6 +45,9 @@ final class VaultSession: ObservableObject {
     /// correct. Serializing here guarantees writes land in invocation order.
     private let persistQueue = DispatchQueue(label: "com.mypass.vaultsession.persist", qos: .userInitiated)
 
+    /// Coalesces rapid `touchAccess` calls into a single debounced persist.
+    private var touchAccessPersistWorkItem: DispatchWorkItem?
+
     init(fileStore: VaultFileStore, syncEngine: SyncEngine? = nil) {
         self.fileStore = fileStore
         self.syncEngine = syncEngine
@@ -86,6 +89,8 @@ final class VaultSession: ObservableObject {
     }
 
     func lock() {
+        touchAccessPersistWorkItem?.cancel()
+        touchAccessPersistWorkItem = nil
         state = .locked
         sessionPassword = nil
     }
@@ -105,15 +110,24 @@ final class VaultSession: ObservableObject {
         persist(db)
     }
 
-    /// Bumps `lastAccessTime` for the entry and schedules a background persist.
+    /// Bumps `lastAccessTime` for the entry in the live group tree and
+    /// schedules a debounced background persist. Does not republish `@Published`
+    /// state — avoids List/detail re-render feedback loops on access tracking.
     /// No-op when vault is locked or entry ID is not found.
     func touchAccess(entryID: UUID) {
-        mutate { database in
-            guard let location = GroupTreeOperations.entryLocation(entryID: entryID, in: database.rootGroup) else { return }
-            var entry = location.group.entries[location.index]
-            entry.lastAccessTime = Date()
-            location.group.entries[location.index] = entry
+        guard case .unlocked(let db) = state else { return }
+        guard let location = GroupTreeOperations.entryLocation(entryID: entryID, in: db.rootGroup) else { return }
+        var entry = location.group.entries[location.index]
+        entry.lastAccessTime = Date()
+        location.group.entries[location.index] = entry
+
+        touchAccessPersistWorkItem?.cancel()
+        let workItem = DispatchWorkItem { [weak self] in
+            guard let self, case .unlocked(let currentDB) = self.state else { return }
+            self.persist(currentDB)
         }
+        touchAccessPersistWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5, execute: workItem)
     }
 
     /// Runs a sync pass without an accompanying local mutation — used by
