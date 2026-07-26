@@ -5,7 +5,7 @@ enum ExtensionEntryMatcher {
     /// Naive "last two DNS labels" heuristic — NOT a real public-suffix-list
     /// lookup. It misidentifies multi-part suffixes such as "example.co.uk"
     /// (collapses to "co.uk" instead of "example.co.uk"). Accepted as a known
-    /// limitation for the Фаза 4 MVP; revisit with a PSL library before
+    /// limitation for the Phase 4 MVP; revisit with a PSL library before
     /// widening scope beyond simple .com/.org/.net-style domains.
     static func registrableDomain(from urlString: String) -> String? {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)

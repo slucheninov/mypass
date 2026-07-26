@@ -56,14 +56,20 @@ enum GroupTreeOperations {
 }
 
 extension GroupTreeOperations {
-    static let recycleBinGroupName = "Корзина"
+    static let recycleBinGroupName = "Recycle Bin"
+    /// Legacy name used by vaults created before the English UI migration.
+    static let legacyRecycleBinGroupName = "Корзина"
+
+    static func isRecycleBinGroup(_ group: KdbxGroup) -> Bool {
+        group.name == recycleBinGroupName || group.name == legacyRecycleBinGroupName
+    }
 
     @discardableResult
     static func recycleBinGroup(in root: KdbxGroup, recycleBinGroupUUID: inout UUID?) -> KdbxGroup {
         if let uuid = recycleBinGroupUUID, let existing = findGroup(uuid: uuid, in: root) {
             return existing
         }
-        if let existingByName = root.subgroups.first(where: { $0.name == recycleBinGroupName }) {
+        if let existingByName = root.subgroups.first(where: { isRecycleBinGroup($0) }) {
             recycleBinGroupUUID = existingByName.uuid
             return existingByName
         }

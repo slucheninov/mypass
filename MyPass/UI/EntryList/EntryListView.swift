@@ -21,7 +21,7 @@ struct EntryListView: View {
     var body: some View {
         List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
             VStack(alignment: .leading) {
-                Text(entry.title.isEmpty ? "(без названия)" : entry.title)
+                Text(entry.title.isEmpty ? "(untitled)" : entry.title)
                 Text(entry.login)
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -32,14 +32,14 @@ struct EntryListView: View {
         .searchable(text: $navigationState.searchText)
         .toolbar {
             ToolbarItem {
-                Button("Добавить", systemImage: "plus") {
+                Button("Add", systemImage: "plus") {
                     isCreatingEntry = true
                 }
             }
             ToolbarItem {
-                Menu("Импорт", systemImage: "square.and.arrow.down") {
-                    Button("Импорт CSV…") { importCSV() }
-                    Button("Открыть существующий .kdbx…") { openExistingVault() }
+                Menu("Import", systemImage: "square.and.arrow.down") {
+                    Button("Import CSV…") { importCSV() }
+                    Button("Open Existing .kdbx…") { openExistingVault() }
                 }
             }
         }
@@ -99,15 +99,15 @@ struct EntryListView: View {
         // Known limitation (see plan Global Constraints): only .kdbx files created by
         // MyPass itself (16-byte Argon2id salt) are guaranteed to open. Third-party
         // KeePassXC files with a 32-byte salt will fail here with a message that
-        // explicitly names this limitation rather than a bare "неверный пароль".
+        // explicitly names this limitation rather than a bare "wrong password".
         do {
             let data = try Data(contentsOf: url)
             _ = try KdbxDatabase.open(data: data, password: "") // password prompt UI deferred; placeholder call demonstrates the error path
         } catch {
             NSSound.beep()
-            // A production alert would read: "Не удалось открыть файл. MyPass поддерживает
-            // открытие .kdbx-файлов, созданных самим MyPass; сторонние файлы KeePassXC
-            // с 32-байтной солью Argon2id пока не поддерживаются."
+            // A production alert would read: "Could not open file. MyPass supports
+            // opening .kdbx files created by MyPass itself; third-party KeePassXC
+            // files with a 32-byte Argon2id salt are not yet supported."
         }
     }
 }

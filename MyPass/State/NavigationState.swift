@@ -1,7 +1,7 @@
 import Foundation
 
 /// A save-login proposal relayed from `ExtensionBridgeService.onSaveProposal`
-/// (Фаза 4, Task 5/13), waiting to be shown as a pre-filled create-entry sheet
+/// (Phase 4, Task 5/13), waiting to be shown as a pre-filled create-entry sheet
 /// by `ContentView`. `Identifiable` so it can drive `.sheet(item:)` directly.
 struct PendingSaveProposal: Identifiable {
     let id = UUID()

@@ -2,6 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
+**Project language:** English everywhere (code, comments, docs, UI, commits). **Exception:** root `RUN.md` is Ukrainian — do not translate it. See `.cursor/rules/language.mdc`.
 
 # Global workflow conventions
 

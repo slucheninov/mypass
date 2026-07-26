@@ -264,7 +264,7 @@ final class VaultSessionTests: XCTestCase {
 
         var sawSyncError = false
         for _ in 0..<100 {
-            if let message = session.lastSaveError, message.contains("синхронизация") {
+            if let message = session.lastSaveError, message.localizedCaseInsensitiveContains("sync") {
                 sawSyncError = true
                 break
             }

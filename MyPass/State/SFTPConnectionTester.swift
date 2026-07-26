@@ -6,7 +6,7 @@ enum SFTPConnectionTesterError: Error, Equatable {
 }
 
 /// Wraps a single `StorageBackend.exists()` call as a connectivity probe for
-/// the Settings "Проверить соединение" button. `backendFactory` defaults to
+/// the Settings "Test connection" button. `backendFactory` defaults to
 /// building a real `SFTPBackend`, but is injectable so tests can supply a
 /// fake `StorageBackend` without any network/Docker dependency — this is
 /// the preferred design flagged in this task's spec over gating the whole

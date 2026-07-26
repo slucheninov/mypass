@@ -2,23 +2,23 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Реализовать Фазу 4 — расширение Chrome (Manifest V3) с автозаполнением сохранённых логинов и предложением сохранить новый логин, обменивающееся данными с MyPass.app через нативный helper-процесс `ChromeHost` и loopback TCP + Keychain-токен, согласно `docs/superpowers/specs/2026-07-25-mypass-phase4-chrome-extension-design.md`.
+**Goal:** Implement Phase 4 - Chrome extension (Manifest V3) with autofill of saved logins and an offer to save a new login, communicating with MyPass.app through a native helper process `ChromeHost` and loopback TCP + Keychain token, according to `docs/superpowers/specs/2026-07-25-mypass-phase4-chrome-extension-design.md `.
 
-**Architecture:** Новый leaf-пакет `Packages/ExtensionBridgeKit` содержит native-messaging framing кодек, общие Codable-типы запросов/ответов и Keychain-хранилище порта+токена (переиспользуется и `MyPass.app`, и `ChromeHost`). Внутри `MyPass` (приложение) — модуль `ExtensionBridge`: `LoopbackServer` (Network.framework, TCP на `127.0.0.1:<random>`), `ExtensionBridgeService` (обращается к `VaultSession`), `ExtensionEntryMatcher` (сопоставление по домену). `ChromeHost` — отдельный несанбоксированный executable-таргет, релеящий native-messaging stdio ↔ TCP. `ChromeExtension/` — чистый MV3 JS (без сборки): `background.js`, `content.js`, `popup.html`/`popup.js`.
+**Architecture:** New leaf package `Packages/ExtensionBridgeKit` contains a native-messaging framing codec, common Codable request/response types and Keychain port+token storage (reused by both `MyPass.app`, and `ChromeHost`). Inside `MyPass`(application) - module `ExtensionBridge`: `LoopbackServer`(Network.framework, TCP on `127.0.0.1:<random>`), `ExtensionBridgeService`(talks to `VaultSession`), `ExtensionEntryMatcher`(domain matching).`ChromeHost`— a separate unsandboxed executable target that relays native-messaging stdio ↔ TCP.`ChromeExtension/`- pure MV3 JS (without a build step):`background.js`, `content.js`, `popup.html `/` popup.js `.
 
-**Tech Stack:** Swift 5.10, SwiftUI/AppKit (macOS 14+), Network.framework, Security.framework (Keychain), Swift Package Manager, XcodeGen (project.yml), Chrome Manifest V3 (JavaScript, без сборки — plain JS, без TypeScript/бандлера, в духе минимальных зависимостей проекта), XCTest.
+**Tech Stack:** Swift 5.10, SwiftUI/AppKit (macOS 14+), Network.framework, Security.framework (Keychain), Swift Package Manager, XcodeGen (project.yml), Chrome Manifest V3 (JavaScript, no build step — plain JS, no TypeScript/bundler, in the spirit of minimal project dependencies), XCTest.
 
 ## Global Constraints
 
-- MyPass.app остаётся sandboxed (`com.apple.security.app-sandbox = true`), без App Group.
-- IPC-транспорт — loopback TCP (`127.0.0.1`, случайный свободный порт) + одноразовый токен в Keychain; НЕ Mach XPC, НЕ Unix domain socket в App Group (обе альтернативы отклонены дизайн-спекой).
-- НЕТ автозаполнения при простой загрузке страницы — заполнение полей формы только по явному клику пользователя в popup.
-- `getCredentials` НИКОГДА не возвращает пароль — только `[{id, title, username}]`; пароль отдаётся только в ответ на конкретный `fillCredential` по id.
-- `fillCredential` повторно проверяет соответствие домена записи и URL — как на стороне `ExtensionBridgeService` (шаг 7 потока), так и на стороне `content.js` перед заполнением.
-- Native messaging host manifest (`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.mypass.chromehost.json`) должен иметь `allowed_origins`, ограниченный конкретным ID расширения.
-- Swift tools version 5.10, platform floor macOS 14.0 (совпадает с `Packages/MyPassKit/Package.swift`, `Packages/SyncKit/Package.swift`, `project.yml`).
-- Никаких плейсхолдеров в коде — каждый шаг ниже содержит полный, реальный код.
-- Вне скоупа этой фазы (НЕ реализуется): Safari App Extension и общий WebExtension-слой (Фаза 4b), badge-индикатор количества совпадений, доступ к генератору паролей из расширения, TOTP copy-to-clipboard без заполнения формы.
+- MyPass.app remains sandboxed (`com.apple.security.app-sandbox = true`), without App Group.
+- IPC transport - loopback TCP (`127.0.0.1`, random free port) + one-time token in Keychain; NOT Mach XPC, NOT Unix domain socket in the App Group (both alternatives were rejected by the design spec).
+- NO autofill when the page is simply loaded - filling out form fields only by an explicit user click in the popup.
+- `getCredentials` NEVER returns password - only `[{id, title, username}]`; the password is given only in response to a specific `fillCredential` by id.
+- `fillCredential` re-checks the correspondence of the entry domain and URL - as on the side `ExtensionBridgeService`(step 7 flow), and on the side `content.js` before filling.
+- Native messaging host manifest (`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.mypass.chromehost.json`) must have `allowed_origins`, limited to a specific extension ID.
+- Swift tools version 5.10, platform floor macOS 14.0 (same as `Packages/MyPassKit/Package.swift`, `Packages/SyncKit/Package.swift`, `project.yml`).
+- No placeholders in the code - each step below contains complete, real code.
+- Outside the scope of this phase (NOT implemented): Safari App Extension and general WebExtension layer (Phase 4b), badge indicator of the number of matches, access to the password generator from the extension, TOTP copy-to-clipboard without filling out the form.
 
 ---
 
@@ -27,11 +27,11 @@
 **Files:**
 - Create: `Packages/ExtensionBridgeKit/Package.swift`
 - Create: `Packages/ExtensionBridgeKit/Sources/ExtensionBridgeKit/NativeMessagingCodec.swift`
-- Modify: `project.yml` (добавить пакет `ExtensionBridgeKit` в `packages:` и зависимость таргета `MyPass` от него)
+- Modify: `project.yml`(add package `ExtensionBridgeKit` V `packages:` and target dependency `MyPass` from it)
 - Test: `Packages/ExtensionBridgeKit/Tests/ExtensionBridgeKitTests/NativeMessagingCodecTests.swift`
 
 **Interfaces:**
-- Consumes: ничего — это фундамент Фазы 4.
+- Consumes: nothing - this is the foundation of Phase 4.
 - Produces:
 ```swift
 public enum NativeMessagingCodec {
@@ -43,7 +43,7 @@ public final class NativeMessagingFrameReader {
     public func feed(_ data: Data) -> [Data]
 }
 ```
-Используется всеми последующими задачами: Task 2 (кодирует/декодирует сообщения), Task 6 (`LoopbackServer`), Task 8/9 (`ChromeHost`).
+Used by all subsequent tasks: Task 2 (encodes/decodes messages), Task 6 (`LoopbackServer`), Task 8/9 (`ChromeHost`).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -219,7 +219,7 @@ Expected: regenerates `MyPass.xcodeproj` without errors; `ExtensionBridgeKit` no
 
 ```bash
 git add Packages/ExtensionBridgeKit/Package.swift Packages/ExtensionBridgeKit/Sources/ExtensionBridgeKit/NativeMessagingCodec.swift Packages/ExtensionBridgeKit/Tests/ExtensionBridgeKitTests/NativeMessagingCodecTests.swift project.yml MyPass.xcodeproj
-git commit -m "Фаза 4, Task 1: ExtensionBridgeKit package scaffold + native messaging framing codec"
+git commit -m "Phase 4, Task 1: ExtensionBridgeKit package scaffold + native messaging framing codec"
 ```
 
 ---
@@ -384,7 +384,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd Packages/ExtensionBridgeKit && swift test --filter ExtensionBridgeMessagesTests`
-Expected: FAIL — `ExtensionBridgeRequest`/`ExtensionBridgeResponse`/`ExtensionCredentialSummary` do not exist yet.
+Expected: FAIL — `ExtensionBridgeRequest `/`ExtensionBridgeResponse `/`ExtensionCredentialSummary` do not exist yet.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -539,7 +539,7 @@ Expected: PASS (11 tests).
 
 ```bash
 git add Packages/ExtensionBridgeKit/Sources/ExtensionBridgeKit/ExtensionBridgeMessages.swift Packages/ExtensionBridgeKit/Tests/ExtensionBridgeKitTests/ExtensionBridgeMessagesTests.swift
-git commit -m "Фаза 4, Task 2: ExtensionBridgeKit Codable request/response message types"
+git commit -m "Phase 4, Task 2: ExtensionBridgeKit Codable request/response message types"
 ```
 
 ---
@@ -666,7 +666,7 @@ final class ExtensionBridgeTokenStoreTests: XCTestCase {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd Packages/ExtensionBridgeKit && swift test --filter ExtensionBridgeTokenStoreTests`
-Expected: FAIL — `ExtensionBridgeEndpoint`/`ExtensionBridgeTokenStoring`/stores do not exist yet.
+Expected: FAIL — `ExtensionBridgeEndpoint `/`ExtensionBridgeTokenStoring `/stores do not exist yet.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -805,7 +805,7 @@ Optionally verify the gated tests too: `MYPASS_KEYCHAIN_TESTS=1 swift test --fil
 
 ```bash
 git add Packages/ExtensionBridgeKit/Sources/ExtensionBridgeKit/ExtensionBridgeTokenStore.swift Packages/ExtensionBridgeKit/Tests/ExtensionBridgeKitTests/ExtensionBridgeTokenStoreTests.swift
-git commit -m "Фаза 4, Task 3: ExtensionBridgeTokenStore (cross-process Keychain access group)"
+git commit -m "Phase 4, Task 3: ExtensionBridgeTokenStore (cross-process Keychain access group)"
 ```
 
 ---
@@ -817,7 +817,7 @@ git commit -m "Фаза 4, Task 3: ExtensionBridgeTokenStore (cross-process Keyc
 - Test: `MyPassTests/ExtensionEntryMatcherTests.swift`
 
 **Interfaces:**
-- Consumes: `KdbxGroup`/`KdbxEntry` from `MyPassKit`; `entry.url`/`entry.title`/`entry.login` internal convenience accessors (`MyPass/Models/KdbxEntry+Convenience.swift`); `EntrySearch.allEntries(in:)` (`MyPass/UI/EntryList/EntrySearch.swift`), same target so no import needed.
+- Consumes: `KdbxGroup `/`KdbxEntry` from `MyPassKit`; `entry.url `/` entry.title `/` entry.login` internal convenience accessors (`MyPass/Models/KdbxEntry+Convenience.swift`); `EntrySearch.allEntries(in:)` (`MyPass/UI/EntryList/EntrySearch.swift`), same target so no import needed.
 - Produces:
 ```swift
 enum ExtensionEntryMatcher {
@@ -956,7 +956,7 @@ enum ExtensionEntryMatcher {
     /// Naive "last two DNS labels" heuristic — NOT a real public-suffix-list
     /// lookup. It misidentifies multi-part suffixes such as "example.co.uk"
     /// (collapses to "co.uk" instead of "example.co.uk"). Accepted as a known
-    /// limitation for the Фаза 4 MVP; revisit with a PSL library before
+    /// limitation for the Phase 4 MVP; revisit with a PSL library before
     /// widening scope beyond simple .com/.org/.net-style domains.
     static func registrableDomain(from urlString: String) -> String? {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -994,7 +994,7 @@ Expected: PASS (9 tests).
 
 ```bash
 git add MyPass/State/ExtensionBridge/ExtensionEntryMatcher.swift MyPassTests/ExtensionEntryMatcherTests.swift
-git commit -m "Фаза 4, Task 4: ExtensionEntryMatcher domain matching (registrable-domain heuristic)"
+git commit -m "Phase 4, Task 4: ExtensionEntryMatcher domain matching (registrable-domain heuristic)"
 ```
 
 ---
@@ -1006,7 +1006,7 @@ git commit -m "Фаза 4, Task 4: ExtensionEntryMatcher domain matching (regist
 - Test: `MyPassTests/ExtensionBridgeServiceTests.swift`
 
 **Interfaces:**
-- Consumes: `VaultSession` (`currentDatabase`, `mutate(_:)`), `ExtensionEntryMatcher.matchingEntries(in:forURL:)` (Task 4), `ExtensionBridgeRequest`/`ExtensionBridgeResponse`/`ExtensionCredentialSummary` (Task 2), `entry.title`/`.login`/`.password`/`.totpSecretBase32`.
+- Consumes: `VaultSession` (`currentDatabase`, `mutate(_:)`), `ExtensionEntryMatcher.matchingEntries(in:forURL:)` (Task 4), `ExtensionBridgeRequest `/`ExtensionBridgeResponse `/`ExtensionCredentialSummary` (Task 2), `entry.title `/`.login `/`.password `/`.totpSecretBase32`.
 - Produces:
 ```swift
 final class ExtensionBridgeService {
@@ -1142,7 +1142,7 @@ import MyPassKit
 import ExtensionBridgeKit
 
 /// UI-agnostic request handler for the browser-extension bridge. Token
-/// validation happens one layer up, in `LoopbackServer` (Фаза 4, Task 6),
+/// validation happens one layer up, in `LoopbackServer` (Phase 4, Task 6),
 /// before a request ever reaches this type — `handle(_:)` trusts its caller.
 final class ExtensionBridgeService {
     weak var vaultSession: VaultSession?
@@ -1195,7 +1195,7 @@ Expected: PASS (7 tests).
 
 ```bash
 git add MyPass/State/ExtensionBridge/ExtensionBridgeService.swift MyPassTests/ExtensionBridgeServiceTests.swift
-git commit -m "Фаза 4, Task 5: ExtensionBridgeService (getCredentials/fillCredential/proposeSaveLogin)"
+git commit -m "Phase 4, Task 5: ExtensionBridgeService (getCredentials/fillCredential/proposeSaveLogin)"
 ```
 
 ---
@@ -1207,7 +1207,7 @@ git commit -m "Фаза 4, Task 5: ExtensionBridgeService (getCredentials/fillCr
 - Test: `MyPassTests/LoopbackServerTests.swift`
 
 **Interfaces:**
-- Consumes: `ExtensionBridgeTokenStoring`/`InMemoryExtensionBridgeTokenStore`/`ExtensionBridgeTokenStore`/`ExtensionBridgeEndpoint` (Task 3), `ExtensionBridgeRequest`/`ExtensionBridgeResponse` (Task 2), `NativeMessagingCodec`/`NativeMessagingFrameReader` (Task 1).
+- Consumes: `ExtensionBridgeTokenStoring `/`InMemoryExtensionBridgeTokenStore `/`ExtensionBridgeTokenStore `/`ExtensionBridgeEndpoint` (Task 3), `ExtensionBridgeRequest `/`ExtensionBridgeResponse` (Task 2), `NativeMessagingCodec `/`NativeMessagingFrameReader` (Task 1).
 - Produces:
 ```swift
 final class LoopbackServer {
@@ -1475,7 +1475,7 @@ Expected: PASS (5 tests).
 
 ```bash
 git add MyPass/State/ExtensionBridge/LoopbackServer.swift MyPassTests/LoopbackServerTests.swift
-git commit -m "Фаза 4, Task 6: LoopbackServer (TCP 127.0.0.1, token-gated framed JSON)"
+git commit -m "Phase 4, Task 6: LoopbackServer (TCP 127.0.0.1, token-gated framed JSON)"
 ```
 
 ---
@@ -1487,7 +1487,7 @@ git commit -m "Фаза 4, Task 6: LoopbackServer (TCP 127.0.0.1, token-gated fr
 - Modify: `MyPass/MyPassApp.swift`
 
 **Interfaces:**
-- Consumes: `LoopbackServer` (Task 6), `ExtensionBridgeService` (Task 5), `ExtensionBridgeTokenStore` (Task 3), the existing `session`/`_vaultSession` local variables in `MyPassApp.init()`, the existing `AppDelegate` static-property idiom.
+- Consumes: `LoopbackServer` (Task 6), `ExtensionBridgeService` (Task 5), `ExtensionBridgeTokenStore` (Task 3), the existing `session `/`_vaultSession` local variables in `MyPassApp.init()`, the existing `AppDelegate` static-property idiom.
 - Produces: `AppDelegate.extensionBridgeServer: LoopbackServer?`, populated at app launch — consumed by nothing further in this plan (it is the terminal wiring point), but keeps the server retained for the app's lifetime.
 
 - [ ] **Step 1: Modify `AppDelegate.swift`**
@@ -1499,7 +1499,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var activityMonitorToken: Any?
     static var backgroundSyncTimer: Timer?
     static var localFolderChangeWatcher: LocalFolderChangeWatcher?
-    /// Фаза 4: retains the loopback server that bridges MyPass.app to ChromeHost
+    /// Phase 4: retains the loopback server that bridges MyPass.app to ChromeHost
     /// for the lifetime of the app.
     static var extensionBridgeServer: LoopbackServer?
 
@@ -1550,7 +1550,7 @@ Then run the built app (`open` the `.app` product, or run from Xcode), and confi
 
 ```bash
 git add MyPass/AppDelegate.swift MyPass/MyPassApp.swift
-git commit -m "Фаза 4, Task 7: wire LoopbackServer + ExtensionBridgeService into app launch"
+git commit -m "Phase 4, Task 7: wire LoopbackServer + ExtensionBridgeService into app launch"
 ```
 
 ---
@@ -1565,7 +1565,7 @@ git commit -m "Фаза 4, Task 7: wire LoopbackServer + ExtensionBridgeService 
 - Test: `MyPassTests/NativeMessagingHostInstallerTests.swift`
 
 **Interfaces:**
-- Consumes: `NativeMessagingCodec`/`NativeMessagingFrameReader` (Task 1), `ExtensionBridgeKit` package dependency.
+- Consumes: `NativeMessagingCodec `/`NativeMessagingFrameReader` (Task 1), `ExtensionBridgeKit` package dependency.
 - Produces:
 ```swift
 enum NativeMessagingHostInstaller {
@@ -1603,7 +1603,7 @@ targets:
 
 - [ ] **Step 2: Create `ChromeHost/ChromeHost.entitlements`**
 
-Design note: `ChromeHost` is a native-messaging host launched directly by Chrome as a plain child process — it is NOT App Sandboxed (there is deliberately no `com.apple.security.app-sandbox` key here), only entitled for the shared Keychain access group it needs to read the loopback endpoint written by `MyPass.app`.
+Design note: `ChromeHost` is a native-messaging host launched directly by Chrome as a plain child process — it is NOT App Sandboxed (there is deliberately no `com.apple.security.app-sandbox` key here), only entitled for the shared Keychain access group it needs to read the loopback endpoint written by `MyPass.app `.
 
 ```xml
 <?xml version="1.0" encoding="UTF-8"?>
@@ -1618,7 +1618,7 @@ Design note: `ChromeHost` is a native-messaging host launched directly by Chrome
 </plist>
 ```
 
-MANUAL VERIFICATION NOTE (cannot be automated): for `SecItemCopyMatching`/`SecItemAdd` calls tagged with `kSecAttrAccessGroup: "com.mypass.app.keychain"` to actually succeed across processes, both `MyPass.app` and `ChromeHost` must be code-signed with the **same Apple Developer Team ID**. There is no test in this plan that verifies this — it must be checked manually in Xcode's signing settings for both targets (Signing & Capabilities tab) before relying on cross-process Keychain sharing in Task 9's manual smoke test.
+MANUAL VERIFICATION NOTE (cannot be automated): for `SecItemCopyMatching `/`SecItemAdd` calls tagged with `kSecAttrAccessGroup: "com.mypass.app.keychain"` to actually succeed across processes, both `MyPass.app` and `ChromeHost` must be code-signed with the **same Apple Developer Team ID**. There is no test in this plan that verifies this — it must be checked manually in Xcode's signing settings for both targets (Signing & Capabilities tab) before relying on cross-process Keychain sharing in Task 9's manual smoke test.
 
 - [ ] **Step 3: Create `ChromeHost/main.swift` (scaffold — echoes frames, real relay logic lands in Task 9)**
 
@@ -1800,7 +1800,7 @@ Expected: the same 4-byte-length-prefixed frame is echoed back on stdout (visibl
 
 ```bash
 git add project.yml ChromeHost/ChromeHost.entitlements ChromeHost/main.swift MyPass/State/ExtensionBridge/NativeMessagingHostInstaller.swift MyPassTests/NativeMessagingHostInstallerTests.swift MyPass.xcodeproj
-git commit -m "Фаза 4, Task 8: ChromeHost target scaffold + NativeMessagingHostInstaller"
+git commit -m "Phase 4, Task 8: ChromeHost target scaffold + NativeMessagingHostInstaller"
 ```
 
 ---
@@ -1814,7 +1814,7 @@ git commit -m "Фаза 4, Task 8: ChromeHost target scaffold + NativeMessagingH
 - Test: `Packages/ExtensionBridgeKit/Tests/ExtensionBridgeKitTests/RelayTokenInjectorTests.swift`
 
 **Interfaces:**
-- Consumes: `NativeMessagingCodec`/`NativeMessagingFrameReader` (Task 1), `ExtensionBridgeTokenStore`/`ExtensionBridgeTokenStoring`/`ExtensionBridgeEndpoint` (Task 3).
+- Consumes: `NativeMessagingCodec `/`NativeMessagingFrameReader` (Task 1), `ExtensionBridgeTokenStore `/`ExtensionBridgeTokenStoring `/`ExtensionBridgeEndpoint` (Task 3).
 - Produces: `RelayTokenInjector.injectToken(into:token:) throws -> Data` (pure, unit-testable — the only piece of this task testable without a live socket/process); `Relay.run()` (the full stdio↔TCP bridge, manually smoke-tested).
 
 The pure token-injection function is placed in `ExtensionBridgeKit` (not in `ChromeHost` itself) specifically so it can be covered by ordinary XCTest without standing up a separate test target for the `tool`-type `ChromeHost` executable.
@@ -2010,7 +2010,7 @@ Expected: a framed JSON response is printed — `{"type":"locked"}` if the vault
 
 ```bash
 git add Packages/ExtensionBridgeKit/Sources/ExtensionBridgeKit/RelayTokenInjector.swift Packages/ExtensionBridgeKit/Tests/ExtensionBridgeKitTests/RelayTokenInjectorTests.swift ChromeHost/Relay.swift ChromeHost/main.swift
-git commit -m "Фаза 4, Task 9: ChromeHost stdio<->TCP relay with token injection"
+git commit -m "Phase 4, Task 9: ChromeHost stdio<->TCP relay with token injection"
 ```
 
 ---
@@ -2024,7 +2024,7 @@ git commit -m "Фаза 4, Task 9: ChromeHost stdio<->TCP relay with token injec
 
 **Interfaces:**
 - Consumes: nothing from Swift tasks directly — talks to `ChromeHost` via `chrome.runtime.sendNativeMessage("com.mypass.chromehost", message, callback)`, exchanging the exact JSON shapes pinned by Task 2's tests (`{"type":"getCredentials","url":...}` etc., response `{"type":"locked"}` / `{"type":"credentialList","credentials":[{"id","title","username"}]}` / `{"type":"credential","username","password","totp"}` / `{"type":"saveProposalAccepted"}` / `{"type":"error","message"}`).
-- Produces: a `chrome.runtime.onMessage` listener that `content.js` (Task 11) and `popup.js` (Task 12) send `{type: "getCredentials"|"fillCredential"|"proposeSaveLogin", ...}` messages to, and an `applyFill` message (`{type: "applyFill", username, password, totp}`) that `background.js` forwards to the active tab's `content.js` after a successful `fillCredential`.
+- Produces: a `chrome.runtime.onMessage` listener that `content.js` (Task 11) and `popup.js` (Task 12) send `{type: "getCredentials"|"fillCredential"|"proposeSaveLogin", ...}` messages to, and an `applyFill` message (`{type: "applyFill", username, password, totp}`) that `background.js` forwards to the active tab's `content.js` after a successful `fillCredential `.
 
 - [ ] **Step 1: Create `ChromeExtension/manifest.json`**
 
@@ -2033,7 +2033,7 @@ git commit -m "Фаза 4, Task 9: ChromeHost stdio<->TCP relay with token injec
   "manifest_version": 3,
   "name": "MyPass",
   "version": "0.1.0",
-  "description": "Автозаполнение и сохранение логинов из MyPass",
+  "description": "Autofill and save logins from MyPass",
   "permissions": ["nativeMessaging", "activeTab", "scripting"],
   "background": {
     "service_worker": "background.js"
@@ -2133,7 +2133,7 @@ This test only catches manifest typos/regressions — it does not exercise runti
 - [ ] **Step 4: Run the test to verify it fails, then passes**
 
 Before `manifest.json` exists: `node ChromeExtension/tests/background.manifest.test.js` → FAIL (`ENOENT` reading `manifest.json`).
-After Step 1: `node ChromeExtension/tests/background.manifest.test.js` → PASS, prints `manifest.json OK`.
+After Step 1: `node ChromeExtension/tests/background.manifest.test.js` → PASS, prints `manifest.json OK `.
 
 - [ ] **Step 5: Manual verification**
 
@@ -2143,7 +2143,7 @@ Open `chrome://extensions`, enable "Developer mode", click "Load unpacked", sele
 
 ```bash
 git add ChromeExtension/manifest.json ChromeExtension/background.js ChromeExtension/tests/background.manifest.test.js
-git commit -m "Фаза 4, Task 10: Chrome extension manifest.json + background.js native messaging bridge"
+git commit -m "Phase 4, Task 10: Chrome extension manifest.json + background.js native messaging bridge"
 ```
 
 ---
@@ -2155,8 +2155,8 @@ git commit -m "Фаза 4, Task 10: Chrome extension manifest.json + background.
 - Test: `ChromeExtension/tests/formDetection.test.js`
 
 **Interfaces:**
-- Consumes: `chrome.runtime.sendMessage`/`chrome.runtime.onMessage` contract from Task 10 (`background.js`); messages `{type: "getCredentials", url}`, `{type: "proposeSaveLogin", url, username, password}`, and the incoming `{type: "applyFill", username, password, totp}`.
-- Produces: `scoreUsernameLikeness`/`findBestUsernameInput` (pure, `module.exports`-guarded for Node testing), `findLoginForm()`, the submit-listener/save-banner UI. Consumed by Task 12's manual e2e checklist (this task's DOM logic is not consumed by other JS files — it is the terminal content-script).
+- Consumes: `chrome.runtime.sendMessage `/` chrome.runtime.onMessage` contract from Task 10 (`background.js`); messages `{type: "getCredentials", url}`, `{type: "proposeSaveLogin", url, username, password}`, and the incoming `{type: "applyFill", username, password, totp}`.
+- Produces: `scoreUsernameLikeness `/` findBestUsernameInput` (pure, `module.exports`-guarded for Node testing), `findLoginForm()`, the submit-listener/save-banner UI. Consumed by Task 12's manual e2e checklist (this task's DOM logic is not consumed by other JS files — it is the terminal content-script).
 
 - [ ] **Step 1: Create `ChromeExtension/content.js`**
 
@@ -2218,10 +2218,10 @@ git commit -m "Фаза 4, Task 10: Chrome extension manifest.json + background.
       'position:fixed;bottom:16px;right:16px;z-index:2147483647;background:#1f2937;' +
       'color:#f9fafb;padding:12px 16px;border-radius:8px;font-family:sans-serif;' +
       'font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;gap:8px;';
-    banner.textContent = 'Сохранить пароль в MyPass?';
+    banner.textContent = "Save password to MyPass?";
 
     const saveButton = document.createElement('button');
-    saveButton.textContent = 'Сохранить';
+    saveButton.textContent = "Save";
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
     saveButton.addEventListener('click', () => {
       chrome.runtime.sendMessage({ type: 'proposeSaveLogin', url, username, password });
@@ -2333,7 +2333,7 @@ This covers only the DOM-independent scoring heuristic. Real `document.querySele
 - [ ] **Step 3: Run test to verify it fails, then passes**
 
 Before Step 1: `node ChromeExtension/tests/formDetection.test.js` → FAIL (`content.js` does not exist).
-After Step 1: `node ChromeExtension/tests/formDetection.test.js` → PASS, prints `content.js form-detection heuristics OK`.
+After Step 1: `node ChromeExtension/tests/formDetection.test.js` → PASS, prints `content.js form-detection heuristics OK `.
 
 - [ ] **Step 4: Manual verification**
 
@@ -2343,12 +2343,12 @@ Reload the unpacked extension in `chrome://extensions` (the refresh icon on the 
 
 ```bash
 git add ChromeExtension/content.js ChromeExtension/tests/formDetection.test.js
-git commit -m "Фаза 4, Task 11: content.js form detection, click-triggered fill, save banner"
+git commit -m "Phase 4, Task 11: content.js form detection, click-triggered fill, save banner"
 ```
 
 ---
 
-### Task 12: Chrome extension — `popup.html`/`popup.js` + end-to-end manual checklist
+### Task 12: Chrome extension — `popup.html `/` popup.js` + end-to-end manual checklist
 
 **Files:**
 - Create: `ChromeExtension/popup.html`
@@ -2422,26 +2422,26 @@ function renderCredentials(credentials, url) {
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   const activeTab = tabs[0];
   if (!activeTab || !activeTab.url) {
-    setStatus('MyPass не найден. Убедитесь, что приложение установлено и один раз запущено (для регистрации native messaging хоста).');
+    setStatus("MyPass not found. Make sure the app is installed and has been launched at least once (to register the native messaging host).");
     return;
   }
   const url = activeTab.url;
 
   chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
     if (!response || response.type === 'error') {
-      setStatus('MyPass не найден. Убедитесь, что приложение установлено и один раз запущено (для регистрации native messaging хоста).');
+      setStatus("MyPass not found. Make sure the app is installed and has been launched at least once (to register the native messaging host).");
       return;
     }
     if (response.type === 'locked') {
-      setStatus('Откройте MyPass и разблокируйте хранилище');
+      setStatus("Open MyPass and unlock the vault");
       return;
     }
     if (response.type === 'credentialList') {
       if (response.credentials.length === 0) {
-        setStatus('Нет сохранённых логинов для этого сайта');
+        setStatus("No saved logins for this site");
         return;
       }
-      setStatus('Выберите запись для автозаполнения:');
+      setStatus("Select an entry to autofill:");
       renderCredentials(response.credentials, url);
     }
   });
@@ -2473,38 +2473,38 @@ Create `ChromeExtension/tests/fixtures/login.html`:
 
 - [ ] **Step 4: Manual verification (loads without errors)**
 
-Reload the unpacked extension in `chrome://extensions`, click the MyPass toolbar icon on any page. Expected: popup opens with no console errors (inspect via right-click → "Inspect popup"), and shows one of "MyPass не найден...", "Откройте MyPass и разблокируйте хранилище", "Нет сохранённых логинов...", or a rendered list, depending on app/vault state.
+Reload the unpacked extension in `chrome://extensions`, click the MyPass toolbar icon on any page. Expected: popup opens with no console errors (inspect via right-click → "Inspect popup"), and shows one of "MyPass not found...", "Open MyPass and unlock the vault", "No saved logins for this site...", or a rendered list, depending on app/vault state.
 
 - [ ] **Step 5: End-to-end manual checklist — Phase 4 (Chrome) completion gate**
 
 Run through this checklist in order. This is the real final deliverable of Task 12 and of Phase 4 as a whole.
 
-1. Build and run `ChromeHost`: `xcodebuild -project MyPass.xcodeproj -scheme ChromeHost build`.
+1. Build and run `ChromeHost`: `xcodebuild -project MyPass.xcodeproj -scheme ChromeHost build `.
 2. In `chrome://extensions`, load `ChromeExtension/` unpacked (if not already loaded) and copy its ID from the card (a 32-character string).
 3. Update the native messaging manifest with the real extension ID: temporarily call `NativeMessagingHostInstaller.installIfNeeded(hostBinaryPath: NativeMessagingHostInstaller.debugChromeHostBinaryPath, extensionID: "<the real ID from step 2>")` in place of the placeholder call in `MyPassApp.init()` (or run it once from a scratch Swift script/REPL against the same directory) — this is the acknowledged dev-workflow rough edge from Task 8; there is no automated step that discovers the real ID and feeds it back in.
 4. Fully quit and relaunch `MyPass.app` so it re-registers `LoopbackServer` and re-reads the (now correctly targeted) native messaging manifest is picked up by Chrome.
 5. Serve the local test fixture: `cd ChromeExtension/tests/fixtures && python3 -m http.server 8765`, then open `http://localhost:8765/login.html` in Chrome. Do NOT test against any real third-party website.
-6. With the vault locked, click the MyPass toolbar icon. Expected: popup shows "Откройте MyPass и разблокируйте хранилище".
-7. In `MyPass.app`, unlock the vault and create one entry with URL `http://localhost:8765` (or `localhost`), username `demo-user`, password `demo-pass`.
+6. With the vault locked, click the MyPass toolbar icon. Expected: popup shows "Open MyPass and unlock the vault".
+7. In `MyPass.app`, unlock the vault and create one entry with URL `http://localhost:8765` (or `localhost`), username `demo-user`, password `demo-pass `.
 8. Reload `http://localhost:8765/login.html`, click the MyPass toolbar icon. Expected: popup lists the `demo-user` entry (no password shown in the popup).
-9. Click the listed entry. Expected: the popup closes and the page's username/password fields are filled with `demo-user`/`demo-pass` (open DevTools and confirm both `input` and `change` events fired if a framework is involved — plain fixture doesn't need this, but note it for real-site testing later).
+9. Click the listed entry. Expected: the popup closes and the page's username/password fields are filled with `demo-user `/` demo-pass` (open DevTools and confirm both `input` and `change` events fired if a framework is involved — plain fixture doesn't need this, but note it for real-site testing later).
 10. On the fixture page, clear both fields, type a different username/password, and submit the form (button "Sign in"). Since the domain already has a matching entry (step 7), expect NO save banner to appear (there's a match, so `content.js`'s `lastCredentialList` is non-empty at submit time — to properly exercise the banner, first delete the entry created in step 7 in `MyPass.app`, then repeat this step for a fresh submit).
-11. After deleting the entry and reloading the page, submit the form again with test values. Expected: a "Сохранить пароль в MyPass?" banner appears bottom-right on the page.
-12. Click "Сохранить" on the banner. Expected: the banner disappears and `MyPass.app`'s `onSaveProposal` closure fires, sending the `proposeSaveLogin` request through to `ExtensionBridgeService.handle(_:)`. This step only verifies that the message reaches `MyPass.app` and the banner clears — see Task 13's checklist for verifying that the app window activates and the pre-filled create-entry form appears, which is the rest of this flow.
-13. Quit `MyPass.app` entirely, reload the fixture page, click the MyPass toolbar icon. Expected: popup shows "MyPass не найден..." (since `ChromeHost`'s TCP connection now fails).
+11. After deleting the entry and reloading the page, submit the form again with test values. Expected: a "Save password to MyPass?" banner appears bottom-right on the page.
+12. Click "Save" on the banner. Expected: the banner disappears and `MyPass.app`'s `onSaveProposal` closure fires, sending the `proposeSaveLogin` request through to `ExtensionBridgeService.handle(_:)`. This step only verifies that the message reaches `MyPass.app` and the banner clears — see Task 13's checklist for verifying that the app window activates and the pre-filled create-entry form appears, which is the rest of this flow.
+13. Quit `MyPass.app` entirely, reload the fixture page, click the MyPass toolbar icon. Expected: popup shows "MyPass not found..." (since `ChromeHost`'s TCP connection now fails).
 
-This checklist covers the autofill flow (getCredentials/fillCredential) and confirms the save-proposal message reaches `MyPass.app`. Proceed to Task 13 to build and verify the save-proposal UI itself (window activation + pre-filled create-entry form) — Phase 4 (Chrome) is not complete until Task 13's checklist also passes.
+This checklist covers the autofill flow (getCredentials/fillCredential) and confirms the save-proposal message reaches `MyPass.app `. Proceed to Task 13 to build and verify the save-proposal UI itself (window activation + pre-filled create-entry form) — Phase 4 (Chrome) is not complete until Task 13's checklist also passes.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add ChromeExtension/popup.html ChromeExtension/popup.js ChromeExtension/tests/fixtures/login.html
-git commit -m "Фаза 4, Task 12: popup.html/popup.js + end-to-end manual checklist (autofill flow)"
+git commit -m "Phase 4, Task 12: popup.html/popup.js + end-to-end manual checklist (autofill flow)"
 ```
 
 ---
 
-### Task 13: Сохранение предложенного логина — UI активации окна и предзаполненной формы
+### Task 13: Saving the proposed login - UI activation of the window and pre-filled form
 
 **Files:**
 - Modify: `MyPass/State/NavigationState.swift`
@@ -2529,7 +2529,7 @@ final class NavigationState: ObservableObject {
     @Published var pendingSaveProposal: PendingSaveProposal?
 }
 ```
-This is the payoff task for the `onSaveProposal` extension point Task 5 defined and Task 6/7 wired transport for: when the user confirms the "Сохранить пароль в MyPass?" banner in Chrome, `MyPass.app` activates and shows a pre-filled create-entry form via the existing `EntryEditView`, reusing its "draft entry as `existingEntry`" mechanism rather than adding any new UI surface. Nothing in this plan consumes `PendingSaveProposal` further — it is the terminal UI hop that closes the save-new-login-via-extension MVP flow described in `docs/superpowers/specs/2026-07-25-mypass-phase4-chrome-extension-design.md`.
+This is the payoff task for the `onSaveProposal` extension point Task 5 defined and Task 6/7 wired transport for: when the user confirms the "Save password to MyPass?" banner in Chrome, `MyPass.app` activates and shows a pre-filled create-entry form via the existing `EntryEditView`, reusing its "draft entry as `existingEntry`" mechanism rather than adding any new UI surface. Nothing in this plan consumes `PendingSaveProposal` further — it is the terminal UI hop that closes the save-new-login-via-extension MVP flow described in `docs/superpowers/specs/2026-07-25-mypass-phase4-chrome-extension-design.md `.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2559,13 +2559,13 @@ Expected: FAIL — `PendingSaveProposal` does not exist yet.
 
 - [ ] **Step 3: Write minimal implementation**
 
-Modify `MyPass/State/NavigationState.swift` — current full content is 8 lines (`selectedGroupID`/`selectedEntryID`/`searchText` only); replace it with:
+Modify `MyPass/State/NavigationState.swift` — current full content is 8 lines (`selectedGroupID `/` selectedEntryID `/` searchText` only); replace it with:
 
 ```swift
 import Foundation
 
 /// A save-login proposal relayed from `ExtensionBridgeService.onSaveProposal`
-/// (Фаза 4, Task 5/13), waiting to be shown as a pre-filled create-entry sheet
+/// (Phase 4, Task 5/13), waiting to be shown as a pre-filled create-entry sheet
 /// by `ContentView`. `Identifiable` so it can drive `.sheet(item:)` directly.
 struct PendingSaveProposal: Identifiable {
     let id = UUID()
@@ -2589,7 +2589,7 @@ final class NavigationState: ObservableObject {
 }
 ```
 
-`ExtensionEntryMatcher` (Task 4) lives in the same `MyPass` target under `MyPass/State/ExtensionBridge/`, so no import is needed beyond `Foundation`.
+`ExtensionEntryMatcher` (Task 4) lives in the same `MyPass` target under `MyPass/State/ExtensionBridge/`, so no import is needed beyond `Foundation `.
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -2600,7 +2600,7 @@ Expected: PASS (2 tests).
 
 This step is SwiftUI view-layer wiring, not independently unit-testable (same honest constraint already applied to `MyPassApp.init()` in Task 7) — it is verified manually in Step 7 below.
 
-Modify `MyPass/ContentView.swift` — current content is 31 lines (`.locked`/`.unlocked` switch, `NavigationSplitView` with an existing `.alert(...)` modifier). Add a `.sheet(item:)` modifier immediately after the existing `.alert(...)`, and add a private `draftEntry(from:)` helper:
+Modify `MyPass/ContentView.swift` — current content is 31 lines (`.locked `/`.unlocked` switch, `NavigationSplitView` with an existing `.alert(...)` modifier). Add a `.sheet(item:)` modifier immediately after the existing `.alert(...)`, and add a private `draftEntry(from:)` helper:
 
 ```swift
             NavigationSplitView {
@@ -2647,7 +2647,7 @@ One-line note on dismissal: only the `onSave` path above needs the explicit `nav
 
 Also not independently unit-testable — `NSApp` window activation requires a live app/window, verified manually in Step 7.
 
-Task 7 already inserts the `extensionBridgeService`/`extensionBridgeServer` construction between `_vaultSession = StateObject(wrappedValue: session)` and `_navigationState = StateObject(wrappedValue: NavigationState())` in `MyPass/MyPassApp.swift`. Task 13 needs a named `navigationState` local so the closure below can capture it weakly (the existing `[weak session]` capture used for `backgroundSyncTimer` a few lines down is the same pattern already in this file) — replace:
+Task 7 already inserts the `extensionBridgeService `/` extensionBridgeServer` construction between `_vaultSession = StateObject(wrappedValue: session)` and `_navigationState = StateObject(wrappedValue: NavigationState())` in `MyPass/MyPassApp.swift `. Task 13 needs a named `navigationState` local so the closure below can capture it weakly (the existing `[weak session]` capture used for `backgroundSyncTimer` a few lines down is the same pattern already in this file) — replace:
 
 ```swift
 _navigationState = StateObject(wrappedValue: NavigationState())
@@ -2659,7 +2659,7 @@ with:
 let navigationState = NavigationState()
 _navigationState = StateObject(wrappedValue: navigationState)
 
-// Фаза 4, Task 13: real UI for ExtensionBridgeService.onSaveProposal (Task 5's
+// Phase 4, Task 13: real UI for ExtensionBridgeService.onSaveProposal (Task 5's
 // extension point). The dispatch to main is technically redundant here since
 // LoopbackServer (Task 6) already dispatches onto the main thread before
 // invoking the handler that eventually calls this closure — but the window
@@ -2687,22 +2687,22 @@ Expected: build succeeds.
 
 This flow can be exercised without a full Chrome round-trip by calling `ExtensionBridgeService.handle(_:)` directly with a `proposeSaveLogin` request — either from a throwaway XCTest or from the Xcode debugger while the app is running and stopped at a breakpoint:
 
-1. Run `MyPass.app` from Xcode, unlock the vault, and let it run (don't stop at a breakpoint yet — the app needs to be live so `NSApp`/its window exist).
+1. Run `MyPass.app` from Xcode, unlock the vault, and let it run (don't stop at a breakpoint yet — the app needs to be live so `NSApp `/its window exist).
 2. Pause execution (Xcode's pause button) and, in the debugger console, run:
    ```
    po AppDelegate.extensionBridgeServer
    ```
    to confirm the server (and therefore the wired `ExtensionBridgeService`) is alive. Since `ExtensionBridgeService` itself isn't retained on `AppDelegate`, the more direct check is behavioral: resume execution and drive the flow from the extension side.
-3. Resume execution, then in Chrome (with the extension loaded per Task 12's checklist) submit a login form on the local test fixture (`ChromeExtension/tests/fixtures/login.html`, served per Task 12 Step 5) for a domain with no existing matching entry, exactly as in Task 12 checklist steps 10-11, and click "Сохранить" on the banner (Task 12 checklist step 12).
+3. Resume execution, then in Chrome (with the extension loaded per Task 12's checklist) submit a login form on the local test fixture (`ChromeExtension/tests/fixtures/login.html`, served per Task 12 Step 5) for a domain with no existing matching entry, exactly as in Task 12 checklist steps 10-11, and click "Save" on the banner (Task 12 checklist step 12).
 4. Expected (this is what Task 12 checklist step 12 left unverified): `MyPass.app`'s window comes to the foreground (even if it was not the frontmost app, or was minimized/behind other windows), and a sheet appears on top of it showing `EntryEditView` with the title field pre-filled to the fixture's registrable domain (`localhost` when testing via the fixture, since `registrableDomain` falls back to the raw host when there's no real public suffix to strip), the login field pre-filled with the username typed into the form, the password field pre-filled with the password typed into the form, and the URL field pre-filled with the page's URL.
-5. Click "Сохранить" in `EntryEditView`. Expected: the sheet dismisses, and the new entry appears in the vault's entry list with the fields from step 4.
-6. Repeat steps 3-4 but click "Отмена" (Cancel) in `EntryEditView` instead. Expected: the sheet dismisses, no new entry is created, and `navigationState.pendingSaveProposal` is `nil` again (confirmable via a temporary breakpoint on the `.sheet(item:)` closure, or simply by re-triggering the save-proposal flow and observing the form is blank/fresh rather than showing stale data).
+5. Click "Save" in `EntryEditView `. Expected: the sheet dismisses, and the new entry appears in the vault's entry list with the fields from step 4.
+6. Repeat steps 3-4 but click "Cancel" (Cancel) in `EntryEditView` instead. Expected: the sheet dismisses, no new entry is created, and `navigationState.pendingSaveProposal` is `nil` again (confirmable via a temporary breakpoint on the `.sheet(item:)` closure, or simply by re-triggering the save-proposal flow and observing the form is blank/fresh rather than showing stale data).
 
 - [ ] **Step 8: Commit**
 
 ```bash
 git add MyPass/State/NavigationState.swift MyPass/ContentView.swift MyPass/MyPassApp.swift MyPassTests/NavigationStatePendingSaveProposalTests.swift
-git commit -m "Фаза 4, Task 13: сохранение предложенного логина — активация окна + предзаполненная форма создания записи"
+git commit -m "Phase 4, Task 13: save proposed login — window activation + pre-filled create-entry form"
 ```
 
-Фаза 4 (Chrome) полностью закрывает согласованный MVP-скоуп (автозаполнение существующих логинов + сохранение нового логина через расширение) после прохождения этого чек-листа.
+Phase 4 (Chrome) completely closes the agreed MVP scope (autofilling existing logins + saving a new login through the extension) after passing this checklist.

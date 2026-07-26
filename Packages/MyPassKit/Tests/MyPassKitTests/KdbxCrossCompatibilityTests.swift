@@ -1,14 +1,14 @@
 import XCTest
 @testable import MyPassKit
 
-/// Кросс-совместимость с реальными файлами KeePassXC (Task 16).
+/// Cross-compatibility with real KeePassXC files (Task 16).
 ///
-/// Файлы и пароли берутся из
+/// Files and passwords come from
 /// `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`
-/// (сгенерированы через `pykeepass` в Task 1, Step 1 спайка; два GZip-файла
-/// были пересгенерированы с `P=1` в рамках Task 16, т.к. с `P=2` — дефолтом
-/// pykeepass — их вообще нельзя было бы открыть текущим Argon2id-биндингом,
-/// см. ниже).
+/// (generated via `pykeepass` in Task 1, Step 1 of the spike; two GZip files
+/// were regenerated with `P=1` in Task 16, because with `P=2` — pykeepass's default —
+/// they could not be opened at all by the current Argon2id binding,
+/// see below).
 final class KdbxCrossCompatibilityTests: XCTestCase {
     private static let referencePassword = "TestMasterPass123"
 
@@ -101,7 +101,7 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
     /// the algorithm matches KeePassXC's.
     func testAesKdfFixtureOpensAndRecoversCorrectData() throws {
         guard let url = Bundle.module.url(forResource: "aeskdf-aes256-none", withExtension: "kdbx", subdirectory: "Fixtures") else {
-            throw XCTSkip("Фикстура aeskdf-aes256-none.kdbx отсутствует")
+            throw XCTSkip("Fixture aeskdf-aes256-none.kdbx is missing")
         }
         let data = try Data(contentsOf: url)
         let database = try KdbxDatabase.open(data: data, password: Self.referencePassword)
@@ -130,7 +130,7 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
         let fixtureNames = ["argon2id-aes256-gzip", "chacha20-argon2id-gzip"]
         for name in fixtureNames {
             guard let url = Bundle.module.url(forResource: name, withExtension: "kdbx", subdirectory: "Fixtures") else {
-                throw XCTSkip("Фикстура \(name).kdbx отсутствует")
+                throw XCTSkip("Fixture \(name).kdbx is missing")
             }
             let data = try Data(contentsOf: url)
             XCTAssertThrowsError(try KdbxDatabase.open(data: data, password: Self.referencePassword), "expected \(name) to fail on KDF, not gzip") { error in

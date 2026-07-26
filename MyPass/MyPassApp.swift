@@ -10,9 +10,9 @@ struct MyPassApp: App {
     /// Default inactivity timeout before the vault auto-locks, per the design spec (15 minutes).
     private static let defaultAutoLockTimeout: TimeInterval = 900
 
-    /// Design spec's sync cycle triggers "при открытии, после сохранения" are
+    /// Design spec's sync cycle triggers "on open, after save" are
     /// wired directly inside `VaultSession` (Task 7). This interval covers
-    /// the remaining "по таймеру" trigger.
+    /// the remaining "on a timer" trigger.
     private static let backgroundSyncInterval: TimeInterval = 300
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -101,9 +101,9 @@ struct MyPassApp: App {
         }
         AppDelegate.extensionBridgeServer = extensionBridgeServer
 
-        // Фаза 4: registers the Chrome native-messaging host manifest, using
+        // Phase 4: registers the Chrome native-messaging host manifest, using
         // whatever real extension ID and security-scoped bookmark the user
-        // configured once via SettingsView's "Chrome-расширение" section
+        // configured once via SettingsView's "Chrome extension" section
         // (the sandbox blocks writing this manifest to the real Chrome
         // directory any other way — see NativeMessagingHostInstaller's doc
         // comments). No `#if DEBUG` gate and no placeholder ID: if Settings
@@ -148,7 +148,7 @@ struct MyPassApp: App {
         let navigationState = NavigationState()
         _navigationState = StateObject(wrappedValue: navigationState)
 
-        // Фаза 4, Task 13: real UI for ExtensionBridgeService.onSaveProposal (Task 5's
+        // Phase 4, Task 13: real UI for ExtensionBridgeService.onSaveProposal (Task 5's
         // extension point). The dispatch to main is technically redundant here since
         // LoopbackServer (Task 6) already dispatches onto the main thread before
         // invoking the handler that eventually calls this closure — but the window
@@ -181,7 +181,7 @@ struct MyPassApp: App {
             return event
         }
 
-        // Design spec sync trigger "по таймеру".
+        // Design spec sync trigger "on a timer".
         AppDelegate.backgroundSyncTimer = Timer.scheduledTimer(
             withTimeInterval: Self.backgroundSyncInterval,
             repeats: true
@@ -189,8 +189,8 @@ struct MyPassApp: App {
             session?.triggerBackgroundSync()
         }
 
-        // Design spec's Local-folder backend requirement "FSEvents для
-        // внешних изменений" — closes the forward reference Task 3 left
+        // Design spec's Local-folder backend requirement "FSEvents for
+        // external changes" — closes the forward reference Task 3 left
         // open ("Consumed by ... app-level auto-sync trigger").
         if syncBackendOption == .local, let folderURL = localFolderURLForWatcher {
             let watcher = LocalFolderChangeWatcher(folderURL: folderURL) { [weak session] in

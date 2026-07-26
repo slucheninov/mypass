@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "MyPass",
   "version": "0.1.0",
-  "description": "Автозаполнение и сохранение логинов из MyPass",
+  "description": "Autofill and save logins from MyPass",
   "permissions": ["nativeMessaging", "activeTab"],
   "background": {
     "service_worker": "background.js"

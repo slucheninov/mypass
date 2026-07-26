@@ -13,13 +13,13 @@ struct GroupSidebarView: View {
                 Text(group.name)
                     .tag(group.uuid)
                     .contextMenu {
-                        Button("Новая подгруппа") {
+                        Button("New Subgroup") {
                             vaultSession.mutate { _ in
-                                GroupTreeOperations.addSubgroup(named: "Новая группа", to: group)
+                                GroupTreeOperations.addSubgroup(named: "New Group", to: group)
                             }
                         }
                         if group.uuid != rootGroup.uuid {
-                            Button("Удалить группу", role: .destructive) {
+                            Button("Delete Group", role: .destructive) {
                                 vaultSession.mutate { database in
                                     GroupTreeOperations.removeSubgroup(withID: group.uuid, from: database.rootGroup)
                                 }

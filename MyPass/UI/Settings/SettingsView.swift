@@ -4,7 +4,7 @@ import MyPassKit
 import SyncKit
 
 enum SyncBackendOption: String, CaseIterable, Identifiable {
-    case local = "Локальный файл"
+    case local = "Local File"
     case iCloud = "iCloud Drive"
     case sftp = "SFTP"
 
@@ -29,12 +29,12 @@ struct SettingsView: View {
     @AppStorage("syncSFTPUsername") private var sftpUsername: String = ""
     @AppStorage("syncSFTPRemotePath") private var sftpRemotePath: String = "/upload/vault.kdbx"
     @AppStorage("syncSFTPPrivateKeyPath") private var sftpPrivateKeyPath: String = ""
-    // UI-only bookkeeping — see this task's "Известный пробел" note above:
-    // not wired into SFTPBackendConfiguration (Task 10 has no certificate
-    // field), kept only so the chosen path survives across Settings reopens.
+    // UI-only bookkeeping — known gap: not wired into SFTPBackendConfiguration
+    // (Task 10 has no certificate field), kept only so the chosen path survives
+    // across Settings reopens.
     @AppStorage("syncSFTPCertificatePath") private var sftpCertificatePath: String = ""
 
-    // Фаза 4: native-messaging host manifest install target. MyPass.app is
+    // Phase 4: native-messaging host manifest install target. MyPass.app is
     // sandboxed, so the real "~/Library/Application Support/Google/Chrome/
     // NativeMessagingHosts" path can only be reached via a security-scoped
     // bookmark the user grants explicitly here — same pattern as
@@ -70,14 +70,14 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Автоблокировка") {
-                Stepper("Таймаут: \(Int(autoLockTimeoutMinutes)) мин", value: $autoLockTimeoutMinutes, in: 1...120)
+            Section("Auto-Lock") {
+                Stepper("Timeout: \(Int(autoLockTimeoutMinutes)) min", value: $autoLockTimeoutMinutes, in: 1...120)
             }
-            Section("Резервные копии") {
-                Stepper("Хранить последних: \(backupCount)", value: $backupCount, in: 1...50)
+            Section("Backups") {
+                Stepper("Keep last: \(backupCount)", value: $backupCount, in: 1...50)
             }
-            Section("Синхронизация") {
-                Picker("Бэкенд", selection: $syncBackendRawValue) {
+            Section("Sync") {
+                Picker("Backend", selection: $syncBackendRawValue) {
                     ForEach(SyncBackendOption.allCases) { option in
                         Text(option.rawValue).tag(option.rawValue)
                     }
@@ -92,9 +92,9 @@ struct SettingsView: View {
                     sftpSection
                 }
 
-                Button("Синхронизировать сейчас") {
+                Button("Sync Now") {
                     vaultSession.triggerBackgroundSync()
-                    manualSyncStatusMessage = "Запущено…"
+                    manualSyncStatusMessage = "Started…"
                 }
                 if let manualSyncStatusMessage {
                     Text(manualSyncStatusMessage)
@@ -102,7 +102,7 @@ struct SettingsView: View {
                         .foregroundStyle(.secondary)
                 }
             }
-            Section("Chrome-расширение") {
+            Section("Chrome Extension") {
                 chromeExtensionSection
             }
         }
@@ -125,13 +125,13 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             if let bookmarkData = syncLocalFolderBookmarkData, !bookmarkData.isEmpty,
                SyncBackendResolver.resolveLocalFolderBackend(bookmarkData: bookmarkData) != nil {
-                Text("Папка выбрана.")
+                Text("Folder selected.")
                     .foregroundStyle(.secondary)
             } else {
-                Text("Папка не выбрана.")
+                Text("No folder selected.")
                     .foregroundStyle(.secondary)
             }
-            Button("Выбрать папку…") {
+            Button("Choose Folder…") {
                 let panel = NSOpenPanel()
                 panel.canChooseFiles = false
                 panel.canChooseDirectories = true
@@ -145,17 +145,17 @@ struct SettingsView: View {
 
     private var chromeExtensionSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("ID расширения (chrome://extensions)", text: $chromeExtensionID)
+            TextField("Extension ID (chrome://extensions)", text: $chromeExtensionID)
 
             if let bookmarkData = chromeNativeMessagingDirectoryBookmarkData, !bookmarkData.isEmpty,
                NativeMessagingHostInstaller.resolveBookmarkedDirectory(bookmarkData: bookmarkData) != nil {
-                Text("Папка выбрана.")
+                Text("Folder selected.")
                     .foregroundStyle(.secondary)
             } else {
-                Text("Папка не выбрана.")
+                Text("No folder selected.")
                     .foregroundStyle(.secondary)
             }
-            Button("Выбрать папку…") {
+            Button("Choose Folder…") {
                 let panel = NSOpenPanel()
                 panel.canChooseFiles = false
                 panel.canChooseDirectories = true
@@ -165,7 +165,7 @@ struct SettingsView: View {
                 }
             }
 
-            Button("Установить/обновить native messaging host") {
+            Button("Install/Update Native Messaging Host") {
                 installChromeNativeMessagingHost()
             }
             if let chromeInstallStatusMessage {
@@ -179,10 +179,10 @@ struct SettingsView: View {
     private var iCloudSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             if iCloudContainerAvailable {
-                Text("Контейнер iCloud доступен.")
+                Text("iCloud container is available.")
                     .foregroundStyle(.secondary)
             } else {
-                Text(iCloudContainerCheckMessage ?? "iCloud Drive недоступен — войдите в iCloud и включите iCloud Drive в Системных настройках.")
+                Text(iCloudContainerCheckMessage ?? "iCloud Drive is unavailable — sign in to iCloud and enable iCloud Drive in System Settings.")
                     .foregroundStyle(.orange)
             }
         }
@@ -190,21 +190,21 @@ struct SettingsView: View {
 
     private var sftpSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Хост", text: $sftpHost)
-            Stepper("Порт: \(sftpPort)", value: $sftpPort, in: 1...65535)
-            TextField("Пользователь", text: $sftpUsername)
+            TextField("Host", text: $sftpHost)
+            Stepper("Port: \(sftpPort)", value: $sftpPort, in: 1...65535)
+            TextField("Username", text: $sftpUsername)
                 .onChange(of: sftpUsername) { _, _ in persistCredentialsToKeychain() }
-            TextField("Путь на сервере", text: $sftpRemotePath)
-            SecureField("Passphrase ключа (если есть)", text: $sftpPassphrase)
+            TextField("Remote Path", text: $sftpRemotePath)
+            SecureField("Key Passphrase (if any)", text: $sftpPassphrase)
                 .onChange(of: sftpPassphrase) { _, _ in persistCredentialsToKeychain() }
 
             HStack {
-                Text(sftpPrivateKeyPath.isEmpty ? "Ключ не выбран" : sftpPrivateKeyPath)
+                Text(sftpPrivateKeyPath.isEmpty ? "No key selected" : sftpPrivateKeyPath)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Button("Выбрать приватный ключ…") {
+                Button("Choose Private Key…") {
                     let panel = NSOpenPanel()
                     panel.canChooseFiles = true
                     panel.canChooseDirectories = false
@@ -220,26 +220,25 @@ struct SettingsView: View {
             }
 
             HStack {
-                Text(sftpCertificatePath.isEmpty ? "Сертификат не выбран (опционально)" : sftpCertificatePath)
+                Text(sftpCertificatePath.isEmpty ? "No certificate selected (optional)" : sftpCertificatePath)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Button("Выбрать сертификат…") {
+                Button("Choose Certificate…") {
                     let panel = NSOpenPanel()
                     panel.canChooseFiles = true
                     panel.canChooseDirectories = false
                     panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK, let url = panel.url {
-                        // Path-only, UI bookkeeping — see this task's
-                        // "Известный пробел" note: not yet wired into any
+                        // Path-only, UI bookkeeping — known gap: not yet wired into any
                         // real SSH authentication.
                         sftpCertificatePath = url.path
                     }
                 }
             }
 
-            Button("Проверить соединение") {
+            Button("Test Connection") {
                 testSFTPConnection()
             }
             switch connectionTestState {
@@ -248,7 +247,7 @@ struct SettingsView: View {
             case .testing:
                 ProgressView().controlSize(.small)
             case .success:
-                Label("Соединение успешно", systemImage: "checkmark.circle.fill")
+                Label("Connection successful", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             case .failure(let message):
                 Label(message, systemImage: "xmark.circle.fill")
@@ -304,17 +303,17 @@ struct SettingsView: View {
 
     private func installChromeNativeMessagingHost() {
         guard !chromeExtensionID.isEmpty else {
-            chromeInstallStatusMessage = "Укажите ID расширения."
+            chromeInstallStatusMessage = "Enter the extension ID."
             return
         }
         guard let bookmarkData = chromeNativeMessagingDirectoryBookmarkData, !bookmarkData.isEmpty,
               let directoryURL = NativeMessagingHostInstaller.resolveBookmarkedDirectory(bookmarkData: bookmarkData) else {
-            chromeInstallStatusMessage = "Сначала выберите папку NativeMessagingHosts."
+            chromeInstallStatusMessage = "Choose the NativeMessagingHosts folder first."
             return
         }
 
         guard directoryURL.startAccessingSecurityScopedResource() else {
-            chromeInstallStatusMessage = "Не удалось получить доступ к выбранной папке."
+            chromeInstallStatusMessage = "Could not access the selected folder."
             return
         }
         defer { directoryURL.stopAccessingSecurityScopedResource() }
@@ -325,9 +324,9 @@ struct SettingsView: View {
                 extensionID: chromeExtensionID,
                 directory: directoryURL
             )
-            chromeInstallStatusMessage = "Манифест установлен."
+            chromeInstallStatusMessage = "Manifest installed."
         } catch {
-            chromeInstallStatusMessage = "Ошибка установки: \(error)"
+            chromeInstallStatusMessage = "Installation failed: \(error)"
         }
     }
 
@@ -339,10 +338,10 @@ struct SettingsView: View {
             iCloudContainerCheckMessage = nil
         } catch iCloudBackendError.containerUnavailable {
             iCloudContainerAvailable = false
-            iCloudContainerCheckMessage = "iCloud Drive недоступен — войдите в iCloud и включите iCloud Drive в Системных настройках."
+            iCloudContainerCheckMessage = "iCloud Drive is unavailable — sign in to iCloud and enable iCloud Drive in System Settings."
         } catch {
             iCloudContainerAvailable = false
-            iCloudContainerCheckMessage = "Не удалось проверить контейнер iCloud: \(error)"
+            iCloudContainerCheckMessage = "Could not verify iCloud container: \(error)"
         }
     }
 }

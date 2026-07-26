@@ -12,7 +12,7 @@ final class InnerRandomStreamCipherTests: XCTestCase {
         let cipherB = try InnerRandomStreamCipher(streamID: .chaCha20, rawKey: rawKey)
         let combinedCall = cipherB.nextBytes(16)
 
-        XCTAssertEqual(firstCall + secondCall, combinedCall, "keystream должен быть непрерывным независимо от разбиения на вызовы")
+        XCTAssertEqual(firstCall + secondCall, combinedCall, "keystream must be continuous regardless of call splitting")
     }
 
     func testSalsa20StreamProducesNonTrivialOutput() throws {
@@ -31,7 +31,7 @@ final class InnerRandomStreamCipherTests: XCTestCase {
         let cipherB = try InnerRandomStreamCipher(streamID: .salsa20, rawKey: rawKey)
         let combinedCall = cipherB.nextBytes(80)
 
-        XCTAssertEqual(firstCall + secondCall, combinedCall, "Salsa20 keystream должен быть непрерывным через границы 64-байтных блоков")
+        XCTAssertEqual(firstCall + secondCall, combinedCall, "Salsa20 keystream must be continuous across 64-byte block boundaries")
     }
 
     func testXorRoundTripThroughProtectedValue() throws {

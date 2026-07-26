@@ -32,26 +32,26 @@ function renderCredentials(credentials, url) {
 chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
   const activeTab = tabs[0];
   if (!activeTab || !activeTab.url) {
-    setStatus('MyPass не найден. Убедитесь, что приложение установлено и один раз запущено (для регистрации native messaging хоста).');
+    setStatus('MyPass not found. Make sure the app is installed and has been launched at least once (to register the native messaging host).');
     return;
   }
   const url = activeTab.url;
 
   chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
     if (!response || response.type === 'error') {
-      setStatus('MyPass не найден. Убедитесь, что приложение установлено и один раз запущено (для регистрации native messaging хоста).');
+      setStatus('MyPass not found. Make sure the app is installed and has been launched at least once (to register the native messaging host).');
       return;
     }
     if (response.type === 'locked') {
-      setStatus('Откройте MyPass и разблокируйте хранилище');
+      setStatus('Open MyPass and unlock the vault');
       return;
     }
     if (response.type === 'credentialList') {
       if (response.credentials.length === 0) {
-        setStatus('Нет сохранённых логинов для этого сайта');
+        setStatus('No saved logins for this site');
         return;
       }
-      setStatus('Выберите запись для автозаполнения:');
+      setStatus('Select an entry to autofill:');
       renderCredentials(response.credentials, url);
     }
   });

@@ -19,7 +19,7 @@ struct UnlockView: View {
         VStack(spacing: 16) {
             Text("MyPass")
                 .font(.largeTitle)
-            SecureField("Мастер-пароль", text: $password)
+            SecureField("Master Password", text: $password)
                 .textFieldStyle(.roundedBorder)
                 .frame(width: 280)
                 .onSubmit(attemptUnlock)
@@ -28,7 +28,7 @@ struct UnlockView: View {
                     .foregroundStyle(.red)
                     .font(.caption)
             }
-            Button("Разблокировать", action: attemptUnlock)
+            Button("Unlock", action: attemptUnlock)
                 .buttonStyle(.borderedProminent)
             if hasStoredBiometricKey {
                 Button("Touch ID", systemImage: "touchid", action: attemptBiometricUnlock)
@@ -43,7 +43,7 @@ struct UnlockView: View {
             password = ""
             errorMessage = nil
         } catch {
-            errorMessage = "Неверный пароль или повреждённый файл."
+            errorMessage = "Incorrect password or corrupted file."
         }
     }
 
@@ -53,7 +53,7 @@ struct UnlockView: View {
         // Keychain item itself, not by this view). Mapping the derived key back into an
         // unlock call is deferred — this button demonstrates the store/retrieve contract end to end.
         errorMessage = (try? biometricKeyStore.retrieve(account: "master")) == nil
-            ? "Touch ID недоступен."
+            ? "Touch ID is unavailable."
             : nil
     }
 }

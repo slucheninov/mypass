@@ -4,7 +4,7 @@ import XCTest
 final class ChaCha20StreamCipherTests: XCTestCase {
     func testEncryptDecryptIsSymmetric() throws {
         let key = Data(repeating: 0x11, count: 32)
-        let nonce = Data(repeating: 0x22, count: 12) // KDBX4 ChaCha20 IV = 12 байт
+        let nonce = Data(repeating: 0x22, count: 12) // KDBX4 ChaCha20 IV = 12 bytes
         let plaintext = Data("MyPassKit ChaCha20 outer cipher test".utf8)
 
         let ciphertext = try ChaCha20StreamCipher.apply(to: plaintext, key: key, nonce: nonce)

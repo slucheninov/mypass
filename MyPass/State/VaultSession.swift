@@ -135,7 +135,7 @@ final class VaultSession: ObservableObject {
         do {
             result = try syncEngine.sync(local: db, password: password, cipher: .aes256, compression: .gzip)
         } catch {
-            lastSaveError = "Не удалось синхронизировать хранилище: \(error)"
+            lastSaveError = "Failed to sync vault: \(error)"
             return db
         }
         guard case .merged(let mergedDatabase) = result else { return db }
@@ -143,7 +143,7 @@ final class VaultSession: ObservableObject {
             let data = try mergedDatabase.save(password: password, cipher: .aes256, compression: .gzip)
             try fileStore.save(data: data)
         } catch {
-            lastSaveError = "Не удалось сохранить объединённые изменения локально: \(error)"
+            lastSaveError = "Failed to save merged changes locally: \(error)"
         }
         return mergedDatabase
     }
@@ -164,7 +164,7 @@ final class VaultSession: ObservableObject {
                 try fileStore.save(data: data)
             } catch {
                 DispatchQueue.main.async { [weak self] in
-                    self?.lastSaveError = "Не удалось сохранить изменения: \(error)"
+                    self?.lastSaveError = "Failed to save changes: \(error)"
                 }
                 return
             }
@@ -181,7 +181,7 @@ final class VaultSession: ObservableObject {
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
-                    self?.lastSaveError = "Локальное сохранение выполнено, но синхронизация не удалась: \(error)"
+                    self?.lastSaveError = "Local save completed, but sync failed: \(error)"
                 }
             }
         }

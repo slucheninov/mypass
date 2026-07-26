@@ -7,8 +7,8 @@ struct MenuBarExtraContent: View {
 
     private var statusText: String {
         switch vaultSession.state {
-        case .locked: return "Заблокировано"
-        case .unlocked: return "Разблокировано"
+        case .locked: return "Locked"
+        case .unlocked: return "Unlocked"
         }
     }
 
@@ -16,16 +16,16 @@ struct MenuBarExtraContent: View {
         VStack(alignment: .leading, spacing: 8) {
             Text(statusText)
                 .font(.headline)
-            TextField("Быстрый поиск", text: $navigationState.searchText)
+            TextField("Quick Search", text: $navigationState.searchText)
                 .textFieldStyle(.roundedBorder)
-            Button("Заблокировать") {
+            Button("Lock") {
                 vaultSession.lock()
             }
             .disabled({
                 if case .locked = vaultSession.state { return true }
                 return false
             }())
-            Button("Генератор паролей") {
+            Button("Password Generator") {
                 showPasswordGenerator = true
             }
         }

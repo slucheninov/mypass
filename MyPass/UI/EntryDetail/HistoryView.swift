@@ -21,13 +21,13 @@ struct HistoryView: View {
             let version = entry.history[index]
             HStack {
                 VStack(alignment: .leading) {
-                    Text(version.title.isEmpty ? "(без названия)" : version.title)
+                    Text(version.title.isEmpty ? "(untitled)" : version.title)
                     Text(version.lastModificationTime.formatted())
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
                 Spacer()
-                Button("Восстановить эту версию") {
+                Button("Restore This Version") {
                     var updated = entry
                     EntryHistoryOperations.restoreVersion(version, into: &updated)
                     onRestore(updated)

@@ -18,15 +18,15 @@ struct PasswordGeneratorView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Text("Длина: \(Int(length))")
+            Text("Length: \(Int(length))")
             Slider(value: $length, in: 8...64, step: 1)
 
-            Toggle("Строчные буквы", isOn: $includeLowercase)
-            Toggle("Прописные буквы", isOn: $includeUppercase)
-            Toggle("Цифры", isOn: $includeDigits)
-            Toggle("Символы", isOn: $includeSymbols)
+            Toggle("Lowercase", isOn: $includeLowercase)
+            Toggle("Uppercase", isOn: $includeUppercase)
+            Toggle("Digits", isOn: $includeDigits)
+            Toggle("Symbols", isOn: $includeSymbols)
 
-            Button("Сгенерировать", action: generate)
+            Button("Generate", action: generate)
                 .buttonStyle(.borderedProminent)
 
             if let errorMessage {
@@ -44,7 +44,7 @@ struct PasswordGeneratorView: View {
                         NSPasteboard.general.setString(generatedPassword, forType: .string)
                         ClipboardAutoClear.schedule(value: generatedPassword, after: 30, pasteboard: pasteboard, clock: clock)
                     }
-                    Button("Использовать") {
+                    Button("Use") {
                         onGenerate(generatedPassword)
                     }
                 }
@@ -66,9 +66,9 @@ struct PasswordGeneratorView: View {
             generatedPassword = try PasswordGenerator.generate(options: options)
             errorMessage = nil
         } catch PasswordGeneratorError.noCharacterClassSelected {
-            errorMessage = "Выберите хотя бы один класс символов."
+            errorMessage = "Select at least one character class."
         } catch {
-            errorMessage = "Не удалось сгенерировать пароль."
+            errorMessage = "Failed to generate password."
         }
     }
 }

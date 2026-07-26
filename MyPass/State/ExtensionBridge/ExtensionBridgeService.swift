@@ -3,7 +3,7 @@ import MyPassKit
 import ExtensionBridgeKit
 
 /// UI-agnostic request handler for the browser-extension bridge. Token
-/// validation happens one layer up, in `LoopbackServer` (Фаза 4, Task 6),
+/// validation happens one layer up, in `LoopbackServer` (Phase 4, Task 6),
 /// before a request ever reaches this type — `handle(_:)` trusts its caller.
 final class ExtensionBridgeService {
     weak var vaultSession: VaultSession?

@@ -2,7 +2,7 @@ import XCTest
 @testable import MyPassKit
 
 final class AES256CBCCipherTests: XCTestCase {
-    // NIST SP 800-38A F.2.5 CBC-AES256.Encrypt, первый блок.
+    // NIST SP 800-38A F.2.5 CBC-AES256.Encrypt, first block.
     // Verified directly against the NIST PDF text (nvlpubs.nist.gov/nistpubs/legacy/sp/
     // nistspecialpublication800-38a.pdf), cross-checked against the identical key/plaintext
     // reused in F.1.5 (ECB-AES256.Encrypt) and F.5.5 (CTR-AES256.Encrypt) of the same document:
@@ -26,7 +26,7 @@ final class AES256CBCCipherTests: XCTestCase {
     func testEncryptDecryptRoundTrip() throws {
         let key = Data(repeating: 0x5A, count: 32)
         let iv = Data(repeating: 0xA5, count: 16)
-        let plaintext = Data("MyPassKit KDBX4 round-trip test payload, произвольная длина!".utf8)
+        let plaintext = Data("MyPassKit KDBX4 round-trip test payload, arbitrary length!".utf8)
 
         let ciphertext = try AES256CBCCipher.encrypt(plaintext: plaintext, key: key, iv: iv)
         let decrypted = try AES256CBCCipher.decrypt(ciphertext: ciphertext, key: key, iv: iv)
@@ -51,7 +51,7 @@ final class AES256CBCCipherTests: XCTestCase {
     }
 
     func testInvalidKeyLengthThrows() {
-        let key = Data(repeating: 0x01, count: 16) // AES-128 длина, не 256
+        let key = Data(repeating: 0x01, count: 16) // AES-128 length, not 256
         let iv = Data(repeating: 0x02, count: 16)
         XCTAssertThrowsError(try AES256CBCCipher.encrypt(plaintext: Data([1,2,3]), key: key, iv: iv)) { error in
             guard case CipherError.invalidKeyOrIVLength = error else {

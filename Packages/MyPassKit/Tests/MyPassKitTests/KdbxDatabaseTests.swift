@@ -74,9 +74,9 @@ final class KdbxDatabaseTests: XCTestCase {
         XCTAssertThrowsError(try KdbxDatabase.open(data: saved, password: "correct-password"))
     }
 
-    /// Кросс-совместимость: файл создан реальным KeePassXC/pykeepass (см.
-    /// решение Task 1 — файл скопирован в Fixtures/ только если исход спайка
-    /// — custom-parser). Пароль для фикстуры зафиксирован в
+    /// Cross-compatibility: file created by real KeePassXC/pykeepass (see
+    /// Task 1 decision — file copied to Fixtures/ only if the spike source is
+    /// custom-parser). Password for the fixture is fixed in
     /// `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`.
     ///
     /// Task 16 fixed `gzip`/`gunzip` to use a real gzip container (see
@@ -93,7 +93,7 @@ final class KdbxDatabaseTests: XCTestCase {
     func testOpensRealKeePassXCReferenceFile() throws {
         let fixtureURL = Bundle.module.url(forResource: "argon2id-aes256-gzip", withExtension: "kdbx", subdirectory: "Fixtures")
         guard let fixtureURL else {
-            throw XCTSkip("Фикстура не найдена — скопировать из спайка Task 1 перед выполнением этого теста (см. Task 16)")
+            throw XCTSkip("Fixture not found — copy from Task 1 spike before running this test (see Task 16)")
         }
         let data = try Data(contentsOf: fixtureURL)
         XCTAssertThrowsError(try KdbxDatabase.open(data: data, password: "TestMasterPass123")) { error in

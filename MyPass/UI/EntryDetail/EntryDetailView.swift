@@ -56,26 +56,26 @@ struct EntryDetailView: View {
     var body: some View {
         if let entry = currentEntry {
             Form {
-                LabeledContent("Название", value: entry.title)
+                LabeledContent("Title", value: entry.title)
                 HStack {
-                    LabeledContent("Логин", value: entry.login)
+                    LabeledContent("Username", value: entry.login)
                     Button("Copy", systemImage: "doc.on.doc") { copy(entry.login) }
                 }
                 HStack {
-                    LabeledContent("Пароль", value: isPasswordRevealed ? entry.password : String(repeating: "•", count: max(entry.password.count, 8)))
-                    Button(isPasswordRevealed ? "Скрыть" : "Показать") { isPasswordRevealed.toggle() }
+                    LabeledContent("Password", value: isPasswordRevealed ? entry.password : String(repeating: "•", count: max(entry.password.count, 8)))
+                    Button(isPasswordRevealed ? "Hide" : "Show") { isPasswordRevealed.toggle() }
                     Button("Copy", systemImage: "doc.on.doc") { copy(entry.password) }
                 }
                 if !entry.url.isEmpty {
                     HStack {
                         LabeledContent("URL", value: entry.url)
-                        Button("Открыть") {
+                        Button("Open") {
                             if let url = URL(string: entry.url) { NSWorkspace.shared.open(url) }
                         }
                     }
                 }
                 if !entry.notes.isEmpty {
-                    LabeledContent("Заметки", value: entry.notes)
+                    LabeledContent("Notes", value: entry.notes)
                 }
                 if let secret = entry.totpSecretBase32 {
                     let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
@@ -87,10 +87,10 @@ struct EntryDetailView: View {
                         Button("Copy", systemImage: "doc.on.doc") { copy(code) }
                     }
                 }
-                Button("История") { showHistory = true }
-                Button("Редактировать") { showEdit = true }
+                Button("History") { showHistory = true }
+                Button("Edit") { showEdit = true }
                 if isInRecycleBin(entry) {
-                    Button("Восстановить") {
+                    Button("Restore") {
                         vaultSession.mutate { database in
                             // The entry's original source group isn't tracked once soft-deleted,
                             // so root is the safe, predictable restore destination.
@@ -99,7 +99,7 @@ struct EntryDetailView: View {
                         navigationState.selectedEntryID = nil
                     }
                 } else {
-                    Button("Удалить", role: .destructive) {
+                    Button("Delete", role: .destructive) {
                         vaultSession.mutate { database in
                             GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects, recycleBinGroupUUID: &database.recycleBinGroupUUID)
                         }
@@ -126,7 +126,7 @@ struct EntryDetailView: View {
                 }
             }
         } else {
-            Text("Выберите запись")
+            Text("Select an entry")
         }
     }
 

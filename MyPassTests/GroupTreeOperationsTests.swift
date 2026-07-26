@@ -94,10 +94,10 @@ final class GroupTreeOperationsTests: XCTestCase {
     }
 
     /// Proves the legacy-file name fallback: a foreign/legacy file that already
-    /// has a "Корзина" group but no tracked `recycleBinGroupUUID` (e.g. a
+    /// has a "Recycle Bin" group but no tracked `recycleBinGroupUUID` (e.g. a
     /// KeePassXC-written file, or a MyPass file saved before RecycleBinUUID
     /// existed) must have that pre-existing group adopted as the real bin,
-    /// not have a second, orphaned "Корзина" created alongside it.
+    /// not have a second, orphaned "Recycle Bin" created alongside it.
     func testRecycleBinGroupAdoptsPreExistingNameMatchWhenUUIDUntracked() {
         let root = makeGroup(name: "Root")
         // Simulates a legacy/foreign file: the group already exists directly
@@ -113,6 +113,21 @@ final class GroupTreeOperationsTests: XCTestCase {
         XCTAssertEqual(recycleBinUUID, existingBin.uuid, "recycleBinGroupUUID must now track the adopted group")
     }
 
+    /// Proves backward compatibility with vaults that still use the pre-English
+    /// Russian recycle bin group name.
+    func testRecycleBinGroupAdoptsLegacyRussianNameWhenUUIDUntracked() {
+        let root = makeGroup(name: "Root")
+        let existingBin = GroupTreeOperations.addSubgroup(named: GroupTreeOperations.legacyRecycleBinGroupName, to: root)
+
+        var recycleBinUUID: UUID? = nil
+        let resolved = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+
+        XCTAssertEqual(resolved.uuid, existingBin.uuid)
+        XCTAssertEqual(root.subgroups.count, 1)
+        XCTAssertEqual(recycleBinUUID, existingBin.uuid)
+        XCTAssertEqual(existingBin.name, GroupTreeOperations.legacyRecycleBinGroupName)
+    }
+
     func testSoftDeleteMovesEntryToRecycleBinAndRecordsDeletedObject() {
         let now = Date()
         let entry = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
@@ -125,7 +140,7 @@ final class GroupTreeOperationsTests: XCTestCase {
 
         XCTAssertTrue(deleted)
         XCTAssertEqual(source.entries.count, 0)
-        let bin = root.subgroups.first { $0.name == GroupTreeOperations.recycleBinGroupName }
+        let bin = root.subgroups.first { GroupTreeOperations.isRecycleBinGroup($0) }
         XCTAssertEqual(bin?.entries.first?.uuid, entry.uuid)
         XCTAssertEqual(deletedObjects.count, 1)
         XCTAssertEqual(deletedObjects.first?.uuid, entry.uuid)
@@ -192,7 +207,7 @@ final class GroupTreeOperationsTests: XCTestCase {
         let deleted = GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: &recycleBinUUID)
 
         XCTAssertTrue(deleted)
-        let bin = root.subgroups.first { $0.name == GroupTreeOperations.recycleBinGroupName }
+        let bin = root.subgroups.first { GroupTreeOperations.isRecycleBinGroup($0) }
         let deletedEntry = bin?.entries.first { $0.uuid == entry.uuid }
         XCTAssertNotNil(deletedEntry)
         XCTAssertNotEqual(deletedEntry?.locationChanged, originalLocationChanged, "locationChanged must be updated when entry is soft-deleted into the recycle bin")

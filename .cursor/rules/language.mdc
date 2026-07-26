@@ -1,0 +1,12 @@
+---
+description: Project language — English everywhere except RUN.md (Ukrainian)
+alwaysApply: true
+---
+
+# Project language
+
+- **Default language for all project text is English**: source code, comments, commit messages, UI strings, Chrome extension copy, docs under `docs/`, plans, specs, agent instructions written for this repo, error messages, Info.plist / `project.yml` usage descriptions.
+- **Product UI localization (Phase 7):** the app and extensions will gain **en**, **uk**, **de** (and more via catalogs); until Phase 7 ships, UI strings remain English in source.
+- **Sole exception:** root `RUN.md` must be written in **Ukrainian** (українська). Do not translate RUN.md to English or Russian.
+- When adding or editing strings, never introduce Russian (or other non-English) copy outside `RUN.md`.
+- Historical docs already in English stay English; when touching Cyrillic docs, translate them to English as part of the change.

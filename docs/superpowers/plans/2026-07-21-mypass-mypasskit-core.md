@@ -1,261 +1,261 @@
-# MyPassKit (Фаза 1 — «Ядро») Implementation Plan
+# MyPassKit (Phase 1 — Core) Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Реализовать `MyPassKit` — независимую от UI и сети Swift-библиотеку, читающую и
-записывающую файлы KeePass KDBX4 (заголовок, KDF, шифр, HMAC-поток, защищённые
-строки), с моделью Group/Entry/History/DeletedObjects, генератором TOTP (RFC 6238)
-и генератором паролей.
+**Goal:** Implement `MyPassKit` — a UI- and network-independent Swift library that reads and
+writes KeePass KDBX4 files (header, KDF, cipher, HMAC stream, protected
+strings), with a Group/Entry/History/DeletedObjects model, a TOTP generator (RFC 6238),
+and a password generator.
 
-**Архитектура:** SPM-пакет `Packages/MyPassKit` со слоями: `Format` (бинарный
-формат KDBX4 — сигнатура, VariantDictionary, внешний/внутренний заголовок,
-HMAC-блочный поток, шифры, вывод ключей, XML-кодирование), `Model` (дерево
-Group/Entry, History, DeletedObjects) и фасад `KdbxDatabase`, который открывает
-`Data` → расшифровывает → строит дерево → отдаёт наружу, и обратно сериализует
-дерево → XML → шифрует → отдаёт `Data`. `TOTP` и `PasswordGenerator` — независимые
-модули без зависимости от формата.
+**Architecture:** SPM package `Packages/MyPassKit` with layers: `Format` (binary
+KDBX4 format — signature, VariantDictionary, outer/inner header,
+HMAC block stream, ciphers, key derivation, XML encoding), `Model` (Group/Entry tree,
+History, DeletedObjects) and the `KdbxDatabase` facade, which opens
+`Data` → decrypts → builds the tree → exposes it outward, and in reverse serializes the
+tree → XML → encrypts → returns `Data`. `TOTP` and `PasswordGenerator` are independent
+modules with no dependency on the format.
 
 **Tech Stack:**
-- Swift 5.10+ / SPM, `Packages/MyPassKit` (используется macOS-таргетом позже, но
-  пакет сам по себе платформонезависим в пределах Apple-платформ).
-- **CryptoKit** (Apple, входит в SDK) — SHA-256, SHA-512, `HMAC<SHA256>`. НЕ
-  используется для AES-CBC и для «сырых» потоковых Salsa20/ChaCha20: CryptoKit
-  предоставляет только AEAD-режимы (`AES.GCM`, `ChaChaPoly`), а KDBX4 требует
-  небезопасный/неаутентифицированный AES-256-CBC (внешний шифр) и «сырые»
-  потоковые Salsa20/ChaCha20 без Poly1305 (внутренний поток защищённых строк, и
-  ChaCha20 как альтернативный внешний шифр). Это расхождение с интуитивным
-  предположением «CryptoKit покрывает всё» — зафиксировано явно, см. Task 10/11/12.
-- **CommonCrypto** (`import CommonCrypto`, системный, без внешней зависимости) —
-  `CCCrypt` с `kCCAlgorithmAES`, `kCCModeCBC`, `kCCOptionPKCS7Padding` отключён
-  (KDBX4 сам paддит явным padding, стандартный PKCS7 подходит для encrypt/decrypt
-  полного потока) — для AES-256-CBC внешнего шифра.
-- **swift-sodium** — `https://github.com/jedisct1/swift-sodium` (пакет `Sodium`,
-  продукт `Sodium`; подтверждено чтением `Package.swift` репозитория 2026-07-21).
-  Обёртка над libsodium. Используется для: (a) `crypto_pwhash_argon2id` — Argon2id
-  KDF; (b) `crypto_stream_chacha20`/`crypto_stream_salsa20` — «сырые» потоковые
-  шифры без MAC, нужные для внутреннего потока защищённых строк и для внешнего
-  ChaCha20-шифра.
-- **Argon2 reference vectors**: `github.com/P-H-C/phc-winner-argon2` (`kats/`) и
-  RFC 9106 §5.3 — для сверки формулы KDF. Тест самой обёртки над swift-sodium
-  использует собственный тестовый вектор libsodium (`test/default/pwhash_argon2id.c`,
-  функция `tv3`, см. Task 6), а не «сырой» Argon2 KAT — см. расхождение ниже.
+- Swift 5.10+ / SPM, `Packages/MyPassKit` (used by the macOS target later, but
+  the package itself is platform-independent within Apple platforms).
+- **CryptoKit** (Apple, included in the SDK) — SHA-256, SHA-512, `HMAC<SHA256>`. NOT
+  used for AES-CBC or for "raw" streaming Salsa20/ChaCha20: CryptoKit
+  provides only AEAD modes (`AES.GCM`, `ChaChaPoly`), while KDBX4 requires
+  unauthenticated AES-256-CBC (outer cipher) and "raw"
+  streaming Salsa20/ChaCha20 without Poly1305 (inner protected-string stream, and
+  ChaCha20 as an alternative outer cipher). This diverges from the intuitive
+  assumption that "CryptoKit covers everything" — documented explicitly, see Task 10/11/12.
+- **CommonCrypto** (`import CommonCrypto`, system, no external dependency) —
+  `CCCrypt` with `kCCAlgorithmAES`, `kCCModeCBC`, `kCCOptionPKCS7Padding` disabled
+  (KDBX4 pads explicitly itself; standard PKCS7 works for encrypt/decrypt of the full
+  stream) — for AES-256-CBC outer cipher.
+- **swift-sodium** — `https://github.com/jedisct1/swift-sodium` (package `Sodium`,
+  product `Sodium`; confirmed by reading the repository's `Package.swift` on 2026-07-21).
+  Wrapper over libsodium. Used for: (a) `crypto_pwhash_argon2id` — Argon2id
+  KDF; (b) `crypto_stream_chacha20`/`crypto_stream_salsa20` — "raw" streaming
+  ciphers without MAC, needed for the inner protected-string stream and for the outer
+  ChaCha20 cipher.
+- **Argon2 reference vectors**: `github.com/P-H-C/phc-winner-argon2` (`kats/`) and
+  RFC 9106 §5.3 — for verifying the KDF formula. The swift-sodium wrapper test
+  uses libsodium's own test vector (`test/default/pwhash_argon2id.c`,
+  function `tv3`, see Task 6), not a "raw" Argon2 KAT — see discrepancy below.
 
-## Вне рамок этого плана
+## Out of scope for this plan
 
-Этот план покрывает **только** `Packages/MyPassKit`. Явно не входит и получит
-отдельные планы: SwiftUI-приложение и меню-бар, Touch ID/Keychain, автоблокировка,
-бэкенды синхронизации (iCloud/локальная папка/SFTP), merge-движок, браузерные
-расширения, passkeys, SSH-сертификаты.
+This plan covers **only** `Packages/MyPassKit`. Explicitly excluded and will receive
+separate plans: SwiftUI app and menu bar, Touch ID/Keychain, auto-lock,
+sync backends (iCloud/local folder/SFTP), merge engine, browser
+extensions, passkeys, SSH certificates.
 
 ## Global Constraints
 
-**Источники формата KDBX4 (обязательны к сверке при реализации, расхождения — ниже):**
-- `https://keepass.info/help/kb/kdbx_4.html` — официальное описание изменений KDBX3.1→KDBX4 (общая структура, VariantDictionary, HMAC-блочный поток, внутренний заголовок).
-- `github.com/keepassxreboot/keepassxc` `src/format/KeePass2.h`, `KeePass2.cpp`, `Kdbx4Reader.cpp`, `Kdbx4Writer.cpp`, `HmacBlockStream.cpp`, `src/crypto/kdf/Argon2Kdf.cpp` — точные значения (сигнатуры, UUID шифров/KDF, порядок вывода ключей).
-- `github.com/P-H-C/phc-winner-argon2` `kats/argon2id` и RFC 9106 §5.3 — эталонные векторы самого алгоритма Argon2id (не привязаны к KDBX, используются только для документирования формулы, не как unit-test — см. ниже).
+**KDBX4 format sources (must be cross-checked during implementation; discrepancies — below):**
+- `https://keepass.info/help/kb/kdbx_4.html` — official description of KDBX3.1→KDBX4 changes (overall structure, VariantDictionary, HMAC block stream, inner header).
+- `github.com/keepassxreboot/keepassxc` `src/format/KeePass2.h`, `KeePass2.cpp`, `Kdbx4Reader.cpp`, `Kdbx4Writer.cpp`, `HmacBlockStream.cpp`, `src/crypto/kdf/Argon2Kdf.cpp` — exact values (signatures, cipher/KDF UUIDs, key derivation order).
+- `github.com/P-H-C/phc-winner-argon2` `kats/argon2id` and RFC 9106 §5.3 — reference vectors for the Argon2id algorithm itself (not tied to KDBX, used only for documenting the formula, not as a unit test — see below).
 
-**Точные значения формата:**
-- Сигнатура: `0x9AA2D903` затем `0xB54BFB67` (4+4 байта, little-endian, как u32).
-- Версия файла для KDBX4: `0x00040000` (KDBX 4.0) или `0x00040001` (KDBX 4.1); писать `0x00040000`, читать обе.
-- ID полей внешнего заголовка (`HeaderFieldID`, 1 байт) — `EndOfHeader=0`, `Comment=1`,
-  `CipherID=2`, `CompressionFlags=3`, `MasterSeed=4`, `TransformSeed=5` (obsolete в KDBX4),
-  `TransformRounds=6` (obsolete), `EncryptionIV=7`, `ProtectedStreamKey=8` (obsolete в KDBX4,
-  перенесено во внутренний заголовок), `StreamStartBytes=9` (obsolete), `InnerRandomStreamID=10`
-  (obsolete, перенесено во внутренний заголовок), `KdfParameters=11`, `PublicCustomData=12`.
-  Формат записи каждого поля: 1 байт ID, 4 байта Int32LE длина данных, N байт данных.
-- ID полей внутреннего заголовка (`InnerHeaderFieldID`, 1 байт) — `End=0`,
-  `InnerRandomStreamID=1`, `InnerRandomStreamKey=2`, `Binary=3`. Формат идентичен внешнему
-  (1 байт ID, 4 байта Int32LE длина, N байт данных), но лежит уже внутри расшифрованного
-  и разблокированного HMAC-потока (перед XML).
-- `CompressionFlags`: `0 = None`, `1 = GZip` (значение как 4-байтный Int32LE в теле поля).
-- Cipher UUID (16 байт, тело поля `CipherID`): AES256 = `31C1F2E6-BF71-4350-BE58-05216AFC5AFF`,
-  ChaCha20 = `D6038A2B-8B6F-4CB5-A524-339A31DBB59A`, Twofish (не реализуем в Фазе 1,
-  редко используется, дока задача — не блокирует MVP) = `AD68F29F-576F-4BB9-A36A-D47AF965346C`.
-- KDF UUID (16 байт, ключ `$UUID` внутри `KdfParameters` VariantDictionary):
-  AES-KDF (KDBX4-форма) = `7C02BB82-79A7-4AC0-927D-114A00648238`, Argon2d =
+**Exact format values:**
+- Signature: `0x9AA2D903` then `0xB54BFB67` (4+4 bytes, little-endian, as u32).
+- File version for KDBX4: `0x00040000` (KDBX 4.0) or `0x00040001` (KDBX 4.1); write `0x00040000`, read both.
+- Outer header field IDs (`HeaderFieldID`, 1 byte) — `EndOfHeader=0`, `Comment=1`,
+  `CipherID=2`, `CompressionFlags=3`, `MasterSeed=4`, `TransformSeed=5` (obsolete in KDBX4),
+  `TransformRounds=6` (obsolete), `EncryptionIV=7`, `ProtectedStreamKey=8` (obsolete in KDBX4,
+  moved to inner header), `StreamStartBytes=9` (obsolete), `InnerRandomStreamID=10`
+  (obsolete, moved to inner header), `KdfParameters=11`, `PublicCustomData=12`.
+  Each field record format: 1 byte ID, 4 bytes Int32LE data length, N bytes of data.
+- Inner header field IDs (`InnerHeaderFieldID`, 1 byte) — `End=0`,
+  `InnerRandomStreamID=1`, `InnerRandomStreamKey=2`, `Binary=3`. Format identical to outer
+  (1 byte ID, 4 bytes Int32LE length, N bytes of data), but located inside the decrypted
+  and unblocked HMAC stream (before XML).
+- `CompressionFlags`: `0 = None`, `1 = GZip` (value as 4-byte Int32LE in the field body).
+- Cipher UUID (16 bytes, `CipherID` field body): AES256 = `31C1F2E6-BF71-4350-BE58-05216AFC5AFF`,
+  ChaCha20 = `D6038A2B-8B6F-4CB5-A524-339A31DBB59A`, Twofish (not implemented in Phase 1,
+  rarely used, documentation task — does not block MVP) = `AD68F29F-576F-4BB9-A36A-D47AF965346C`.
+- KDF UUID (16 bytes, `$UUID` key inside `KdfParameters` VariantDictionary):
+  AES-KDF (KDBX4 form) = `7C02BB82-79A7-4AC0-927D-114A00648238`, Argon2d =
   `EF636DDF-8C29-444B-91F7-A9A403E30A0C`, Argon2id = `9E298B19-56DB-4773-B23D-FC3EC6F0A1E6`.
-  Реализуем чтение обоих (Argon2id, AES-KDF) и запись только Argon2id (спецификация
-  MyPass фиксирует Argon2id как единственный KDF для новых баз).
-- VariantDictionary: 2 байта версия UInt16LE (`0x0100`), затем 0..N записей, затем
-  1 байт `0x00` терминатор. Запись: 1 байт тип (`0x04=UInt32,0x05=UInt64,0x08=Bool,
-  0x0C=Int32,0x0D=Int64,0x18=String(UTF8),0x42=ByteArray`), 4 байта Int32LE длина имени,
-  имя (UTF-8, без завершающего нуля), 4 байта Int32LE длина значения, значение.
-- Ключи Argon2 внутри `KdfParameters` (по имени, однобуквенные/короткие, как в
-  KeePassXC `KeePass2.cpp`): `$UUID` (ByteArray, 16 байт), `S` = соль (ByteArray),
-  `P` = parallelism (UInt32), `M` = memory в **байтах** (UInt64), `I` = iterations
-  (UInt64), `V` = версия Argon2 (UInt32, `0x13` = 19). `K` (secret) и `A` (associated
-  data) существуют в спецификации формата, но сам KeePassXC отмечает их как
-  «unimplemented» и MyPass их не пишет и не обязан читать (если встретились — ошибка
-  "unsupported KDF parameters"). **Флаг расхождения:** точные строковые литералы `S`,
-  `P`, `M`, `I`, `V` подтверждены только косвенно (WebFetch на `.cpp` вернул имена
-  символических констант `KeePass2::KDFPARAM_ARGON2_SALT` и т.п., но не смог
-  прочитать сами строковые литералы из `.h`, так как они объявлены `extern` и
-  определены в `.cpp`, который не отдал точный текст присваивания). Однобуквенные
-  значения совпадают с общеизвестным и многократно задокументированным сообществом
-  форматом (несколько независимых сторонних реализаций — например при последующей
-  разработке сверить с `KdbxLib`/`KeePass4LibDoc`-подобными cross-check реализациями,
-  упомянутыми в спеке как приемлемая практика). Задача 6 обязана перепроверить эти
-  4 буквы прямым чтением файла `KeePass2.cpp` (grep на `KDFPARAM_ARGON2_`) перед
-  использованием в продовом коде, а не полагаться только на этот план.
-  Для AES-KDF ключи — `R` (rounds, UInt64) и `S` (seed, ByteArray, 32 байта; тот же
-  однобуквенный `S`, но семантика зависит от `$UUID`).
-- Порядок вывода мастер-ключа (Kdbx4Reader.cpp): `transformedKey = KDF(compositeKey)`
-  (Argon2id/AES-KDF по параметрам `KdfParameters`); `finalMasterKey =
-  SHA256(masterSeed ‖ transformedKey)`. HMAC-ключ потока: `hmacKeyBase =
-  SHA512(masterSeed ‖ transformedKey ‖ 0x01)` (однобайтовый суффикс `0x01`),
-  далее для блока `i`: `Ki = SHA512(UInt64LE(i) ‖ hmacKeyBase)`. Заголовок
-  аутентифицируется как `HMAC-SHA256(headerBytes, Ki=UInt64.max)` (то есть та же
-  формула блочного ключа с индексом `0xFFFFFFFFFFFFFFFF`), результат кладётся сразу
-  после SHA-256(headerBytes) в файле, перед HMAC-блочным потоком.
-- Компоновка файла целиком: `Signature(8) ‖ Version(4) ‖ OuterHeaderFields ‖
-  HeaderSHA256(32) ‖ HeaderHMAC-SHA256(32) ‖ HmacBlockStream(...)`, где
-  расшифрованное содержимое `HmacBlockStream` после снятия блочной структуры и
-  расшифровки внешним шифром (и опциональной распаковки GZip) равно
+  Implement reading both (Argon2id, AES-KDF) and writing only Argon2id (MyPass spec
+  fixes Argon2id as the sole KDF for new databases).
+- VariantDictionary: 2 bytes version UInt16LE (`0x0100`), then 0..N entries, then
+  1 byte `0x00` terminator. Entry: 1 byte type (`0x04=UInt32,0x05=UInt64,0x08=Bool,
+  0x0C=Int32,0x0D=Int64,0x18=String(UTF8),0x42=ByteArray`), 4 bytes Int32LE name length,
+  name (UTF-8, no trailing null), 4 bytes Int32LE value length, value.
+- Argon2 keys inside `KdfParameters` (by name, single-letter/short, as in
+  KeePassXC `KeePass2.cpp`): `$UUID` (ByteArray, 16 bytes), `S` = salt (ByteArray),
+  `P` = parallelism (UInt32), `M` = memory in **bytes** (UInt64), `I` = iterations
+  (UInt64), `V` = Argon2 version (UInt32, `0x13` = 19). `K` (secret) and `A` (associated
+  data) exist in the format spec, but KeePassXC itself marks them as
+  "unimplemented" and MyPass does not write them and is not required to read them (if encountered — error
+  "unsupported KDF parameters"). **Discrepancy flag:** exact string literals `S`,
+  `P`, `M`, `I`, `V` are confirmed only indirectly (WebFetch on `.cpp` returned names of
+  symbolic constants `KeePass2::KDFPARAM_ARGON2_SALT` etc., but could not
+  read the string literals from `.h`, as they are declared `extern` and
+  defined in `.cpp`, which did not return the exact assignment text). Single-letter
+  values match the widely known and repeatedly documented community
+  format (several independent third-party implementations — e.g. during subsequent
+  development cross-check with `KdbxLib`/`KeePass4LibDoc`-like cross-check implementations,
+  mentioned in the spec as acceptable practice). Task 6 must re-verify these
+  4 letters by directly reading `KeePass2.cpp` (grep for `KDFPARAM_ARGON2_`) before
+  use in production code, not rely on this plan alone.
+  For AES-KDF keys — `R` (rounds, UInt64) and `S` (seed, ByteArray, 32 bytes; same
+  single-letter `S`, but semantics depend on `$UUID`).
+- Master key derivation order (Kdbx4Reader.cpp): `transformedKey = KDF(compositeKey)`
+  (Argon2id/AES-KDF per `KdfParameters`); `finalMasterKey =
+  SHA256(masterSeed ‖ transformedKey)`. Stream HMAC key: `hmacKeyBase =
+  SHA512(masterSeed ‖ transformedKey ‖ 0x01)` (single-byte suffix `0x01`),
+  then for block `i`: `Ki = SHA512(UInt64LE(i) ‖ hmacKeyBase)`. Header
+  is authenticated as `HMAC-SHA256(headerBytes, Ki=UInt64.max)` (i.e. the same
+  block key formula with index `0xFFFFFFFFFFFFFFFF`), result placed immediately
+  after SHA-256(headerBytes) in the file, before the HMAC block stream.
+- Full file layout: `Signature(8) ‖ Version(4) ‖ OuterHeaderFields ‖
+  HeaderSHA256(32) ‖ HeaderHMAC-SHA256(32) ‖ HmacBlockStream(...)`, where
+  decrypted contents of `HmacBlockStream` after removing block structure and
+  decrypting with outer cipher (and optional GZip decompression) equals
   `InnerHeaderFields ‖ XML`.
-- HMAC-блочный поток: последовательность блоков `HMAC-SHA256(32 байта) ‖
-  BlockSize(4 байта Int32LE) ‖ BlockData(BlockSize байт)`; финальный блок имеет
-  `BlockSize=0` и пустой `BlockData` (но всё равно валидный HMAC над пустыми
-  данными с тем же индексом). HMAC блока = `HMAC-SHA256(Ki, UInt64LE(i) ‖
-  Int32LE(BlockSize) ‖ BlockData)`. Размер блока по умолчанию при записи — 2^20 байт
-  (1 МиБ), последний блок может быть короче.
-- Внутренний поток защищённых строк (`InnerRandomStreamID` во внутреннем заголовке,
-  UInt32): `1 = ArcFourVariant` (не реализуем — не используется современными
-  генераторами и не нужен для записи; чтение — ошибка "unsupported" при встрече),
-  `2 = Salsa20`, `3 = ChaCha20`. Ключ потока — `InnerRandomStreamKey` (сырые байты
-  из внутреннего заголовка). Для Salsa20: реальный ключ шифра = `SHA256(rawKey)`
-  (32 байта), IV = фиксированные 8 байт `E8 30 09 4B 97 20 5D 2A` (константа
-  KeePass, ровно эта строка — если задача 12 обнаружит расхождение при сверке с
-  исходниками KeePassXC `SymmetricCipherStream`/`Salsa20Stream`, зафиксировать явно
-  и не гадать). Для ChaCha20: ключ = `SHA512(rawKey)`, из которого первые 32 байта —
-  ключ ChaCha20, следующие 12 байт — nonce.
-- Формат записи должен производить файлы, открываемые KeePassXC/Strongbox без
-  предупреждений (кросс-совместимость — единственная реальная защита от порчи
-  данных, см. риски в спецификации).
+- HMAC block stream: sequence of blocks `HMAC-SHA256(32 bytes) ‖
+  BlockSize(4 bytes Int32LE) ‖ BlockData(BlockSize bytes)`; final block has
+  `BlockSize=0` and empty `BlockData` (but still a valid HMAC over empty
+  data with the same index). Block HMAC = `HMAC-SHA256(Ki, UInt64LE(i) ‖
+  Int32LE(BlockSize) ‖ BlockData)`. Default block size when writing — 2^20 bytes
+  (1 MiB), last block may be shorter.
+- Inner protected-string stream (`InnerRandomStreamID` in inner header,
+  UInt32): `1 = ArcFourVariant` (not implemented — not used by modern
+  generators and not needed for writing; reading — "unsupported" error on encounter),
+  `2 = Salsa20`, `3 = ChaCha20`. Stream key — `InnerRandomStreamKey` (raw bytes
+  from inner header). For Salsa20: actual cipher key = `SHA256(rawKey)`
+  (32 bytes), IV = fixed 8 bytes `E8 30 09 4B 97 20 5D 2A` (KeePass
+  constant, exactly this string — if Task 12 finds a discrepancy when cross-checking
+  KeePassXC sources `SymmetricCipherStream`/`Salsa20Stream`, document explicitly
+  and do not guess). For ChaCha20: key = `SHA512(rawKey)`, from which first 32 bytes —
+  ChaCha20 key, next 12 bytes — nonce.
+- Write format must produce files openable by KeePassXC/Strongbox without
+  warnings (cross-compatibility is the only real protection against data
+  corruption, see risks in the spec).
 
 ---
 
-### Task 1: Спайк — KeePassKit vs собственный парсер (решение фиксируется здесь)
+### Task 1: Spike — KeePassKit vs custom parser (decision fixed here)
 
-Это НЕ TDD-задача — это тайм-боксед (максимум 2 рабочих дня) исследовательский
-спайк с конкретным проверяемым результатом. Все задачи 2+ в этом плане **предполагают
-исход «собственный парсер»**. Если спайк покажет, что KeePassKit достаточно хорош —
-задачи 2+ этого плана становятся недействительными, и должен быть написан НОВЫЙ план
-для пути «обёртка над KeePassKit» (другая архитектура: ObjC-мост, другой набор файлов,
-не переиспользовать структуру ниже).
+This is NOT a TDD task — it is a time-boxed (max 2 business days) research
+spike with a concrete verifiable outcome. All tasks 2+ in this plan **assume
+outcome "custom parser"**. If the spike shows KeePassKit is good enough —
+tasks 2+ of this plan become invalid, and a NEW plan must be written
+for the "KeePassKit wrapper" path (different architecture: ObjC bridge, different set of files,
+do not reuse the structure below).
 
 **Files:**
-- Create: `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md` (решение и обоснование)
-- Create: `/tmp/mypass-spike/reference-kdbx/` (временные эталонные файлы, не коммитятся; финальный набор копируется в `Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/` в Task 16, если решение — «собственный парсер»)
-- Create: `/tmp/mypass-spike/KeePassKitSpike/` (одноразовый Xcode/SPM-таргет для проверки KeePassKit)
+- Create: `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md` (decision and rationale)
+- Create: `/tmp/mypass-spike/reference-kdbx/` (temporary reference files, not committed; final set copied to `Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/` in Task 16, if decision is "custom parser")
+- Create: `/tmp/mypass-spike/KeePassKitSpike/` (one-off Xcode/SPM target to test KeePassKit)
 
 **Interfaces:**
-- Consumes: ничего (первая задача).
-- Produces: письменное решение (`custom-parser` | `keepasskit-wrapper`) в файле
-  `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`, которое
-  Task 2 читает перед началом работы.
+- Consumes: nothing (first task).
+- Produces: written decision (`custom-parser` | `keepasskit-wrapper`) in file
+  `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`, which
+  Task 2 reads before starting work.
 
-- [ ] **Step 1: Получить эталонные .kdbx4 файлы**
-  Проверить наличие готовых тестовых `.kdbx`/`.kdbx4` фикстур в репозитории
+- [ ] **Step 1: Obtain reference .kdbx4 files**
+  Check for existing test `.kdbx`/`.kdbx4` fixtures in the
   KeePassXC:
   ```bash
   git clone --depth 1 https://github.com/keepassxreboot/keepassxc.git /tmp/mypass-spike/keepassxc-src
   find /tmp/mypass-spike/keepassxc-src -iname "*.kdbx*" -o -iname "*.kdbx4"
   ```
-  Если найдены готовые файлы под `tests/data/` (или аналогичным путём) с разными
-  KDF/шифром/сжатием — скопировать 3–5 штук в `/tmp/mypass-spike/reference-kdbx/`
-  с описательными именами (`aes256-aeskdf-nozip.kdbx`,
-  `chacha20-argon2id-gzip.kdbx`, и т.д.), записать для каждого пароль (обычно
-  видно в соседнем `.txt`/тестовом коде, либо стандартный тестовый пароль вида
-  `"a"` — зафиксировать точное значение в решении).
-  Если готовых файлов недостаточно по разнообразию комбинаций — сгенерировать
-  недостающие через `keepassxcli` (установить `brew install keepassxc`, там же
-  есть `keepassxc-cli`):
+  If ready files found under `tests/data/` (or similar path) with different
+  KDF/cipher/compression — copy 3–5 into `/tmp/mypass-spike/reference-kdbx/`
+  with descriptive names (`aes256-aeskdf-nozip.kdbx`,
+  `chacha20-argon2id-gzip.kdbx`, etc.), record password for each (usually
+  visible in adjacent `.txt`/test code, or standard test password like
+  `"a"` — record exact value in the decision).
+  If ready files insufficient for combination diversity — generate
+  missing via `keepassxc-cli` (install `brew install keepassxc`, which also
+  includes `keepassxc-cli`):
   ```bash
   keepassxc-cli db-create --set-key-file "" \
     -a ChaCha20 \
     /tmp/mypass-spike/reference-kdbx/chacha20-argon2id-gzip.kdbx
-  # keepassxc-cli db-create спрашивает пароль интерактивно (stdin);
-  # использовать: printf 'TestMasterPass123\n' | keepassxc-cli db-create ...
+  # keepassxc-cli db-create prompts for password interactively (stdin);
+  # use: printf 'TestMasterPass123\n' | keepassxc-cli db-create ...
   ```
-  (Если `keepassxc-cli db-create` не поддерживает выбор KDF напрямую флагом —
-  создать через GUI KeePassXC один раз вручную, задать нужный KDF/шифр/сжатие в
-  Database Settings, сохранить — это единоразовое ручное действие, задокументировать
-  в решении какие именно клики были сделаны.)
-  Итоговый набор должен покрывать минимум: (Argon2id + AES256 + GZip),
-  (Argon2id + ChaCha20 + GZip), (AES-KDF + AES256 + None), и один файл с
-  непустыми History-записями (открыть, отредактировать одну запись дважды,
-  сохранить) и один с удалёнными объектами (удалить запись, сохранить).
+  (If `keepassxc-cli db-create` does not support KDF selection directly via flag —
+  create via KeePassXC GUI once manually, set desired KDF/cipher/compression in
+  Database Settings, save — this is a one-time manual action, document
+  in the decision which clicks were made.)
+  Final set must cover at minimum: (Argon2id + AES256 + GZip),
+  (Argon2id + ChaCha20 + GZip), (AES-KDF + AES256 + None), and one file with
+  non-empty History entries (open, edit one entry twice,
+  save) and one with deleted objects (delete entry, save).
 
-- [ ] **Step 2: Попытаться открыть один файл через KeePassKit**
+- [ ] **Step 2: Attempt to open one file via KeePassKit**
   ```bash
   mkdir -p /tmp/mypass-spike/KeePassKitSpike
   cd /tmp/mypass-spike/KeePassKitSpike
   git clone --depth 1 --recurse-submodules https://github.com/MacPass/KeePassKit.git
   ```
-  Создать минимальный Swift-исполняемый таргет (SPM `executable` или Xcode
-  command-line tool), подключить KeePassKit как локальный XCFramework/проект
-  (через bridging header, т.к. KeePassKit — ObjC), и попытаться:
+  Create minimal Swift executable target (SPM `executable` or Xcode
+  command-line tool), link KeePassKit as local XCFramework/project
+  (via bridging header, since KeePassKit is ObjC), and attempt:
   ```objc
   KPKTree *tree = [KPKTree treeWithData:fileData
                                     key:key
                                   error:&error];
   ```
-  для каждого из 3–5 эталонных файлов. Зафиксировать для каждого: открылось без
-  ошибки / открылось с предупреждением / упало с ошибкой (и текст ошибки) /
-  не удалось собрать вообще (ошибки сборки самого KeePassKit — тоже валидный
-  результат, значит фреймворк непригоден по независимой от формата причине).
+  for each of 3–5 reference files. Record for each: opened without
+  error / opened with warning / crashed with error (and error text) /
+  could not build at all (KeePassKit build errors — also valid
+  result, meaning framework unsuitable for format-independent reason).
 
-- [ ] **Step 3: Записать решение**
-  Файл `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`,
-  структура:
+- [ ] **Step 3: Write the decision**
+  File `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`,
+  structure:
   ```markdown
-  # Решение: KeePassKit vs собственный парсер KDBX4
+  # Decision: KeePassKit vs custom KDBX4 parser
 
-  Дата: <дата выполнения>
+  Date: <execution date>
 
-  ## Результаты по каждому эталонному файлу
-  | Файл | KDF | Шифр | Сжатие | KeePassKit | Комментарий |
+  ## Results per reference file
+  | File | KDF | Cipher | Compression | KeePassKit | Comment |
   |---|---|---|---|---|---|
 
-  ## Решение
-  **custom-parser** ИЛИ **keepasskit-wrapper**
+  ## Decision
+  **custom-parser** OR **keepasskit-wrapper**
 
-  ## Обоснование
-  <2-4 предложения>
+  ## Rationale
+  <2-4 sentences>
 
-  ## Если custom-parser:
-  Продолжать выполнение задач 2+ плана
-  `docs/superpowers/plans/2026-07-21-mypass-mypasskit-core.md` как есть.
+  ## If custom-parser:
+  Continue executing tasks 2+ of plan
+  `docs/superpowers/plans/2026-07-21-mypass-mypasskit-core.md` as-is.
 
-  ## Если keepasskit-wrapper:
-  Задачи 2+ текущего плана НЕДЕЙСТВИТЕЛЬНЫ. Требуется новый план для обёртки
-  над KeePassKit (ObjC-мост, маппинг KPKTree/KPKEntry на модель MyPassKit,
-  собственная реализация только TOTP и генератора паролей, т.к. они не входят
-  в KeePassKit). Написать этот план прежде чем продолжать Фазу 1.
+  ## If keepasskit-wrapper:
+  Tasks 2+ of current plan INVALID. New plan required for wrapper
+  over KeePassKit (ObjC bridge, mapping KPKTree/KPKEntry to MyPassKit model,
+  own implementation only for TOTP and password generator, since they are not included
+  in KeePassKit). Write this plan before continuing Phase 1.
   ```
 
 - [ ] **Step 4: Commit**
   ```bash
   git add docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md
-  git commit -m "Спайк: решение KeePassKit vs собственный парсер KDBX4 для Фазы 1"
+  git commit -m "Spike: KeePassKit vs custom KDBX4 parser decision for Phase 1"
   ```
 
 ---
 
-### Task 2: Каркас пакета MyPassKit + зависимость swift-sodium
+### Task 2: MyPassKit package scaffold + swift-sodium dependency
 
 **Files:**
 - Create: `Packages/MyPassKit/Package.swift`
-- Create: `Packages/MyPassKit/Sources/MyPassKit/MyPassKit.swift` (пустой маркер-файл с версией пакета)
+- Create: `Packages/MyPassKit/Sources/MyPassKit/MyPassKit.swift` (empty marker file with package version)
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/PackageSmokeTests.swift`
 
 **Interfaces:**
-- Consumes: ничего.
-- Produces: SPM-таргет `MyPassKit`, доступный последующим задачам через
-  `import MyPassKit`; зависимость `Sodium` доступна внутри модуля через
+- Consumes: nothing.
+- Produces: SPM target `MyPassKit`, available to subsequent tasks via
+  `import MyPassKit`; `Sodium` dependency available inside the module via
   `import Sodium`.
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/PackageSmokeTests.swift
 import XCTest
@@ -275,10 +275,10 @@ final class PackageSmokeTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter PackageSmokeTests`
-  Expected: FAIL (сборка упадёт — `Package.swift` ещё не существует / нет таргета `MyPassKit`)
-- [ ] **Step 3: Написать минимальную реализацию**
+  Expected: FAIL (build will fail — `Package.swift` does not exist yet / no `MyPassKit` target)
+- [ ] **Step 3: Write minimal implementation**
 ```swift
 // Packages/MyPassKit/Package.swift
 // swift-tools-version:5.10
@@ -309,25 +309,25 @@ let package = Package(
 // Packages/MyPassKit/Sources/MyPassKit/MyPassKit.swift
 public let MyPassKitVersion = "0.1.0"
 ```
-- [ ] **Step 4: Запустить тест снова, убедиться, что проходит**
+- [ ] **Step 4: Run test again, verify it passes**
   Run: `swift test --package-path Packages/MyPassKit --filter PackageSmokeTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Package.swift Packages/MyPassKit/Sources/MyPassKit/MyPassKit.swift Packages/MyPassKit/Tests/MyPassKitTests/PackageSmokeTests.swift
-git commit -m "Каркас пакета MyPassKit с зависимостью swift-sodium"
+git commit -m "MyPassKit package scaffold with swift-sodium dependency"
 ```
 
 ---
 
-### Task 3: VariantDictionary — кодирование/декодирование
+### Task 3: VariantDictionary — encoding/decoding
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/VariantDictionary.swift`
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/VariantDictionaryTests.swift`
 
 **Interfaces:**
-- Consumes: ничего (базовый строительный блок).
+- Consumes: nothing (basic building block).
 - Produces:
   ```swift
   enum VariantValue: Equatable {
@@ -343,7 +343,7 @@ git commit -m "Каркас пакета MyPassKit с зависимостью s
   enum VariantDictionaryError: Error { case truncated, unknownType(UInt8), invalidVersion(UInt16) }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/VariantDictionaryTests.swift
 import XCTest
@@ -375,10 +375,10 @@ final class VariantDictionaryTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter VariantDictionaryTests`
   Expected: FAIL with "cannot find type 'VariantDictionary' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/VariantDictionary.swift
 import Foundation
@@ -495,18 +495,18 @@ struct VariantDictionary: Equatable {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter VariantDictionaryTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/VariantDictionary.swift Packages/MyPassKit/Tests/MyPassKitTests/VariantDictionaryTests.swift
-git commit -m "VariantDictionary: кодирование/декодирование KDF-параметров"
+git commit -m "VariantDictionary: KDF parameter encoding/decoding"
 ```
 
 ---
 
-### Task 4: Сигнатура файла и парсинг полей внешнего заголовка (чтение)
+### Task 4: File signature and outer header field parsing (read)
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/KdbxSignature.swift`
@@ -514,7 +514,7 @@ git commit -m "VariantDictionary: кодирование/декодирован�
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/KdbxOuterHeaderTests.swift`
 
 **Interfaces:**
-- Consumes: `VariantDictionary.decode(_:)` из Task 3.
+- Consumes: `VariantDictionary.decode(_:)` from Task 3.
 - Produces:
   ```swift
   struct KdbxSignature: Equatable {
@@ -529,7 +529,7 @@ git commit -m "VariantDictionary: кодирование/декодирован�
       var encryptionIV: Data
       var kdfParameters: VariantDictionary
       var publicCustomData: VariantDictionary?
-      var rawHeaderBytes: Data // байты как они лежали в файле, для проверки SHA/HMAC
+      var rawHeaderBytes: Data // bytes as stored in file, for SHA/HMAC verification
       static func parse(from data: Data, startingAt offset: inout Data.Index) throws -> KdbxOuterHeader
   }
   enum KdbxHeaderError: Error {
@@ -537,7 +537,7 @@ git commit -m "VariantDictionary: кодирование/декодирован�
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/KdbxOuterHeaderTests.swift
 import XCTest
@@ -604,10 +604,10 @@ private func appendField(_ data: inout Data, id: UInt8, value: Data) {
     data.append(value)
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxOuterHeaderTests`
   Expected: FAIL with "cannot find type 'KdbxSignature' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/KdbxSignature.swift
 import Foundation
@@ -726,24 +726,24 @@ struct KdbxOuterHeader: Equatable {
             case 7: encryptionIV = fieldData
             case 11: kdfParameters = try VariantDictionary.decode(fieldData)
             case 12: publicCustomData = try VariantDictionary.decode(fieldData)
-            default: break // Comment(1), obsolete поля 5/6/8/9/10 — игнорируем при чтении
+            default: break // Comment(1), obsolete fields 5/6/8/9/10 — ignore on read
             }
         }
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxOuterHeaderTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/KdbxSignature.swift Packages/MyPassKit/Sources/MyPassKit/Format/KdbxOuterHeader.swift Packages/MyPassKit/Tests/MyPassKitTests/KdbxOuterHeaderTests.swift
-git commit -m "Парсинг сигнатуры и внешнего заголовка KDBX4"
+git commit -m "KDBX4 signature and outer header parsing"
 ```
 
 ---
 
-### Task 5: Сериализация внешнего заголовка (запись) + SHA-256/HMAC над заголовком
+### Task 5: Outer header serialization (write) + SHA-256/HMAC over header
 
 **Files:**
 - Modify: `Packages/MyPassKit/Sources/MyPassKit/Format/KdbxOuterHeader.swift`
@@ -751,20 +751,20 @@ git commit -m "Парсинг сигнатуры и внешнего загол�
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/KdbxHeaderAuthenticationTests.swift`
 
 **Interfaces:**
-- Consumes: `KdbxOuterHeader` (Task 4), `HmacKeyDerivation` из Task 7 (см. ниже — этот
-  файл использует уже готовую функцию вывода блочного HMAC-ключа; временная
-  локальная реализация здесь заменяется на общую в Task 7, сигнатура одна и та же).
+- Consumes: `KdbxOuterHeader` (Task 4), `HmacKeyDerivation` from Task 7 (see below — this
+  file uses the ready block HMAC key derivation function; temporary
+  local implementation here is replaced by shared one in Task 7, same signature).
 - Produces:
   ```swift
   extension KdbxOuterHeader { func serialize() -> Data }
   enum KdbxHeaderAuthentication {
       static func sha256(ofHeader raw: Data) -> Data
       static func hmacSHA256(ofHeader raw: Data, hmacKeyBase: Data) -> Data
-      // hmacKeyBase — результат Task 7 KeyDerivation.hmacKeyBase(masterSeed:transformedKey:)
+      // hmacKeyBase — result of Task 7 KeyDerivation.hmacKeyBase(masterSeed:transformedKey:)
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/KdbxHeaderAuthenticationTests.swift
 import XCTest
@@ -817,12 +817,12 @@ final class KdbxHeaderAuthenticationTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxHeaderAuthenticationTests`
-  Expected: FAIL with "cannot find 'KdbxKdfUUID' / 'KdbxHeaderAuthentication' in scope" и "value of type 'KdbxOuterHeader' has no member 'serialize'"
-- [ ] **Step 3: Написать реализацию**
+  Expected: FAIL with "cannot find 'KdbxKdfUUID' / 'KdbxHeaderAuthentication' in scope" and "value of type 'KdbxOuterHeader' has no member 'serialize'"
+- [ ] **Step 3: Write implementation**
 ```swift
-// добавить в Packages/MyPassKit/Sources/MyPassKit/Format/KdbxOuterHeader.swift
+// add to Packages/MyPassKit/Sources/MyPassKit/Format/KdbxOuterHeader.swift
 enum KdbxKdfUUID {
     static let aesKdf = Data([0x7C, 0x02, 0xBB, 0x82, 0x79, 0xA7, 0x4A, 0xC0,
                               0x92, 0x7D, 0x11, 0x4A, 0x00, 0x64, 0x82, 0x38])
@@ -864,9 +864,9 @@ enum KdbxHeaderAuthentication {
         Data(SHA256.hash(data: raw))
     }
 
-    /// hmacKeyBase — результат KeyDerivation.hmacKeyBase(masterSeed:transformedKey:) из Task 7.
-    /// Использует блочный HMAC-ключ с индексом UInt64.max, как того требует формат
-    /// (см. Global Constraints — тот же вывод, что и для блоков HMAC-потока).
+    /// hmacKeyBase — result of KeyDerivation.hmacKeyBase(masterSeed:transformedKey:) from Task 7.
+    /// Uses block HMAC key with index UInt64.max, as required by the format
+    /// (see Global Constraints — same derivation as for HMAC stream blocks).
     static func hmacSHA256(ofHeader raw: Data, hmacKeyBase: Data) -> Data {
         let blockKey = HmacBlockStream.blockKey(index: UInt64.max, hmacKeyBase: hmacKeyBase)
         let key = SymmetricKey(data: blockKey)
@@ -875,15 +875,15 @@ enum KdbxHeaderAuthentication {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxHeaderAuthenticationTests`
-  Expected: PASS (после того как в Task 8 появится `HmacBlockStream.blockKey` — см. примечание
-  ниже: этот тест зависит от функции, объявляемой в Task 8; порядок задач скорректирован
-  так, что Task 8 идёт раньше по факту реализации `blockKey`, но т.к. эта функция — чистая
-  и не зависит от остального `HmacBlockStream`, она реализуется здесь заранее как часть
-  Task 5, а Task 8 её переиспользует, а не создаёт заново)
+  Expected: PASS (after `HmacBlockStream.blockKey` appears in Task 8 — see note
+  below: this test depends on function declared in Task 8; task order adjusted
+  so Task 8 comes earlier for `blockKey` implementation, but since this function is pure
+  and does not depend on rest of `HmacBlockStream`, it is implemented here early as part of
+  Task 5, and Task 8 reuses it rather than creating anew)
 ```swift
-// добавить в Packages/MyPassKit/Sources/MyPassKit/Format/KdbxHeaderAuthentication.swift (тот же файл, до enum KdbxHeaderAuthentication)
+// add to Packages/MyPassKit/Sources/MyPassKit/Format/KdbxHeaderAuthentication.swift (same file, before enum KdbxHeaderAuthentication)
 import Crypto
 
 enum HmacBlockStream {
@@ -898,12 +898,12 @@ enum HmacBlockStream {
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/KdbxOuterHeader.swift Packages/MyPassKit/Sources/MyPassKit/Format/KdbxHeaderAuthentication.swift Packages/MyPassKit/Tests/MyPassKitTests/KdbxHeaderAuthenticationTests.swift
-git commit -m "Сериализация внешнего заголовка и аутентификация SHA-256/HMAC-SHA-256"
+git commit -m "Outer header serialization and SHA-256/HMAC-SHA-256 authentication"
 ```
 
 ---
 
-### Task 6: Вывод ключа Argon2id через swift-sodium
+### Task 6: Argon2id key derivation via swift-sodium
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/KeyDerivation.swift`
@@ -921,16 +921,16 @@ git commit -m "Сериализация внешнего заголовка и �
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 
-  Перед реализацией: обязательная сверка ВАЖНОГО расхождения (зафиксировано в
-  Global Constraints) — открыть исходник
+  Before implementation: mandatory cross-check of IMPORTANT discrepancy (documented in
+  Global Constraints) — open source file
   `https://github.com/keepassxreboot/keepassxc/blob/develop/src/format/KeePass2.cpp`
-  и подтвердить grep'ом точные строковые литералы `KDFPARAM_ARGON2_SALT`
+  and confirm via grep exact string literals `KDFPARAM_ARGON2_SALT`
   (`"S"`), `KDFPARAM_ARGON2_PARALLELISM` (`"P"`), `KDFPARAM_ARGON2_MEMORY`
   (`"M"`), `KDFPARAM_ARGON2_ITERATIONS` (`"I"`), `KDFPARAM_ARGON2_VERSION`
-  (`"V"`) перед тем как использовать их в тесте ниже — план предполагает эти
-  значения общеизвестными, но не подтверждёнными байт-в-байт прямым чтением.
+  (`"V"`) before using them in the test below — plan assumes these
+  values widely known but not confirmed byte-for-byte by direct reading.
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/KeyDerivationTests.swift
 import XCTest
@@ -938,13 +938,13 @@ import Sodium
 @testable import MyPassKit
 
 final class KeyDerivationTests: XCTestCase {
-    /// Кросс-проверка самой обёртки над swift-sodium/libsodium: тестовый вектор
-    /// взят из тестового набора libsodium (test/default/pwhash_argon2id.c, tv3()),
-    /// НЕ из "сырых" эталонных векторов Argon2 (phc-winner-argon2/kats), т.к.
-    /// libsodium's crypto_pwhash API не поддерживает опциональные secret/associatedData
-    /// параметры "сырого" Argon2 (что и не нужно — KDBX4 их тоже не использует, см.
-    /// Global Constraints). Проверяем через encoded-строку, т.к. это именно то, что
-    /// зафиксировано в исходнике теста libsodium.
+    /// Cross-check of swift-sodium/libsodium wrapper itself: test vector
+    /// taken from libsodium test suite (test/default/pwhash_argon2id.c, tv3()),
+    /// NOT from "raw" Argon2 reference vectors (phc-winner-argon2/kats), since
+    /// libsodium's crypto_pwhash API does not support optional secret/associatedData
+    /// parameters of "raw" Argon2 (not needed — KDBX4 does not use them either, see
+    /// Global Constraints). Verify via encoded string, since that is exactly what
+    /// is recorded in libsodium test source.
     func testSodiumArgon2idMatchesLibsodiumOwnTestVector() throws {
         let sodium = Sodium()
         guard let hashStr = sodium.pwHash.str(
@@ -954,9 +954,9 @@ final class KeyDerivationTests: XCTestCase {
         ) else {
             return XCTFail("pwHash.str returned nil")
         }
-        // Проверяем структуру и совместимость параметров, а не байт-в-байт равенство
-        // (соль генерируется случайно при каждом вызове str(), поэтому строка отличается
-        // от эталонной; для детерминированной проверки используем verify):
+        // Verify structure and parameter compatibility, not byte-for-byte equality
+        // (salt is generated randomly on each str() call, so string differs
+        // from reference; for deterministic check use verify):
         XCTAssertTrue(hashStr.hasPrefix("$argon2id$v=19$m=4096,t=0,p=1$"))
         XCTAssertTrue(sodium.pwHash.strVerify(hash: hashStr, passwd: []))
     }
@@ -965,7 +965,7 @@ final class KeyDerivationTests: XCTestCase {
         var kdf = VariantDictionary()
         kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
         kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
-        kdf.items["M"] = .uint64(19 * 1024 * 1024) // 19 MiB — минимум OWASP-рекомендаций
+        kdf.items["M"] = .uint64(19 * 1024 * 1024) // 19 MiB — OWASP minimum recommendation
         kdf.items["I"] = .uint64(2)
         kdf.items["P"] = .uint32(1)
         kdf.items["V"] = .uint32(0x13)
@@ -1000,10 +1000,10 @@ final class KeyDerivationTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter KeyDerivationTests`
   Expected: FAIL with "cannot find 'KeyDerivation' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/KeyDerivation.swift
 import Foundation
@@ -1036,11 +1036,11 @@ enum KeyDerivation {
               case .uint32(let parallelism)? = params.items["P"] else {
             throw KeyDerivationError.invalidParameters
         }
-        // Фаза 1: parallelism из libsodium high-level API фиксирован (crypto_pwhash не
-        // принимает произвольный parallelism — libsodium всегда использует p=1 в
-        // публичном API crypto_pwhash_argon2id). Если файл требует parallelism > 1,
-        // это ограничение текущей реализации — фиксируем как известный gap, не
-        // молчим: бросаем invalidParameters, чтобы не выдать неверный ключ.
+        // Phase 1: parallelism from libsodium high-level API is fixed (crypto_pwhash does not
+        // accept arbitrary parallelism — libsodium always uses p=1 in
+        // public crypto_pwhash_argon2id API). If file requires parallelism > 1,
+        // this is current implementation limitation — document as known gap, do not
+        // stay silent: throw invalidParameters to avoid returning wrong key.
         guard parallelism == 1 else {
             throw KeyDerivationError.invalidParameters
         }
@@ -1071,18 +1071,18 @@ enum KeyDerivation {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter KeyDerivationTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/KeyDerivation.swift Packages/MyPassKit/Tests/MyPassKitTests/KeyDerivationTests.swift
-git commit -m "Argon2id через swift-sodium, вывод masterKey и hmacKeyBase"
+git commit -m "Argon2id via swift-sodium, masterKey and hmacKeyBase derivation"
 ```
 
 ---
 
-### Task 7: HMAC-блочный поток — чтение и проверка
+### Task 7: HMAC block stream — read and verify
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/HmacBlockStreamReader.swift`
@@ -1094,11 +1094,11 @@ git commit -m "Argon2id через swift-sodium, вывод masterKey и hmacKey
   ```swift
   enum HmacBlockStreamError: Error { case truncated, hmacMismatch(blockIndex: UInt64) }
   extension HmacBlockStream {
-      static func read(_ data: Data, hmacKeyBase: Data) throws -> Data // конкатенация всех блоков без размеров/HMAC
+      static func read(_ data: Data, hmacKeyBase: Data) throws -> Data // concatenation of all blocks without sizes/HMAC
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/HmacBlockStreamReaderTests.swift
 import XCTest
@@ -1123,7 +1123,7 @@ final class HmacBlockStreamReaderTests: XCTestCase {
         var stream = Data()
         appendBlock(&stream, index: 0, data: Data("original".utf8), hmacKeyBase: hmacKeyBase)
         appendBlock(&stream, index: 1, data: Data(), hmacKeyBase: hmacKeyBase)
-        // Портим байт данных первого блока после вычисления HMAC:
+        // Corrupt data byte of first block after computing HMAC:
         stream[stream.startIndex.advanced(by: 32 + 4)] ^= 0xFF
 
         XCTAssertThrowsError(try HmacBlockStream.read(stream, hmacKeyBase: hmacKeyBase)) { error in
@@ -1146,10 +1146,10 @@ private func appendBlock(_ stream: inout Data, index: UInt64, data: Data, hmacKe
     stream.append(data)
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter HmacBlockStreamReaderTests`
   Expected: FAIL with "value of type 'HmacBlockStream.Type' has no member 'read'"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/HmacBlockStreamReader.swift
 import Foundation
@@ -1197,18 +1197,18 @@ extension HmacBlockStream {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter HmacBlockStreamReaderTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/HmacBlockStreamReader.swift Packages/MyPassKit/Tests/MyPassKitTests/HmacBlockStreamReaderTests.swift
-git commit -m "Чтение и проверка HMAC-блочного потока KDBX4"
+git commit -m "KDBX4 HMAC block stream read and verify"
 ```
 
 ---
 
-### Task 8: HMAC-блочный поток — запись
+### Task 8: HMAC block stream — write
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/HmacBlockStreamWriter.swift`
@@ -1223,7 +1223,7 @@ git commit -m "Чтение и проверка HMAC-блочного поток
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/HmacBlockStreamWriterTests.swift
 import XCTest
@@ -1248,17 +1248,17 @@ final class HmacBlockStreamWriterTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter HmacBlockStreamWriterTests`
   Expected: FAIL with "value of type 'HmacBlockStream.Type' has no member 'write'"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/HmacBlockStreamWriter.swift
 import Foundation
 import Crypto
 
 extension HmacBlockStream {
-    static let defaultBlockSize = 1 << 20 // 1 МиБ
+    static let defaultBlockSize = 1 << 20 // 1 MiB
 
     static func write(_ payload: Data, hmacKeyBase: Data, blockSize: Int = defaultBlockSize) -> Data {
         var out = Data()
@@ -1282,30 +1282,30 @@ extension HmacBlockStream {
             offset = end
             index += 1
         }
-        appendBlock(index: index, data: Data()) // финальный блок с размером 0
+        appendBlock(index: index, data: Data()) // final block with size 0
         return out
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter HmacBlockStreamWriterTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/HmacBlockStreamWriter.swift Packages/MyPassKit/Tests/MyPassKitTests/HmacBlockStreamWriterTests.swift
-git commit -m "Запись HMAC-блочного потока KDBX4"
+git commit -m "KDBX4 HMAC block stream write"
 ```
 
 ---
 
-### Task 9: AES-256-CBC шифр (CommonCrypto)
+### Task 9: AES-256-CBC cipher (CommonCrypto)
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/AES256CBCCipher.swift`
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/AES256CBCCipherTests.swift`
 
 **Interfaces:**
-- Consumes: ничего напрямую (использует системный CommonCrypto).
+- Consumes: nothing directly (uses system CommonCrypto).
 - Produces:
   ```swift
   enum CipherError: Error { case invalidKeyOrIVLength, operationFailed }
@@ -1315,14 +1315,14 @@ git commit -m "Запись HMAC-блочного потока KDBX4"
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/AES256CBCCipherTests.swift
 import XCTest
 @testable import MyPassKit
 
 final class AES256CBCCipherTests: XCTestCase {
-    // NIST SP 800-38A F.2.5 CBC-AES256.Encrypt, первый блок:
+    // NIST SP 800-38A F.2.5 CBC-AES256.Encrypt, first block:
     // Key = 603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff
     // IV  = 000102030405060708090a0b0c0d0e0f
     // Plaintext block 1 = 6bc1bee22e409f96e93d7e117393172a
@@ -1330,14 +1330,14 @@ final class AES256CBCCipherTests: XCTestCase {
     func testMatchesNistCbcVector() throws {
         let key = Data(hex: "603deb1015ca71be2b73aef0857d77811f352c073b6108d72d9810a30914dff")
         let iv = Data(hex: "000102030405060708090a0b0c0d0e0f")
-        let plaintext = Data(hex: "6bc1bee22e409f96e93d7e117393172a" + "a") // выровнено ниже
-        _ = plaintext // строка выше намеренно не используется — см. следующий блок
+        let plaintext = Data(hex: "6bc1bee22e409f96e93d7e117393172a" + "a") // aligned below
+        _ = plaintext // line above intentionally unused — see next block
         let plaintextBlock = Data(hex: "6bc1bee22e409f96e93d7e117393172")
         let expectedCiphertextBlock = Data(hex: "f58c4c04d6e5f1ba779eabfb5f7bfbd6")
 
-        // CommonCrypto с PKCS7-паддингом добавит доп. блок паддинга для ровно
-        // одного 16-байтового блока входа — поэтому шифруем 2 идентичных блока
-        // подряд без паддинга через .noPadding и сверяем только первый блок вывода.
+        // CommonCrypto with PKCS7 padding adds extra padding block for exactly
+        // one 16-byte input block — therefore encrypt 2 identical blocks
+        // in sequence without padding via .noPadding and compare only first output block.
         let doubleBlockPlaintext = plaintextBlock + plaintextBlock
         let ciphertext = try AES256CBCCipher.encrypt(plaintext: doubleBlockPlaintext, key: key, iv: iv)
         XCTAssertEqual(ciphertext.prefix(16), expectedCiphertextBlock)
@@ -1346,7 +1346,7 @@ final class AES256CBCCipherTests: XCTestCase {
     func testEncryptDecryptRoundTrip() throws {
         let key = Data(repeating: 0x5A, count: 32)
         let iv = Data(repeating: 0xA5, count: 16)
-        let plaintext = Data("MyPassKit KDBX4 round-trip test payload, произвольная длина!".utf8)
+        let plaintext = Data("MyPassKit KDBX4 round-trip test payload, arbitrary length!".utf8)
 
         let ciphertext = try AES256CBCCipher.encrypt(plaintext: plaintext, key: key, iv: iv)
         let decrypted = try AES256CBCCipher.decrypt(ciphertext: ciphertext, key: key, iv: iv)
@@ -1355,7 +1355,7 @@ final class AES256CBCCipherTests: XCTestCase {
     }
 
     func testInvalidKeyLengthThrows() {
-        let key = Data(repeating: 0x01, count: 16) // AES-128 длина, не 256
+        let key = Data(repeating: 0x01, count: 16) // AES-128 length, not 256
         let iv = Data(repeating: 0x02, count: 16)
         XCTAssertThrowsError(try AES256CBCCipher.encrypt(plaintext: Data([1,2,3]), key: key, iv: iv)) { error in
             guard case CipherError.invalidKeyOrIVLength = error else {
@@ -1378,10 +1378,10 @@ private extension Data {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter AES256CBCCipherTests`
   Expected: FAIL with "cannot find 'AES256CBCCipher' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/AES256CBCCipher.swift
 import Foundation
@@ -1430,25 +1430,25 @@ enum AES256CBCCipher {
 }
 ```
 
-  Примечание к Step 3: для теста `testMatchesNistCbcVector` реализация должна
-  вызываться без PKCS7-паддинга (вход уже кратен 16 байтам) — при `count % 16 == 0`
-  ветка `encrypt` в коде выше уже передаёт `padding = 0`. Это осознанный компромисс:
-  реальный KDBX4-writer у нас всегда работает с произвольной длиной payload (XML
-  всегда добивается паддингом самим CommonCrypto), и только этот конкретный NIST-тест
-  требует «сырого» блочного режима без паддинга для сверки с эталонным вектором.
+  Note for Step 3: for `testMatchesNistCbcVector` test implementation must
+  be called without PKCS7 padding (input already multiple of 16 bytes) — when `count % 16 == 0`
+  `encrypt` branch in code above already passes `padding = 0`. This is intentional compromise:
+  real KDBX4 writer always works with arbitrary payload length (XML
+  always padded by CommonCrypto itself), and only this specific NIST test
+  requires "raw" block mode without padding for reference vector cross-check.
 
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter AES256CBCCipherTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/AES256CBCCipher.swift Packages/MyPassKit/Tests/MyPassKitTests/AES256CBCCipherTests.swift
-git commit -m "AES-256-CBC шифр внешнего потока через CommonCrypto, сверка с NIST-вектором"
+git commit -m "AES-256-CBC outer stream cipher via CommonCrypto, NIST vector cross-check"
 ```
 
 ---
 
-### Task 10: ChaCha20 «сырой» потоковый шифр (swift-sodium) — внешний шифр
+### Task 10: ChaCha20 raw streaming cipher (swift-sodium) — outer cipher
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/ChaCha20StreamCipher.swift`
@@ -1459,11 +1459,11 @@ git commit -m "AES-256-CBC шифр внешнего потока через Com
 - Produces:
   ```swift
   enum ChaCha20StreamCipher {
-      static func apply(to data: Data, key: Data, nonce: Data) throws -> Data // XOR-поток, encrypt == decrypt
+      static func apply(to data: Data, key: Data, nonce: Data) throws -> Data // XOR stream, encrypt == decrypt
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/ChaCha20StreamCipherTests.swift
 import XCTest
@@ -1472,7 +1472,7 @@ import XCTest
 final class ChaCha20StreamCipherTests: XCTestCase {
     func testEncryptDecryptIsSymmetric() throws {
         let key = Data(repeating: 0x11, count: 32)
-        let nonce = Data(repeating: 0x22, count: 12) // KDBX4 ChaCha20 IV = 12 байт
+        let nonce = Data(repeating: 0x22, count: 12) // KDBX4 ChaCha20 IV = 12 bytes
         let plaintext = Data("MyPassKit ChaCha20 outer cipher test".utf8)
 
         let ciphertext = try ChaCha20StreamCipher.apply(to: plaintext, key: key, nonce: nonce)
@@ -1491,10 +1491,10 @@ final class ChaCha20StreamCipherTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter ChaCha20StreamCipherTests`
   Expected: FAIL with "cannot find 'ChaCha20StreamCipher' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/ChaCha20StreamCipher.swift
 import Foundation
@@ -1504,10 +1504,10 @@ import Clibsodium
 enum ChaCha20StreamCipherError: Error { case invalidKeyOrNonceLength, sodiumFailure }
 
 enum ChaCha20StreamCipher {
-    /// IETF-вариант ChaCha20 (12-байтный nonce), как того требует KDBX4 EncryptionIV
-    /// для внешнего шифра ChaCha20. XOR-поток: encrypt(data) == decrypt(data) для
-    /// одного и того же key/nonce (нет отдельного счётчика на входе — libsodium
-    /// crypto_stream_chacha20_ietb_xor сам стартует с counter=0).
+    /// IETF ChaCha20 variant (12-byte nonce), as required by KDBX4 EncryptionIV
+    /// for outer ChaCha20 cipher. XOR stream: encrypt(data) == decrypt(data) for
+    /// same key/nonce (no separate counter on input — libsodium
+    /// crypto_stream_chacha20_ietb_xor starts with counter=0 itself).
     static func apply(to data: Data, key: Data, nonce: Data) throws -> Data {
         guard key.count == 32, nonce.count == 12 else {
             throw ChaCha20StreamCipherError.invalidKeyOrNonceLength
@@ -1530,36 +1530,36 @@ enum ChaCha20StreamCipher {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter ChaCha20StreamCipherTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/ChaCha20StreamCipher.swift Packages/MyPassKit/Tests/MyPassKitTests/ChaCha20StreamCipherTests.swift
-git commit -m "ChaCha20 потоковый шифр внешнего формата через swift-sodium/libsodium"
+git commit -m "ChaCha20 outer format streaming cipher via swift-sodium/libsodium"
 ```
 
 ---
 
-### Task 11: Внутренний потоковый шифр защищённых строк (Salsa20 / ChaCha20)
+### Task 11: Inner streaming cipher for protected strings (Salsa20 / ChaCha20)
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/InnerRandomStreamCipher.swift`
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/InnerRandomStreamCipherTests.swift`
 
 **Interfaces:**
-- Consumes: `Sodium`/`Clibsodium` (Task 2), `ChaCha20StreamCipher` (Task 10, для варианта ChaCha20 — переиспользуется).
+- Consumes: `Sodium`/`Clibsodium` (Task 2), `ChaCha20StreamCipher` (Task 10, for ChaCha20 variant — reused).
 - Produces:
   ```swift
   enum InnerRandomStreamID: UInt32 { case salsa20 = 2, chaCha20 = 3 }
   enum InnerRandomStreamCipherError: Error { case unsupportedStream(UInt32) }
   final class InnerRandomStreamCipher {
       init(streamID: InnerRandomStreamID, rawKey: Data) throws
-      func nextBytes(_ count: Int) -> Data // последовательный XOR-keystream для protected-значений по порядку появления в XML
+      func nextBytes(_ count: Int) -> Data // sequential XOR keystream for protected values in order of appearance in XML
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/InnerRandomStreamCipherTests.swift
 import XCTest
@@ -1575,7 +1575,7 @@ final class InnerRandomStreamCipherTests: XCTestCase {
         let cipherB = try InnerRandomStreamCipher(streamID: .chaCha20, rawKey: rawKey)
         let combinedCall = cipherB.nextBytes(16)
 
-        XCTAssertEqual(firstCall + secondCall, combinedCall, "keystream должен быть непрерывным независимо от разбиения на вызовы")
+        XCTAssertEqual(firstCall + secondCall, combinedCall, "keystream must be continuous regardless of call splitting")
     }
 
     func testSalsa20StreamProducesNonTrivialOutput() throws {
@@ -1605,10 +1605,10 @@ private func xor(_ a: Data, _ b: Data) -> Data {
     Data(zip(a, b).map { $0 ^ $1 })
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter InnerRandomStreamCipherTests`
   Expected: FAIL with "cannot find 'InnerRandomStreamCipher' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/InnerRandomStreamCipher.swift
 import Foundation
@@ -1618,9 +1618,9 @@ import Clibsodium
 enum InnerRandomStreamID: UInt32 { case salsa20 = 2, chaCha20 = 3 }
 enum InnerRandomStreamCipherError: Error, Equatable { case unsupportedStream(UInt32) }
 
-/// KeePass-константа nonce для Salsa20-варианта внутреннего потока (см. Global
-/// Constraints — если задача обнаружит расхождение при кросс-тесте с реальным
-/// файлом KeePassXC (Task 16), зафиксировать явно, не переопределять молча).
+/// KeePass nonce constant for Salsa20 inner stream variant (see Global
+/// Constraints — if task finds discrepancy in cross-test with real
+/// KeePassXC file (Task 16), document explicitly, do not silently override).
 private let salsa20FixedNonce: [UInt8] = [0xE8, 0x30, 0x09, 0x4B, 0x97, 0x20, 0x5D, 0x2A]
 
 final class InnerRandomStreamCipher {
@@ -1636,20 +1636,20 @@ final class InnerRandomStreamCipher {
     init(streamID: InnerRandomStreamID, rawKey: Data) throws {
         switch streamID {
         case .salsa20:
-            let key = Array(Data(SHA256.hash(data: rawKey))) // ключ Salsa20 = SHA256(rawKey)
+            let key = Array(Data(SHA256.hash(data: rawKey))) // Salsa20 key = SHA256(rawKey)
             algo = .salsa20(key: key)
         case .chaCha20:
             let hashed = Array(Data(SHA512.hash(data: rawKey)))
             let key = Array(hashed[0..<32])
-            let nonce = Array(hashed[32..<44]) // следующие 12 байт — nonce
+            let nonce = Array(hashed[32..<44]) // next 12 bytes — nonce
             algo = .chaCha20(key: key, nonce: nonce)
         }
     }
 
-    /// Возвращает следующие `count` байт непрерывного keystream, XOR которого с
-    /// защищёнными значениями в порядке их появления в XML даёт открытый текст
-    /// (и наоборот). Вызовы накопительны — второй вызов продолжает поток с того
-    /// места, где закончился предыдущий.
+    /// Returns next `count` bytes of continuous keystream, XOR with which over
+    /// protected values in order of appearance in XML yields plaintext
+    /// (and vice versa). Calls are cumulative — second call continues stream from where
+    /// previous one ended.
     func nextBytes(_ count: Int) -> Data {
         var result = [UInt8]()
         result.reserveCapacity(count)
@@ -1678,23 +1678,23 @@ final class InnerRandomStreamCipher {
             var keyCopy = key
             _ = crypto_stream_chacha20_ietf_xor_ic(&out, &zeros, UInt64(blockSize), &nonceCopy, counter, &keyCopy)
         }
-        counter += UInt64(blockSize / 64) // счётчик блоков по 64 байта, как того требует libsodium _ic API
+        counter += UInt64(blockSize / 64) // block counter in 64-byte units, as required by libsodium _ic API
         return out
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter InnerRandomStreamCipherTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/InnerRandomStreamCipher.swift Packages/MyPassKit/Tests/MyPassKitTests/InnerRandomStreamCipherTests.swift
-git commit -m "Внутренний потоковый шифр защищённых строк: Salsa20/ChaCha20"
+git commit -m "Inner streaming cipher for protected strings: Salsa20/ChaCha20"
 ```
 
 ---
 
-### Task 12: Внутренний заголовок — парсинг и сериализация
+### Task 12: Inner header — parsing and serialization
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/KdbxInnerHeader.swift`
@@ -1715,7 +1715,7 @@ git commit -m "Внутренний потоковый шифр защищённ
   enum KdbxInnerHeaderError: Error { case truncated, missingRequiredField, unknownStreamID(UInt32) }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/KdbxInnerHeaderTests.swift
 import XCTest
@@ -1756,10 +1756,10 @@ final class KdbxInnerHeaderTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxInnerHeaderTests`
   Expected: FAIL with "cannot find 'KdbxInnerHeader' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/KdbxInnerHeader.swift
 import Foundation
@@ -1843,18 +1843,18 @@ struct KdbxInnerHeader: Equatable {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxInnerHeaderTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/KdbxInnerHeader.swift Packages/MyPassKit/Tests/MyPassKitTests/KdbxInnerHeaderTests.swift
-git commit -m "Внутренний заголовок KDBX4: парсинг и сериализация"
+git commit -m "KDBX4 inner header: parsing and serialization"
 ```
 
 ---
 
-### Task 13: Модель данных — Group/Entry/History/DeletedObjects
+### Task 13: Data model — Group/Entry/History/DeletedObjects
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Model/KdbxEntry.swift`
@@ -1863,7 +1863,7 @@ git commit -m "Внутренний заголовок KDBX4: парсинг и 
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/KdbxModelTests.swift`
 
 **Interfaces:**
-- Consumes: ничего (модель не зависит от формата напрямую — конвертация в/из XML происходит в Task 14).
+- Consumes: nothing (model does not depend on format directly — conversion to/from XML happens in Task 14).
 - Produces:
   ```swift
   struct KdbxField: Equatable { var key: String; var value: String; var isProtected: Bool }
@@ -1875,7 +1875,7 @@ git commit -m "Внутренний заголовок KDBX4: парсинг и 
       var lastModificationTime: Date
       var lastAccessTime: Date
       var locationChanged: Date
-      var history: [KdbxEntry] // прошлые версии; у элементов history .history == []
+      var history: [KdbxEntry] // past versions; history elements have .history == []
   }
   final class KdbxGroup: Equatable {
       var uuid: UUID; var name: String; var iconID: Int
@@ -1886,7 +1886,7 @@ git commit -m "Внутренний заголовок KDBX4: парсинг и 
   struct KdbxDeletedObject: Equatable { var uuid: UUID; var deletionTime: Date }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/KdbxModelTests.swift
 import XCTest
@@ -1938,10 +1938,10 @@ final class KdbxModelTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxModelTests`
   Expected: FAIL with "cannot find 'KdbxEntry' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Model/KdbxEntry.swift
 import Foundation
@@ -2006,18 +2006,18 @@ struct KdbxDeletedObject: Equatable {
     var deletionTime: Date
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxModelTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Model/KdbxEntry.swift Packages/MyPassKit/Sources/MyPassKit/Model/KdbxGroup.swift Packages/MyPassKit/Sources/MyPassKit/Model/KdbxDeletedObject.swift Packages/MyPassKit/Tests/MyPassKitTests/KdbxModelTests.swift
-git commit -m "Модель данных: KdbxEntry (с History), KdbxGroup, KdbxDeletedObject"
+git commit -m "Data model: KdbxEntry (with History), KdbxGroup, KdbxDeletedObject"
 ```
 
 ---
 
-### Task 14: XML-кодирование дерева (без защищённых значений — базовая структура)
+### Task 14: Tree XML encoding (without protected values — basic structure)
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/Format/KdbxXmlCoder.swift`
@@ -2033,15 +2033,15 @@ git commit -m "Модель данных: KdbxEntry (с History), KdbxGroup, Kdb
   }
   enum KdbxXmlCoderError: Error { case malformedXml, missingRequiredElement(String) }
   enum KdbxXmlCoder {
-      // protectedValueProvider отдаёт очередной кусок XOR-keystream той же длины,
-      // что и protected-значение (используется InnerRandomStreamCipher.nextBytes(_:)
-      // из Task 11 в порядке появления элементов в документе).
+      // protectedValueProvider returns next XOR-keystream chunk of same length,
+      // as protected value (uses InnerRandomStreamCipher.nextBytes(_:)
+      // from Task 11 in order of element appearance in document).
       static func encode(_ payload: KdbxXmlPayload, obfuscate: (Data) -> Data) -> Data
       static func decode(_ xml: Data, deobfuscate: (Data) -> Data) throws -> KdbxXmlPayload
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/KdbxXmlCoderTests.swift
 import XCTest
@@ -2072,8 +2072,8 @@ final class KdbxXmlCoderTests: XCTestCase {
         let deleted = KdbxDeletedObject(uuid: UUID(), deletionTime: Date(timeIntervalSince1970: 1_700_000_050))
         let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [deleted])
 
-        // XOR с фиксированным одноразовым keystream — для теста достаточно
-        // симметричной пары функций, не обязательно настоящего InnerRandomStreamCipher.
+        // XOR with fixed one-time keystream — sufficient for test
+        // symmetric function pair, not necessarily real InnerRandomStreamCipher.
         var keystreamCounter: UInt8 = 0
         func obfuscate(_ data: Data) -> Data {
             Data(data.map { byte -> UInt8 in
@@ -2084,7 +2084,7 @@ final class KdbxXmlCoderTests: XCTestCase {
 
         let xml = KdbxXmlCoder.encode(payload) { plaintext in obfuscate(plaintext) }
 
-        keystreamCounter = 0 // сбрасываем для симметричного деобфускатора при декодировании
+        keystreamCounter = 0 // reset for symmetric deobfuscator on decode
         let decoded = try KdbxXmlCoder.decode(xml) { ciphertext in obfuscate(ciphertext) }
 
         XCTAssertEqual(decoded.rootGroup.name, "Root")
@@ -2095,16 +2095,16 @@ final class KdbxXmlCoderTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxXmlCoderTests`
   Expected: FAIL with "cannot find 'KdbxXmlPayload' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 
-  Используем `Foundation.XMLDocument`/`XMLElement` (доступны на macOS из коробки;
-  на iOS `XMLDocument` недоступен в Foundation — для Фазы 1 (только macOS-таргет)
-  это не блокирует; при переносе на iOS в более поздней фазе потребуется замена
-  на сторонний XML-парсер или ручной построитель — зафиксировать как известное
-  ограничение, не решать сейчас, т.к. вне рамок Фазы 1).
+  Use `Foundation.XMLDocument`/`XMLElement` (available on macOS out of the box;
+  on iOS `XMLDocument` unavailable in Foundation — for Phase 1 (macOS target only)
+  this does not block; when porting to iOS in later phase replacement will be needed
+  with third-party XML parser or manual builder — document as known
+  limitation, do not solve now, as out of scope for Phase 1).
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/Format/KdbxXmlCoder.swift
 import Foundation
@@ -2267,22 +2267,22 @@ enum KdbxXmlCoder {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxXmlCoderTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/Format/KdbxXmlCoder.swift Packages/MyPassKit/Tests/MyPassKitTests/KdbxXmlCoderTests.swift
-git commit -m "XML-кодирование дерева Group/Entry/DeletedObjects с защищёнными полями"
+git commit -m "Tree XML encoding Group/Entry/DeletedObjects with protected fields"
 ```
 
 ---
 
-### Task 15: KdbxDatabase — фасад открытия/сохранения файла
+### Task 15: KdbxDatabase — file open/save facade
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift`
-- Create: `Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/` (копируются файлы из спайка Task 1, если решение — custom-parser)
+- Create: `Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/` (files copied from Task 1 spike, if decision is custom-parser)
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/KdbxDatabaseTests.swift`
 
 **Interfaces:**
@@ -2301,7 +2301,7 @@ git commit -m "XML-кодирование дерева Group/Entry/DeletedObject
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/KdbxDatabaseTests.swift
 import XCTest
@@ -2350,13 +2350,13 @@ final class KdbxDatabaseTests: XCTestCase {
         }
     }
 
-    /// Кросс-совместимость: файл создан реальным KeePassXC (см. решение Task 1 —
-    /// файл скопирован в Fixtures/ только если исход спайка — custom-parser).
-    /// Пароль для фикстуры зафиксирован в `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`.
+    /// Cross-compatibility: file created by real KeePassXC (see Task 1 decision —
+    /// file copied to Fixtures/ only if spike outcome is custom-parser).
+    /// Fixture password recorded in `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`.
     func testOpensRealKeePassXCReferenceFile() throws {
         let fixtureURL = Bundle.module.url(forResource: "argon2id-aes256-gzip", withExtension: "kdbx", subdirectory: "Fixtures")
         guard let fixtureURL else {
-            throw XCTSkip("Фикстура не найдена — скопировать из спайка Task 1 перед выполнением этого теста")
+            throw XCTSkip("Fixture not found — copy from Task 1 spike before running this test")
         }
         let data = try Data(contentsOf: fixtureURL)
         let database = try KdbxDatabase.open(data: data, password: "REPLACE-WITH-REAL-FIXTURE-PASSWORD")
@@ -2364,10 +2364,10 @@ final class KdbxDatabaseTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxDatabaseTests`
   Expected: FAIL with "cannot find 'KdbxDatabase' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift
 import Foundation
@@ -2449,7 +2449,7 @@ struct KdbxDatabase {
         var kdfParameters = VariantDictionary()
         kdfParameters.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
         kdfParameters.items["S"] = .byteArray(salt)
-        kdfParameters.items["M"] = .uint64(64 * 1024 * 1024) // 64 МиБ
+        kdfParameters.items["M"] = .uint64(64 * 1024 * 1024) // 64 MiB
         kdfParameters.items["I"] = .uint64(3)
         kdfParameters.items["P"] = .uint32(1)
         kdfParameters.items["V"] = .uint32(0x13)
@@ -2526,57 +2526,57 @@ private func gunzip(_ data: Data) throws -> Data {
 }
 ```
 
-  Примечание: `NSData.compressed(using:)`/`decompressed(using:)` (Foundation,
-  доступны на macOS 10.15+/iOS 13+) реализуют "raw deflate" (`.zlib` в Apple API —
-  это библиотека zlib, но БЕЗ gzip-заголовка/трейлера). KDBX4 в поле
-  `CompressionFlags=1` использует именно **gzip**-контейнер (с magic-байтами
-  `1F 8B`), а не сырой deflate/zlib-stream — это разные обёртки над одним и тем
-  же алгоритмом. **Флаг расхождения / доработка перед использованием:** заменить
-  `gzip`/`gunzip` выше на обёртку через `Compression`-фреймворк с
-  `COMPRESSION_ZLIB` + ручной сборкой gzip-заголовка (magic `1F 8B 08 00`,
-  mtime, флаги, и CRC32+ISIZE трейлер), либо на сторонний пакет с честной
-  gzip-поддержкой (например `swift-nio-extras`'s `NIOHTTPCompression`, либо
-  `zlib`-биндинг с ручным gzip-оборачиванием). Это единственное место в плане,
-  где предложенная в Step 3 реализация заведомо неполна — задача 16
-  (кросс-тест с реальными файлами KeePassXC) обязана поймать несовместимость
-  здесь и потребовать исправления перед тем как считать Task 15 завершённой.
+  Note: `NSData.compressed(using:)`/`decompressed(using:)` (Foundation,
+  available on macOS 10.15+/iOS 13+) implement "raw deflate" (`.zlib` in Apple API —
+  this is zlib library but WITHOUT gzip header/trailer). KDBX4 in field
+  `CompressionFlags=1` uses exactly **gzip** container (with magic bytes
+  `1F 8B`), not raw deflate/zlib-stream — different wrappers over same
+  algorithm. **Discrepancy flag / fix before use:** replace
+  `gzip`/`gunzip` above with wrapper via `Compression` framework with
+  `COMPRESSION_ZLIB` + manual gzip header assembly (magic `1F 8B 08 00`,
+  mtime, flags, and CRC32+ISIZE trailer), or third-party package with proper
+  gzip support (e.g. `swift-nio-extras`'s `NIOHTTPCompression`, or
+  `zlib` binding with manual gzip wrapping). This is the only place in plan,
+  where Step 3 proposed implementation is knowingly incomplete — Task 16
+  (cross-test with real KeePassXC files) must catch incompatibility
+  here and require fix before considering Task 15 complete.
 
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxDatabaseTests`
-  Expected: PASS для `testOpenSaveOpenRoundTripPreservesData` и `testOpenWithWrongPasswordThrows`
-  (свой формат внутренне непротиворечив даже при неверной gzip-обёртке, т.к.
-  сжимаем и распаковываем одной и той же функцией). `testOpensRealKeePassXCReferenceFile`
-  — SKIP до тех пор, пока в Task 16 не будет исправлена gzip-обёртка и не
-  подложена реальная фикстура.
+  Expected: PASS for `testOpenSaveOpenRoundTripPreservesData` and `testOpenWithWrongPasswordThrows`
+  (own format internally consistent even with wrong gzip wrapper, since
+  compress and decompress with same function). `testOpensRealKeePassXCReferenceFile`
+  — SKIP until Task 16 fixes gzip wrapper and
+  real fixture is added.
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift Packages/MyPassKit/Tests/MyPassKitTests/KdbxDatabaseTests.swift
-git commit -m "KdbxDatabase: фасад open/save, известное ограничение — gzip-обёртка требует доработки"
+git commit -m "KdbxDatabase: open/save facade, known limitation — gzip wrapper needs fix"
 ```
 
 ---
 
-### Task 16: Кросс-совместимость с реальными файлами KeePassXC + исправление gzip
+### Task 16: Cross-compatibility with real KeePassXC files + gzip fix
 
 **Files:**
-- Modify: `Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift` (функции `gzip`/`gunzip`)
-- Create: `Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/*.kdbx` (копии из `/tmp/mypass-spike/reference-kdbx/`, полученных в Task 1)
+- Modify: `Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift` (`gzip`/`gunzip` functions)
+- Create: `Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/*.kdbx` (copies from `/tmp/mypass-spike/reference-kdbx/`, obtained in Task 1)
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/KdbxCrossCompatibilityTests.swift`
 
 **Interfaces:**
 - Consumes: `KdbxDatabase.open`/`save` (Task 15).
-- Produces: исправленные `gzip(_:)`/`gunzip(_:)` с настоящим gzip-контейнером;
-  проходящий тест `testOpensRealKeePassXCReferenceFile` из Task 15 (снять `XCTSkip`).
+- Produces: fixed `gzip(_:)`/`gunzip(_:)` with real gzip container;
+  passing `testOpensRealKeePassXCReferenceFile` from Task 15 (remove `XCTSkip`).
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/KdbxCrossCompatibilityTests.swift
 import XCTest
 @testable import MyPassKit
 
 final class KdbxCrossCompatibilityTests: XCTestCase {
-    /// Файлы и пароли берутся из docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md
-    /// (записаны там на Step 1 спайка в Task 1).
+    /// Files and passwords taken from docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md
+    /// (recorded there in Task 1 spike Step 1).
     func testOpensAllReferenceFixtures() throws {
         let fixtureNames = [
             ("aes256-aeskdf-nozip", "TestMasterPass123"),
@@ -2585,10 +2585,10 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
         ]
         for (name, password) in fixtureNames {
             guard let url = Bundle.module.url(forResource: name, withExtension: "kdbx", subdirectory: "Fixtures") else {
-                throw XCTSkip("Фикстура \(name).kdbx отсутствует — скопировать из спайка Task 1")
+                throw XCTSkip("Fixture \(name).kdbx missing — copy from Task 1 spike")
             }
             let data = try Data(contentsOf: url)
-            XCTAssertNoThrow(try KdbxDatabase.open(data: data, password: password), "не удалось открыть \(name)")
+            XCTAssertNoThrow(try KdbxDatabase.open(data: data, password: password), "failed to open \(name)")
         }
     }
 
@@ -2597,50 +2597,50 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
         let database = KdbxDatabase(rootGroup: root, deletedObjects: [])
         let saved = try database.save(password: "test-pass", cipher: .aes256, compression: .gzip)
 
-        // gzip magic bytes должны присутствовать где-то в расшифрованном потоке —
-        // косвенная проверка того, что используется настоящий gzip, а не сырой deflate.
-        // Прямая проверка тут невозможна без расшифровки, поэтому проверяем через
-        // повторное открытие нашим же кодом (внутренняя когерентность) —
-        // основная проверка формата — testOpensAllReferenceFixtures выше.
+        // gzip magic bytes must be present somewhere in decrypted stream —
+        // indirect check that real gzip is used, not raw deflate.
+        // Direct check impossible without decryption, so verify via
+        // re-opening with our own code (internal coherence) —
+        // main format check — testOpensAllReferenceFixtures above.
         let reopened = try KdbxDatabase.open(data: saved, password: "test-pass")
         XCTAssertEqual(reopened.rootGroup.name, "Root")
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxCrossCompatibilityTests`
-  Expected: FAIL (либо XCTSkip если фикстуры не скопированы — в этом случае Step 1
-  этой задачи включает копирование фикстур как обязательное предварительное действие
-  перед тем, как переходить к Step 3)
-- [ ] **Step 3: Написать реализацию (копирование фикстур + исправление gzip)**
-  Скопировать файлы, полученные в Task 1 Step 1, в фикстуры пакета:
+  Expected: FAIL (or XCTSkip if fixtures not copied — in that case Step 1
+  of this task includes copying fixtures as mandatory prerequisite
+  before proceeding to Step 3)
+- [ ] **Step 3: Write implementation (copy fixtures + fix gzip)**
+  Copy files obtained in Task 1 Step 1 into package fixtures:
   ```bash
   mkdir -p Packages/MyPassKit/Tests/MyPassKitTests/Fixtures
   cp /tmp/mypass-spike/reference-kdbx/*.kdbx Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/
   ```
-  Добавить ресурсы в `Package.swift` (testTarget):
+  Add resources to `Package.swift` (testTarget):
 ```swift
-// Modify: Packages/MyPassKit/Package.swift — testTarget получает resources:
+// Modify: Packages/MyPassKit/Package.swift — testTarget gets resources:
 .testTarget(
     name: "MyPassKitTests",
     dependencies: ["MyPassKit", .product(name: "Sodium", package: "swift-sodium")],
     resources: [.copy("Fixtures")]
 )
 ```
-  Заменить `gzip`/`gunzip` в `KdbxDatabase.swift` на настоящий gzip-контейнер
-  поверх `Compression`-фреймворка (`COMPRESSION_ZLIB` — это deflate/inflate,
-  gzip-обёртку строим вручную вокруг него, т.к. `Compression.framework` тоже не
-  даёт gzip напрямую):
+  Replace `gzip`/`gunzip` in `KdbxDatabase.swift` with real gzip container
+  over `Compression` framework (`COMPRESSION_ZLIB` — deflate/inflate,
+  gzip wrapper built manually around it, since `Compression.framework` also does not
+  provide gzip directly):
 ```swift
 // Modify: Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift
 import Compression
-import zlib // системная библиотека zlib, доступна через Glibc/Darwin-модуль
+import zlib // system zlib library, available via Glibc/Darwin module
 
 private func gzip(_ data: Data) throws -> Data {
     var stream = z_stream()
-    // windowBits = 15 + 16 включает gzip-заголовок/трейлер в самом zlib (стандартный
-    // приём: deflateInit2 с windowBits в диапазоне 16+9..16+15 даёт gzip-формат
-    // вместо zlib-формата — это задокументированное поведение zlib, а не хак).
+    // windowBits = 15 + 16 includes gzip header/trailer in zlib itself (standard
+    // approach: deflateInit2 with windowBits in range 16+9..16+15 gives gzip format
+    // instead of zlib format — documented zlib behavior, not a hack).
     var result = deflateInit2_(&stream, Z_DEFAULT_COMPRESSION, Z_DEFLATED, 15 + 16, 8, Z_DEFAULT_STRATEGY, ZLIB_VERSION, Int32(MemoryLayout<z_stream>.size))
     guard result == Z_OK else { throw KdbxDatabaseError.corruptFile("deflateInit2 failed") }
     defer { deflateEnd(&stream) }
@@ -2694,21 +2694,21 @@ private func gunzip(_ data: Data) throws -> Data {
     return output
 }
 ```
-  Убрать теперь неиспользуемый `import Crypto` дубликат в конце файла из Task 15
-  (уже импортирован в начале файла) и убедиться, что `import zlib` резолвится
-  (на macOS системный zlib доступен без дополнительной SPM-зависимости через
-  module map `zlibshim`, если прямой `import zlib` не резолвится в SPM —
-  добавить system-library target-обёртку `Packages/MyPassKit/Sources/CZlib/module.modulemap`
-  с содержимым `module CZlib [system] { header "shim.h" link "z" export * }` и
-  `shim.h` с `#include <zlib.h>`; в этом случае заменить `import zlib` на `import CZlib`
-  и добавить таргет в `Package.swift`).
-- [ ] **Step 4: Запустить тест снова**
+  Remove now-unused `import Crypto` duplicate at end of file from Task 15
+  (already imported at file start) and ensure `import zlib` resolves
+  (on macOS system zlib available without extra SPM dependency via
+  module map `zlibshim`, if direct `import zlib` does not resolve in SPM —
+  add system-library target wrapper `Packages/MyPassKit/Sources/CZlib/module.modulemap`
+  with content `module CZlib [system] { header "shim.h" link "z" export * }` and
+  `shim.h` with `#include <zlib.h>`; in that case replace `import zlib` with `import CZlib`
+  and add target to `Package.swift`).
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter KdbxCrossCompatibilityTests`
-  Expected: PASS. Также перезапустить: `swift test --package-path Packages/MyPassKit --filter KdbxDatabaseTests` — `testOpensRealKeePassXCReferenceFile` (Task 15) больше не должен быть SKIP.
+  Expected: PASS. Also rerun: `swift test --package-path Packages/MyPassKit --filter KdbxDatabaseTests` — `testOpensRealKeePassXCReferenceFile` (Task 15) must no longer be SKIP.
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift Packages/MyPassKit/Package.swift Packages/MyPassKit/Tests/MyPassKitTests/KdbxCrossCompatibilityTests.swift Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/
-git commit -m "Настоящий gzip-контейнер (zlib windowBits+16) + кросс-тесты с реальными файлами KeePassXC"
+git commit -m "Real gzip container (zlib windowBits+16) + cross-tests with real KeePassXC files"
 ```
 
 ---
@@ -2720,7 +2720,7 @@ git commit -m "Настоящий gzip-контейнер (zlib windowBits+16) +
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/TOTPGeneratorTests.swift`
 
 **Interfaces:**
-- Consumes: ничего (использует `Crypto.HMAC<SHA1/SHA256/SHA512>`).
+- Consumes: nothing (uses `Crypto.HMAC<SHA1/SHA256/SHA512>`).
 - Produces:
   ```swift
   enum TOTPAlgorithm { case sha1, sha256, sha512 }
@@ -2729,11 +2729,11 @@ git commit -m "Настоящий gzip-контейнер (zlib windowBits+16) +
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 
-  Тестовые векторы — RFC 6238, Appendix B (официальные, используются verbatim):
-  секрет для SHA1 = ASCII `"12345678901234567890"` (20 байт), время T=59 секунд
-  → 8-значный TOTP = `94287082`.
+  Test vectors — RFC 6238, Appendix B (official, used verbatim):
+  secret for SHA1 = ASCII `"12345678901234567890"` (20 bytes), time T=59 seconds
+  → 8-digit TOTP = `94287082`.
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/TOTPGeneratorTests.swift
 import XCTest
@@ -2756,7 +2756,7 @@ final class TOTPGeneratorTests: XCTestCase {
         XCTAssertEqual(code, "07081804")
     }
 
-    // RFC 6238 Appendix B, Time=59, SHA256, секрет 32 байта "1234567890" * 3.2,
+    // RFC 6238 Appendix B, Time=59, SHA256, 32-byte secret "1234567890" * 3.2,
     // 8 digits → 46119246.
     func testRFC6238SHA256VectorAtTime59() {
         let secret = Data((repeatElement("12345678901234567890123456789012", count: 1).joined()).utf8)
@@ -2770,14 +2770,14 @@ final class TOTPGeneratorTests: XCTestCase {
         let time = Date(timeIntervalSince1970: 59)
         let code = TOTPGenerator.generate(secret: secret, time: time, step: 30, digits: 6, algorithm: .sha1)
         XCTAssertEqual(code.count, 6)
-        XCTAssertEqual(code, "287082") // последние 6 цифр 8-значного 94287082
+        XCTAssertEqual(code, "287082") // last 6 digits of 8-digit 94287082
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter TOTPGeneratorTests`
   Expected: FAIL with "cannot find 'TOTPGenerator' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/TOTP/TOTPGenerator.swift
 import Foundation
@@ -2811,25 +2811,25 @@ enum TOTPGenerator {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter TOTPGeneratorTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/TOTP/TOTPGenerator.swift Packages/MyPassKit/Tests/MyPassKitTests/TOTPGeneratorTests.swift
-git commit -m "TOTP-генератор (RFC 6238) с официальными тестовыми векторами"
+git commit -m "TOTP generator (RFC 6238) with official test vectors"
 ```
 
 ---
 
-### Task 18: Генератор паролей
+### Task 18: Password generator
 
 **Files:**
 - Create: `Packages/MyPassKit/Sources/MyPassKit/PasswordGenerator/PasswordGenerator.swift`
 - Test: `Packages/MyPassKit/Tests/MyPassKitTests/PasswordGeneratorTests.swift`
 
 **Interfaces:**
-- Consumes: ничего (использует `SecRandomCopyBytes` напрямую, без внешних зависимостей).
+- Consumes: nothing (uses `SecRandomCopyBytes` directly, no external dependencies).
 - Produces:
   ```swift
   struct PasswordGeneratorOptions {
@@ -2845,7 +2845,7 @@ git commit -m "TOTP-генератор (RFC 6238) с официальными т
   }
   ```
 
-- [ ] **Step 1: Написать падающий тест**
+- [ ] **Step 1: Write the failing test**
 ```swift
 // Packages/MyPassKit/Tests/MyPassKitTests/PasswordGeneratorTests.swift
 import XCTest
@@ -2881,10 +2881,10 @@ final class PasswordGeneratorTests: XCTestCase {
     }
 }
 ```
-- [ ] **Step 2: Запустить тест, убедиться, что падает**
+- [ ] **Step 2: Run test, verify it fails**
   Run: `swift test --package-path Packages/MyPassKit --filter PasswordGeneratorTests`
   Expected: FAIL with "cannot find 'PasswordGenerator' in scope"
-- [ ] **Step 3: Написать реализацию**
+- [ ] **Step 3: Write implementation**
 ```swift
 // Packages/MyPassKit/Sources/MyPassKit/PasswordGenerator/PasswordGenerator.swift
 import Foundation
@@ -2921,7 +2921,7 @@ enum PasswordGenerator {
         for _ in 0..<options.length {
             var randomByte: UInt8 = 0
             _ = SecRandomCopyBytes(kSecRandomDefault, 1, &randomByte)
-            // Отбрасываем значения, дающие смещение (modulo bias) для непустого пула:
+            // Reject values causing modulo bias for non-empty pool:
             let limit = UInt8(256 - (256 % pool.count))
             var byte = randomByte
             while byte >= limit {
@@ -2933,59 +2933,59 @@ enum PasswordGenerator {
     }
 }
 ```
-- [ ] **Step 4: Запустить тест снова**
+- [ ] **Step 4: Run test again**
   Run: `swift test --package-path Packages/MyPassKit --filter PasswordGeneratorTests`
   Expected: PASS
 - [ ] **Step 5: Commit**
 ```bash
 git add Packages/MyPassKit/Sources/MyPassKit/PasswordGenerator/PasswordGenerator.swift Packages/MyPassKit/Tests/MyPassKitTests/PasswordGeneratorTests.swift
-git commit -m "Генератор паролей: длина и классы символов, криптографически случайный выбор без modulo bias"
+git commit -m "Password generator: length and character classes, cryptographically random selection without modulo bias"
 ```
 
 ---
 
 ## Self-Review
 
-**Покрытие требований спецификации (раздел «Ядро», релевантные Фазе 1 пункты):**
-- Формат KDBX4 чтение/запись, заголовок, KDF, шифр, HMAC-поток → Tasks 3–16.
-- Argon2id как единственный KDF для новых баз (спека: «библиотека kdbx... собственный
-  парсер (CryptoKit + C-библиотека Argon2)») → Task 6, зафиксировано через swift-sodium.
-- Решение KeePassKit vs свой парсер «фиксируется в начале фазы 1» → Task 1.
-- Кросс-совместимость с эталонными файлами KeePassXC (риск №1 и №4 из спеки) →
-  Task 1 (получение файлов) + Task 16 (реальная проверка открытия + обязательное
-  исправление gzip, обнаруженное именно на этом шаге).
-- Модель Group/Entry/History/DeletedObjects → Task 13, 14.
-- TOTP (RFC 6238) → Task 17, официальные векторы RFC.
-- Генератор паролей (длина, классы символов) → Task 18.
-- «Без зависимостей от UI и сети» → весь пакет не импортирует SwiftUI/Network/URLSession;
-  единственные зависимости — CryptoKit, CommonCrypto, Compression/zlib (системные) и
+**Spec requirements coverage (Core section, Phase 1 relevant items):**
+- KDBX4 format read/write, header, KDF, cipher, HMAC stream → Tasks 3–16.
+- Argon2id as sole KDF for new databases (spec: "kdbx library... custom
+  parser (CryptoKit + C Argon2 library)") → Task 6, fixed via swift-sodium.
+- KeePassKit vs own parser decision "fixed at start of phase 1" → Task 1.
+- Cross-compatibility with KeePassXC reference files (spec risks #1 and #4) →
+  Task 1 (obtaining files) + Task 16 (real open verification + mandatory
+  gzip fix discovered at this step).
+- Group/Entry/History/DeletedObjects model → Task 13, 14.
+- TOTP (RFC 6238) → Task 17, official RFC vectors.
+- Password generator (length, character classes) → Task 18.
+- "No UI or network dependencies" → entire package does not import SwiftUI/Network/URLSession;
+  only dependencies — CryptoKit, CommonCrypto, Compression/zlib (system) and
   swift-sodium (SPM).
 
-**Не покрыто этим планом (сознательно, вне Фазы 1):** OpenSSH-сертификаты и SSH-ключи
-как тип записи, passkeys-хранение (конвенция KeePassXC) — спека говорит «закладывается
-сразу», но явно относит passkeys к отдельной фазе после iOS; в модели `KdbxEntry` они
-не описаны как отдельные типы полей в этом плане — при выполнении Task 13/14 добавить
-как generic `KdbxField` записи (уже поддерживается текущей моделью «ключ-значение»,
-специальных типов не требуется на уровне формата), поэтому фактического пробела нет,
-но явно не тестируется в рамках этого плана.
+**Not covered by this plan (intentionally, outside Phase 1):** OpenSSH certificates and SSH keys
+as entry type, passkeys storage (KeePassXC convention) — spec says "laid out
+immediately", but explicitly assigns passkeys to separate phase after iOS; in `KdbxEntry` model they
+not described as separate field types in this plan — when executing Task 13/14 add
+as generic `KdbxField` entries (already supported by current key-value model,
+special types not required at format level), so no actual gap,
+but explicitly not tested within this plan.
 
-**Проверка на плейсхолдеры:** пройден grep по чернового текста плана на `TODO`,
-«similar to Task», «add validation» без кода — не найдено; единственные оговорки
-(«известное ограничение», «флаг расхождения») сопровождаются конкретным планом
-исправления в следующей же задаче (Task 15 → Task 16 для gzip; сверка Argon2-ключей
-в начале Task 6; сверка Salsa20-nonce в Task 11/Task 16).
+**Placeholder check:** grep over plan draft for `TODO`,
+"similar to Task", "add validation" without code — none found; only caveats
+("known limitation", "discrepancy flag") accompanied by concrete fix plan
+in next task (Task 15 → Task 16 for gzip; Argon2 key cross-check
+at start of Task 6; Salsa20-nonce cross-check in Task 11/Task 16).
 
-**Проверка согласованности типов и сигнатур между задачами:**
-- `KdbxDatabase` (не `KDBXDatabase`) — используется одинаково в Task 15, 16.
+**Type and signature consistency check across tasks:**
+- `KdbxDatabase` (not `KDBXDatabase`) — used consistently in Task 15, 16.
 - `KdbxOuterHeader`, `KdbxInnerHeader`, `KdbxXmlCoder`, `KdbxXmlPayload`,
   `KdbxGroup`, `KdbxEntry`, `KdbxField`, `KdbxDeletedObject`, `KeyDerivation`,
   `HmacBlockStream`, `AES256CBCCipher`, `ChaCha20StreamCipher`,
-  `InnerRandomStreamCipher`, `TOTPGenerator`, `PasswordGenerator` — везде
-  использованы последовательно без вариаций регистра/сокращений между задачами,
-  сверено построчно при финальном проходе.
-- `HmacBlockStream.blockKey(index:hmacKeyBase:)` вводится в Task 5 (нужен уже там
-  для `KdbxHeaderAuthentication`) и переиспользуется без изменения сигнатуры в
-  Task 7 и Task 8 — явно отмечено в тексте Task 5/7, чтобы исполнитель не
-  реализовал его дважды.
-- `KdbxKdfUUID` вводится в Task 5 (нужен для теста сериализации заголовка) и
-  переиспользуется в Task 6, 15 без изменений.
+  `InnerRandomStreamCipher`, `TOTPGenerator`, `PasswordGenerator` — everywhere
+  used consistently without case/abbreviation variations between tasks,
+  verified line-by-line in final pass.
+- `HmacBlockStream.blockKey(index:hmacKeyBase:)` introduced in Task 5 (needed there
+  for `KdbxHeaderAuthentication`) and reused without signature change in
+  Task 7 and Task 8 — explicitly noted in Task 5/7 text so executor does not
+  implement it twice.
+- `KdbxKdfUUID` introduced in Task 5 (needed for header serialization test) and
+  reused in Task 6, 15 unchanged.

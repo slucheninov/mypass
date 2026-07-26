@@ -9,13 +9,13 @@ public enum iCloudBackendError: Error, Equatable {
 /// goes through `NSFileCoordinator` so overlapping access from other
 /// processes (Finder, other MyPass instances, the file-provider daemon
 /// itself) is safely serialized — per the design spec's iCloud backend
-/// section ("NSFileCoordinator + NSFilePresenter; conflict-версии
-/// (NSFileVersion) прогоняются через merge и удаляются"). The
+/// section ("NSFileCoordinator + NSFilePresenter; conflict versions
+/// (NSFileVersion) are merged and removed"). The
 /// conflict-version sweep itself is `MergeEngine`'s job once `SyncEngine`
 /// downloads the current file (Tasks 4-6); this class's job is only to
 /// guarantee coordinated, safe I/O and that a read never returns a
 /// partially-downloaded placeholder (`ensureDownloaded`, called from
-/// `read()`), per the design doc's "iCloud задерживает выгрузку" risk row.
+/// `read()`), per the design doc's "iCloud delays eviction" risk row.
 public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBackend {
     private let containerURL: URL
     private let relativePath: String
@@ -147,8 +147,8 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
     /// folds each conflict version's content into it in turn via `merge`,
     /// writes the folded result back as the current version, and marks
     /// every conflict version resolved so iCloud stops surfacing it.
-    /// Addresses the design spec's "conflict-версии (NSFileVersion)
-    /// прогоняются через merge и удаляются" requirement, which Task 11's
+    /// Addresses the design spec's "conflict versions (NSFileVersion)
+    /// are merged and removed" requirement, which Task 11's
     /// initial implementation deliberately deferred (see Phase 3 plan's
     /// Self-Review).
     public func resolveConflictVersions(merge: (Data, Data) throws -> Data) throws -> Bool {

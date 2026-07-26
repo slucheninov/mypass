@@ -1,187 +1,180 @@
-# MyPass — Фаза 4 (Chrome): дизайн
+# MyPass — Phase 4 (Chrome): Design
 
-## Цель и контекст
+## Goal and Context
 
-- Фаза 4 реализует браузерное расширение Chrome (Manifest V3) с автозаполнением
-  логинов и сохранением новых логинов через MyPass. Safari-таргет и общий
-  WebExtension-слой сознательно вынесены за рамки этой фазы (будущая Фаза 4b) —
-  делаем Chrome end-to-end первым.
-- Ссылается на общий дизайн: `docs/superpowers/specs/2026-07-21-mypass-design.md`
-  (раздел «Архитектура и компоненты», «Модель безопасности») — эта спека
-  детализирует и уточняет то, что там было заявлено одной строкой
-  («Расширения — общий JS, Safari-таргет, Chrome-хост, IPC»).
-- Приложение MyPass — sandboxed (`com.apple.security.app-sandbox = true`), без
-  App Group. Это ключевое ограничение, определившее выбор транспорта IPC
-  (см. ниже).
+- Phase 4 implements the Chrome browser extension (Manifest V3) with autofill
+  for logins and saving new logins via MyPass. The Safari target and shared
+  WebExtension layer are deliberately out of scope for this phase (future Phase 4b) —
+  Chrome end-to-end is done first.
+- References the general design: `docs/superpowers/specs/2026-07-21-mypass-design.md`
+  (sections "Architecture and Components", "Security Model") — this spec
+  details and refines what was stated there in a single line
+  ("Extensions — shared JS, Safari target, Chrome host, IPC").
+- The MyPass app is sandboxed (`com.apple.security.app-sandbox = true`), without
+  an App Group. This is the key constraint that determined the IPC transport
+  choice (see below).
 
-## Компоненты
+## Components
 
-- `ChromeExtension/` — MV3 расширение: `manifest.json`, `background.js`
-  (service worker), `content.js` (детект форм логина + автозаполнение по
-  клику пользователя), `popup.html`/`popup.js` (список совпадений по домену,
-  выбор записи, UI подтверждения сохранения нового логина).
-- `ChromeHost/` — нативный helper-процесс (Swift Package executable target),
-  не входит в App Sandbox приложения. Устанавливается/регистрируется главным
-  приложением MyPass через native messaging host manifest
+- `ChromeExtension/` — MV3 extension: `manifest.json`, `background.js`
+  (service worker), `content.js` (login form detection + autofill on
+  user click), `popup.html`/`popup.js` (domain match list,
+  entry selection, new-login save confirmation UI).
+- `ChromeHost/` — native helper process (Swift Package executable target),
+  not inside the app App Sandbox. Installed/registered by the main
+  MyPass app via a native messaging host manifest
   (`~/Library/Application Support/Google/Chrome/NativeMessagingHosts/com.mypass.chromehost.json`,
-  с `allowed_origins`, ограниченным ID расширения). Общение с Chrome — по
+  with `allowed_origins` restricted to the extension ID). Communication with Chrome — via
   stdio, native messaging framing (4-byte little-endian length prefix + JSON
-  UTF-8, макс. размер сообщения по спецификации Chrome — 1MB для сообщений от
-  хоста к расширению).
-- Новый модуль `ExtensionBridge` внутри `MyPass/` (приложение):
-  `LoopbackServer` (на базе Network.framework, слушает TCP на 127.0.0.1 на
-  случайном свободном порту при старте приложения), `ExtensionBridgeService`
-  (обрабатывает входящие запросы, обращается к VaultSession).
+  UTF-8, max message size per Chrome spec — 1MB for messages from
+  host to extension).
+- New `ExtensionBridge` module inside `MyPass/` (app):
+  `LoopbackServer` (based on Network.framework, listens on TCP at 127.0.0.1 on
+  a random free port at app startup), `ExtensionBridgeService`
+  (handles incoming requests, talks to VaultSession).
 
-## IPC-транспорт и обоснование
+## IPC Transport and Rationale
 
-Поскольку ChromeHost — процесс вне бандла sandboxed-приложения, прямой Mach
-XPC (`NSXPCListener`) потребовал бы temporary-exception entitlement
-(`com.apple.security.temporary-exception.mach-lookup.global-name`), что хрупко
-и блокирует возможное App Store distribution в будущем. Вместо этого выбран
-локальный loopback TCP-сокет:
+Since ChromeHost is a process outside the sandboxed app bundle, direct Mach
+XPC (`NSXPCListener`) would require a temporary-exception entitlement
+(`com.apple.security.temporary-exception.mach-lookup.global-name`), which is fragile
+and blocks possible future App Store distribution. Instead, a local loopback TCP socket was chosen:
 
-- При старте приложения `LoopbackServer` поднимается на `127.0.0.1:<случайный
-  порт>`, генерируется одноразовый токен авторизации (криптостойкий random,
-  напр. 32 байта base64).
-- Порт и токен записываются в Keychain приложения (тот же access group
-  `com.mypass.app.keychain`, что уже используется — см. `MyPass.entitlements`)
-  — единственная точка доверия между процессами.
-- ChromeHost при получении сообщения от расширения читает порт+токен из того
-  же Keychain access group (ChromeHost должен быть подписан той же командой
-  разработчика/тем же Team ID, чтобы иметь доступ к access group — это явное
-  требование к code signing обоих таргетов), открывает TCP-соединение к
-  `127.0.0.1:<port>`, прикладывает токен к каждому запросу.
-- `ExtensionBridgeService` отклоняет запросы без валидного токена. Порт+токен
-  перегенерируются при каждом запуске приложения (не персистентны между
-  запусками) — ChromeHost должен переоткрывать чтение из Keychain при ошибке
-  соединения/невалидном токене (retry раз, затем сообщить об ошибке
-  расширению).
-- Остаточный риск: loopback-порт теоретически доступен любому локальному
-  процессу того же пользователя (не только ChromeHost); без токена он бы не
-  прошёл проверку, но сам факт открытого порта на 127.0.0.1 — компромисс ради
-  простоты и совместимости с App Sandbox. Альтернативой было бы Unix domain
-  socket в App Group (отклонено в этой фазе как усложняющее вариант, см.
-  «Отклонённые альтернативы» ниже).
+- At app startup `LoopbackServer` binds to `127.0.0.1:<random
+  port>`, a one-time authorization token is generated (cryptographically secure random,
+  e.g. 32 bytes base64).
+- Port and token are written to the app Keychain (same access group
+  `com.mypass.app.keychain` already in use — see `MyPass.entitlements`)
+  — the single trust point between processes.
+- When ChromeHost receives a message from the extension, it reads port+token from the same
+  Keychain access group (ChromeHost must be signed by the same development team/same Team ID to access the access group — an explicit
+  requirement for code signing of both targets), opens a TCP connection to
+  `127.0.0.1:<port>`, attaches the token to each request.
+- `ExtensionBridgeService` rejects requests without a valid token. Port+token
+  are regenerated on each app launch (not persistent across
+  launches) — ChromeHost must re-read from Keychain on connection error/invalid token (retry once, then report error to
+  extension).
+- Residual risk: the loopback port is theoretically accessible to any local
+  process of the same user (not only ChromeHost); without the token it would not
+  pass validation, but an open port on 127.0.0.1 is a compromise for
+  simplicity and App Sandbox compatibility. The alternative would be a Unix domain
+  socket in an App Group (rejected in this phase as a more complex option, see
+  "Rejected Alternatives" below).
 
-## Поток данных: автозаполнение существующего логина
+## Data Flow: Autofill Existing Login
 
-1. `content.js` находит форму логина на странице (по эвристикам:
-   `input[type=password]` + соседние text/email input, или autocomplete
-   атрибуты) → отправляет `{type: "getCredentials", url: <текущий URL
-   вкладки>}` через `chrome.runtime.sendMessage` в `background.js`.
-2. `background.js` держит постоянное соединение через
-   `chrome.runtime.connectNative("com.mypass.chromehost")` (либо открывает
-   новое при необходимости) → пересылает JSON-сообщение по stdio в
+1. `content.js` finds a login form on the page (heuristics:
+   `input[type=password]` + adjacent text/email input, or autocomplete
+   attributes) → sends `{type: "getCredentials", url: <current tab URL>}` via `chrome.runtime.sendMessage` to `background.js`.
+2. `background.js` keeps a persistent connection via
+   `chrome.runtime.connectNative("com.mypass.chromehost")` (or opens
+   a new one if needed) → forwards the JSON message over stdio to
    ChromeHost.
-3. ChromeHost релеит запрос в приложение по TCP (см. транспорт выше),
-   добавляя токен.
-4. `ExtensionBridgeService`: если `VaultSession.state == .locked` → отвечает
-   `{status: "locked"}`. Если unlocked → вычисляет eTLD+1 домен из URL, ищет
-   записи с совпадающим доменом в базе, возвращает список
-   `[{id, title, username}]` БЕЗ паролей на этом шаге.
-5. Ответ проходит обратно тем же путём (приложение → ChromeHost →
-   `background.js` → `popup.js`), popup показывает список; если locked —
-   показывает «Откройте MyPass и разблокируйте».
-6. Пользователь кликает на запись в popup → `background.js` отправляет
-   `{type: "fillCredential", id: <entryId>, url}` тем же каналом.
-7. `ExtensionBridgeService` повторно проверяет, что домен записи `id`
-   соответствует переданному `url` (защита от подмены), отдаёт пароль (и
-   TOTP-код, если есть) ТОЛЬКО в ответ на этот конкретный запрос.
-8. `content.js` получает пароль через `background.js`, сверяет `origin`
-   активной вкладки с ожидаемым доменом ещё раз на стороне контент-скрипта,
-   заполняет поля формы. НЕТ автозаполнения при простой загрузке страницы —
-   только по явному клику пользователя в popup/UI.
+3. ChromeHost relays the request to the app over TCP (see transport above),
+   adding the token.
+4. `ExtensionBridgeService`: if `VaultSession.state == .locked` → responds
+   `{status: "locked"}`. If unlocked → computes eTLD+1 domain from URL, finds
+   entries with matching domain in the database, returns a list of
+   `[{id, title, username}]` WITHOUT passwords at this step.
+5. Response travels back the same path (app → ChromeHost →
+   `background.js` → `popup.js`), popup shows the list; if locked —
+   shows "Open MyPass and unlock".
+6. User clicks an entry in popup → `background.js` sends
+   `{type: "fillCredential", id: <entryId>, url}` over the same channel.
+7. `ExtensionBridgeService` re-checks that the entry `id` domain
+   matches the given `url` (spoofing protection), returns password (and
+   TOTP code, if present) ONLY in response to this specific request.
+8. `content.js` receives the password via `background.js`, verifies `origin`
+   of the active tab against the expected domain again in the content script,
+   fills form fields. NO autofill on simple page load —
+   only on explicit user click in popup/UI.
 
-## Поток данных: сохранение нового логина
+## Data Flow: Save New Login
 
-`content.js` слушает событие submit формы логина/регистрации на странице.
-Если после успешного submit (эвристика: форма отправлена, нет ошибки
-валидации на странице, или URL изменился) для домена страницы не найдено ни
-одной подходящей записи в вернувшемся ранее списке `getCredentials` —
-показывает ненавязчивый баннер «Сохранить пароль в MyPass?» на странице.
-Пользователь кликает «Сохранить» → `content.js` отправляет
-`{type: "proposeSaveLogin", url, username, password}` через тот же канал
-(`background.js` → ChromeHost → приложение). Приложение НЕ сохраняет
-автоматически: активирует главное окно MyPass и открывает форму создания
-новой записи с предзаполненными title (домен)/username/password, пользователь
-просматривает, при необходимости правит, и подтверждает сохранение внутри
-самого приложения (используя существующий `VaultSession.mutate`). Пароль
-передаётся один раз, только по явному клику пользователя на баннере (не
-автоматически при каждом submit), баннер можно закрыть/проигнорировать.
+`content.js` listens for login/registration form submit events on the page.
+If after a successful submit (heuristic: form submitted, no validation error
+on the page, or URL changed) no matching entry was found for the page domain in the previously returned `getCredentials` list —
+shows an unobtrusive banner "Save password in MyPass?" on the page.
+User clicks "Save" → `content.js` sends
+`{type: "proposeSaveLogin", url, username, password}` over the same channel
+(`background.js` → ChromeHost → app). The app does NOT save
+automatically: it activates the main MyPass window and opens the new-entry form
+with prefilled title (domain)/username/password; the user
+reviews, edits if needed, and confirms save inside
+the app itself (using existing `VaultSession.mutate`). Password
+is sent once, only on explicit user click on the banner (not
+automatically on every submit); the banner can be dismissed/ignored.
 
-## Модель безопасности (дополнение к общей)
+## Security Model (Addition to General Design)
 
-- Токен авторизации loopback-сервера — одноразовый на сессию приложения,
-  хранится в Keychain access group, доступной только процессам, подписанным
-  тем же Team ID.
-- `ExtensionBridgeService` никогда не отдаёт пароль в ответ на
-  `getCredentials` (только id/title/username) — пароль только в ответ на
-  явный `fillCredential` по конкретному id.
-- Повторная проверка соответствия домена записи и URL вкладки как на стороне
-  приложения (шаг 7 выше), так и на стороне `content.js` перед заполнением —
-  двойная защита от credential leak на неверный origin.
-- ChromeHost и расширение не хранят пароли persistently — только транзитом в
-  памяти процесса на время одного запроса.
-- Native messaging manifest ограничивает `allowed_origins` ID конкретного
-  расширения — сторонние расширения не могут достучаться до ChromeHost.
-- Заблокированный vault: расширение получает статус «locked», разблокировка
-  происходит только в главном приложении (никогда не в popup расширения) —
-  это уже установленный принцип из общего дизайна, сохраняем его.
+- Loopback server authorization token — one-time per app session,
+  stored in Keychain access group accessible only to processes signed with
+  the same Team ID.
+- `ExtensionBridgeService` never returns a password in response to
+  `getCredentials` (only id/title/username) — password only in response to
+  explicit `fillCredential` for a specific id.
+- Re-check of entry domain vs tab URL match both on the
+  app side (step 7 above) and in `content.js` before fill —
+  double protection against credential leak to wrong origin.
+- ChromeHost and extension do not store passwords persistently — only in transit in
+  process memory for the duration of one request.
+- Native messaging manifest restricts `allowed_origins` to the specific extension
+  ID — third-party extensions cannot reach ChromeHost.
+- Locked vault: extension receives "locked" status, unlock
+  happens only in the main app (never in the extension popup) —
+  an established principle from the general design, preserved here.
 
-## Ошибки и edge cases
+## Errors and Edge Cases
 
-- Chrome не может запустить/достучаться до ChromeHost (не установлен native
-  messaging manifest, или MyPass.app не установлен) → popup показывает
-  понятную ошибку «MyPass не найден. Убедитесь, что приложение установлено и
-  один раз запущено (для регистрации native messaging хоста)».
-- Приложение не запущено (LoopbackServer не поднят) → ChromeHost получает
-  connection refused → сообщает расширению статус `app_not_running` → popup:
-  «Откройте приложение MyPass».
-- Токен протух/невалиден (например, приложение перезапустилось, порт+токен
-  изменились) → `ExtensionBridgeService` отвечает 401-подобной ошибкой →
-  ChromeHost повторно читает Keychain (retry один раз) → если снова невалиден,
-  сообщает об ошибке расширению.
-- Vault заблокирован во время активной сессии popup → следующий запрос
-  вернёт «locked», popup обновляет UI.
-- Множественные вкладки/параллельные запросы к LoopbackServer — сервер должен
-  обрабатывать несколько одновременных TCP-соединений (Network.framework
-  `NWListener` из коробки поддерживает это).
+- Chrome cannot start/reach ChromeHost (native messaging manifest not installed, or MyPass.app not installed) → popup shows a clear error "MyPass not found. Make sure the app is installed and
+  launched once (to register the native messaging host)".
+- App not running (LoopbackServer not up) → ChromeHost gets
+  connection refused → reports `app_not_running` status to extension → popup:
+  "Open the MyPass app".
+- Token expired/invalid (e.g. app restarted, port+token
+  changed) → `ExtensionBridgeService` responds with a 401-like error →
+  ChromeHost re-reads Keychain (retry once) → if still invalid,
+  reports error to extension.
+- Vault locked during active popup session → next request
+  returns "locked", popup updates UI.
+- Multiple tabs/parallel requests to LoopbackServer — server must
+  handle several simultaneous TCP connections (Network.framework
+  `NWListener` supports this out of the box).
 
-## Тестирование
+## Testing
 
-- Unit-тесты (XCTest, Swift) для `ExtensionBridgeService`: сопоставление
-  записей по домену (eTLD+1, поддомены, точные и похожие домены), поведение
-  при locked/unlocked, отклонение запросов с невалидным/отсутствующим
-  токеном, что `getCredentials` никогда не возвращает пароль.
-- Unit-тесты для native messaging framing в ChromeHost (кодирование/
-  декодирование 4-byte length prefix + JSON, обработка сообщений на границе
-  допустимого размера).
-- JS-тесты детекции форм (`content.js`) на сохранённых HTML-фикстурах
-  реальных сайтов логина/регистрации (как и в общей спеке — набор фикстур для
-  регрессионного тестирования эвристик).
-- Ручной e2e чеклист: установка unpacked-расширения в Chrome, запуск
-  MyPass.app, разблокировка vault, автозаполнение на тестовой странице,
-  сохранение нового логина через баннер, поведение при заблокированном
-  vault, поведение при закрытом приложении.
+- Unit tests (XCTest, Swift) for `ExtensionBridgeService`: entry matching
+  by domain (eTLD+1, subdomains, exact and similar domains), behavior
+  when locked/unlocked, rejection of requests with invalid/missing
+  token, that `getCredentials` never returns a password.
+- Unit tests for native messaging framing in ChromeHost (encoding/
+  decoding 4-byte length prefix + JSON, handling messages at the
+  size boundary).
+- JS form-detection tests (`content.js`) on saved HTML fixtures
+  from real login/registration sites (as in the general spec — a fixture set for
+  regression testing heuristics).
+- Manual e2e checklist: install unpacked extension in Chrome, launch
+  MyPass.app, unlock vault, autofill on test page,
+  save new login via banner, behavior with locked
+  vault, behavior with app closed.
 
-## Отклонённые альтернативы
+## Rejected Alternatives
 
-- Unix domain socket в общем App Group container — отклонено для этой фазы:
-  требует добавления `com.apple.security.application-groups` entitlement на
-  оба таргета и решения вопросов прав доступа к файлу сокета; loopback
-  TCP+токен даёт эквивалентную безопасность проще.
-- `NSXPCListener` с `temporary-exception.mach-lookup.global-name` entitlement —
-  отклонено: этот класс entitlements не проходит App Store review и
-  считается deprecated-паттерном Apple; не годится, если приложение
-  когда-либо пойдёт в Mac App Store.
+- Unix domain socket in shared App Group container — rejected for this phase:
+  requires adding `com.apple.security.application-groups` entitlement to
+  both targets and solving socket file permission issues; loopback
+  TCP+token provides equivalent security more simply.
+- `NSXPCListener` with `temporary-exception.mach-lookup.global-name` entitlement —
+  rejected: this entitlement class does not pass App Store review and
+  is considered a deprecated Apple pattern; not suitable if the app
+  ever goes to the Mac App Store.
 
-## Границы этой фазы (явно вне скоупа)
+## Scope Boundaries for This Phase (Explicitly Out of Scope)
 
-- Safari App Extension и общий WebExtension JS-слой — Фаза 4b.
-- Badge-индикатор количества совпадений на иконке расширения — отложено, не
-  входит в MVP.
-- Доступ к генератору паролей из расширения — отложено, не входит в MVP.
-- TOTP copy-to-clipboard из расширения без заполнения формы — не входит
-  (TOTP заполняется только как часть `fillCredential`, если поле формы для
-  него есть).
+- Safari App Extension and shared WebExtension JS layer — Phase 4b.
+- Badge indicator for match count on extension icon — deferred, not
+  in MVP.
+- Password generator access from extension — deferred, not in MVP.
+- TOTP copy-to-clipboard from extension without form fill — not in scope
+  (TOTP is filled only as part of `fillCredential`, if a form field for
+  it exists).

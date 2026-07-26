@@ -27,7 +27,7 @@ targets:
     info:
       path: MyPass/Info.plist
       properties:
-        NSFaceIDUsageDescription: "MyPass использует Touch ID для быстрой разблокировки вашего хранилища паролей."
+        NSFaceIDUsageDescription: "MyPass uses Touch ID to quickly unlock your password vault."
         LSApplicationCategoryType: public.app-category.utilities
   ChromeHost:
     type: tool

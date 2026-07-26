@@ -1,22 +1,22 @@
-# Решение: KeePassKit vs собственный парсер KDBX4
+# Decision: KeePassKit vs Custom KDBX4 Parser
 
-Дата: 2026-07-21
+Date: 2026-07-21
 
-## Эталонные файлы
+## Reference Files
 
-Расположение: `/tmp/mypass-spike/reference-kdbx/` (временно, не коммитятся; при
-решении «custom-parser» финальный набор копируется в
-`Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/` в Task 16).
+Location: `/tmp/mypass-spike/reference-kdbx/` (temporary, not committed; if
+"custom-parser" is chosen, the final set is copied to
+`Packages/MyPassKit/Tests/MyPassKitTests/Fixtures/` in Task 16).
 
-5 файлов сгенерированы через `pykeepass` (Python, установлен через
-`pip3 install --user pycryptodome argon2-cffi pykeepass`, т.к.
-`keepassxc-cli`/KeePassXC GUI не были доступны в среде и `brew install --cask
-keepassxc` требует разрешения на установку, которое не было предоставлено —
-см. "Отклонения от плана" ниже). Пароль для всех сгенерированных файлов:
-`TestMasterPass123`. 1 файл — реальный эталон из репозитория KeePassXC
-(`tests/data/Format400.kdbx`, пароль `t`).
+5 files generated via `pykeepass` (Python, installed via
+`pip3 install --user pycryptodome argon2-cffi pykeepass`, because
+`keepassxc-cli`/KeePassXC GUI were not available in the environment and `brew install --cask
+keepassxc` requires installation permission that was not granted —
+see "Deviations from Plan" below). Password for all generated files:
+`TestMasterPass123`. 1 file — real reference from the KeePassXC
+repository (`tests/data/Format400.kdbx`, password `t`).
 
-Скрипт регенерации (если фикстуры понадобятся заново):
+Regeneration script (if fixtures are needed again):
 ```bash
 pip3 install --user pycryptodome argon2-cffi pykeepass
 python3 - <<'PYEOF'
@@ -66,129 +66,127 @@ make("argon2d-aes256-gzip-history.kdbx", edits=2)
 make("argon2d-aes256-gzip-deleted.kdbx", delete=True)
 PYEOF
 ```
-(Второй файл, `argon2d-aes256-gzip-deleted.kdbx`, дополнительно требует ручной
-вставки `<DeletedObject>` в XML через lxml, т.к. `pykeepass.delete_entry()` не
-записывает запись об удалении в `<DeletedObjects>` — см. секцию
-"Отклонения от плана".)
+(The second file, `argon2d-aes256-gzip-deleted.kdbx`, additionally requires manual
+insertion of `<DeletedObject>` in XML via lxml, because `pykeepass.delete_entry()` does not
+write a deletion record to `<DeletedObjects>` — see the
+"Deviations from Plan" section.)
 
-Также скопирован реальный файл:
+Also copied a real file:
 ```bash
 cp /tmp/mypass-spike/keepassxc-src/tests/data/Format400.kdbx \
    /tmp/mypass-spike/reference-kdbx/keepassxc-format400-twofish-argon2d-gzip.kdbx
 ```
 
-## Результаты по каждому эталонному файлу
+## Results per Reference File
 
-Каждый файл открыт через `KPKTree(data:key:)` (KeePassKit, Swift executable,
-собранный `swiftc` напрямую против собранных фреймворков `KeePassKit.framework`
+Each file opened via `KPKTree(data:key:)` (KeePassKit, Swift executable,
+built with `swiftc` directly against built `KeePassKit.framework`
 + `KissXML.framework`).
 
-| Файл | KDF | Шифр | Сжатие | KeePassKit | Комментарий |
+| File | KDF | Cipher | Compression | KeePassKit | Comment |
 |---|---|---|---|---|---|
-| `argon2id-aes256-gzip.kdbx` | Argon2id | AES256 | GZip | ✅ открылось | 1 запись, 0 history, 0 deleted |
-| `chacha20-argon2id-gzip.kdbx` | Argon2id | ChaCha20 | GZip | ✅ открылось | 1 запись, 0 history, 0 deleted |
-| `aeskdf-aes256-none.kdbx` | AES-KDF | AES256 | None | ✅ открылось | 1 запись, 0 history, 0 deleted |
-| `argon2d-aes256-gzip-history.kdbx` | Argon2d | AES256 | GZip | ✅ открылось | 1 запись, **2 history-записи** прочитаны корректно (`tree.allHistoryEntries.count == 2`) |
-| `argon2d-aes256-gzip-deleted.kdbx` | Argon2d | AES256 | GZip | ✅ открылось | 0 записей (удалена), **1 DeletedObject** прочитан корректно (`tree.deletedObjects.count == 1`) |
-| `keepassxc-format400-twofish-argon2d-gzip.kdbx` (реальный файл KeePassXC, пароль `t`) | Argon2d | TwoFish | GZip | ✅ открылось | 1 запись; `deletedObjects.count == 10` (внутренние тестовые артефакты самого файла KeePassXC) |
+| `argon2id-aes256-gzip.kdbx` | Argon2id | AES256 | GZip | ✅ opened | 1 entry, 0 history, 0 deleted |
+| `chacha20-argon2id-gzip.kdbx` | Argon2id | ChaCha20 | GZip | ✅ opened | 1 entry, 0 history, 0 deleted |
+| `aeskdf-aes256-none.kdbx` | AES-KDF | AES256 | None | ✅ opened | 1 entry, 0 history, 0 deleted |
+| `argon2d-aes256-gzip-history.kdbx` | Argon2d | AES256 | GZip | ✅ opened | 1 entry, **2 history entries** read correctly (`tree.allHistoryEntries.count == 2`) |
+| `argon2d-aes256-gzip-deleted.kdbx` | Argon2d | AES256 | GZip | ✅ opened | 0 entries (deleted), **1 DeletedObject** read correctly (`tree.deletedObjects.count == 1`) |
+| `keepassxc-format400-twofish-argon2d-gzip.kdbx` (real KeePassXC file, password `t`) | Argon2d | TwoFish | GZip | ✅ opened | 1 entry; `deletedObjects.count == 10` (internal test artifacts from the KeePassXC file itself) |
 
-Итог: **KeePassKit успешно открыл и расшифровал все 6 эталонных файлов**,
-включая все требуемые комбинации KDF/шифра/сжатия, History и DeletedObjects.
-Технически интеграция полностью удалась.
+Summary: **KeePassKit successfully opened and decrypted all 6 reference files**,
+including all required KDF/cipher/compression combinations, History and DeletedObjects.
+Technically, integration fully succeeded.
 
-## Решение
+## Decision
 
 **custom-parser**
 
-## Обоснование
+## Rationale
 
-KeePassKit технически работает: собирается под текущий Xcode 26.6 (после
-добавления недостающей зависимости KissXML — форк `MacPass/KissXML`, у
-которой есть Package.swift, но у самого KeePassKit нативной поддержки SPM
-нет, только Carthage/CocoaPods) и корректно расшифровывает все 6 эталонных
-файлов, включая Argon2id/ChaCha20/AES-KDF, History и DeletedObjects.
+KeePassKit works technically: it builds under current Xcode 26.6 (after
+adding the missing KissXML dependency — fork `MacPass/KissXML`, which has
+Package.swift, but KeePassKit itself has no native SPM
+support, only Carthage/CocoaPods) and correctly decrypts all 6 reference
+files, including Argon2id/ChaCha20/AES-KDF, History and DeletedObjects.
 
-Однако **KeePassKit распространяется под GPLv3** (`LICENSE`, `KeePassKit.podspec:
-s.license = "GPLv3"`), без linking exception и без альтернативной
-(LGPL/MIT/коммерческой) лицензии. Для закрытого коммерческого macOS-продукта
-MyPass это означает обязательство лицензировать весь связанный (linked)
-бинарник под GPLv3 при распространении — неприемлемое ограничение для
-проекта, если MyPass не задумывается как open-source GPL-продукt. Это
-блокирующий фактор, не связанный с техническими качествами библиотеки, и он
-перевешивает успешный технический результат интеграции.
+However, **KeePassKit is distributed under GPLv3** (`LICENSE`, `KeePassKit.podspec:
+s.license = "GPLv3"`), with no linking exception and no alternative
+(LGPL/MIT/commercial) license. For a closed commercial macOS product
+MyPass this means the obligation to license the entire linked
+binary under GPLv3 when distributing — an unacceptable constraint for
+the project if MyPass is not intended as an open-source GPL product. This is a
+blocking factor unrelated to the library's technical quality, and it
+outweighs the successful technical integration result.
 
-Дополнительно: отсутствие нативной поддержки SPM (нужен bridging через
-XCFramework/Carthage/CocoaPods плюс дополнительная транзитивная GPL/BSD
-зависимость KissXML) добавляет постоянную инфраструктурную нагрузку на сборку
-даже без учёта лицензии.
+Additionally: lack of native SPM support (requires bridging via
+XCFramework/Carthage/CocoaPods plus an additional transitive GPL/BSD
+KissXML dependency) adds ongoing build infrastructure overhead
+even without considering the license.
 
-## Если custom-parser:
-Продолжать выполнение задач 2+ плана
-`docs/superpowers/plans/2026-07-21-mypass-mypasskit-core.md` как есть.
+## If custom-parser:
+Continue executing tasks 2+ of the plan
+`docs/superpowers/plans/2026-07-21-mypass-mypasskit-core.md` as-is.
 
-## Если keepasskit-wrapper:
-Не применимо — не выбрано. (Технически KeePassKit прошёл проверку успешно;
-единственная причина отказа — лицензия GPLv3, несовместимая с закрытым
-коммерческим распространением MyPass. Если это ограничение в будущем
-пересмотрят — например, MyPass станет open-source, или у HicknHack Software
-будет куплена коммерческая лицензия/exception — этот пункт плана можно
-пересмотреть, опираясь на результаты интеграции выше.)
+## If keepasskit-wrapper:
+Not applicable — not chosen. (Technically KeePassKit passed verification successfully;
+the only reason for rejection — GPLv3 license, incompatible with closed
+commercial distribution of MyPass. If this constraint is revisited in the future
+— e.g. MyPass becomes open-source, or a commercial license/exception is purchased from HicknHack Software
+— this plan item can be revisited, relying on the integration results above.)
 
-## Отклонения от плана / технические детали спайка
+## Deviations from Plan / Spike Technical Details
 
-- **`brew install --cask keepassxc` не выполнен**: команда была заблокирована
-  политикой разрешений среды выполнения (permission denied на установку через
-  Homebrew cask). Вместо GUI/CLI KeePassXC для генерации эталонных файлов
-  использован `pykeepass` (Python-библиотека, `pip3 install --user`), которая
-  парсит/строит KDBX4 через собственный construct-based кодек — валидная
-  альтернатива для получения реальных, корректно шифрованных `.kdbx4`-файлов.
-- **Реальные фикстуры из репозитория KeePassXC** (`tests/data/*.kdbx`,
-  склонированы sparse-checkout `tests/` из
-  `https://github.com/keepassxreboot/keepassxc.git`) дали только один
-  пригодный файл в формате KDBX4 без keyfile/YubiKey-требований:
-  `Format400.kdbx` (TwoFish + Argon2d + GZip, пароль `t`). Остальные
-  KDBX4-файлы в репозитории (`KeyFileProtected.kdbx`,
+- **`brew install --cask keepassxc` not run**: the command was blocked by
+  environment execution policy (permission denied for installation via
+  Homebrew cask). Instead of KeePassXC GUI/CLI for generating reference files,
+  `pykeepass` was used (Python library, `pip3 install --user`), which
+  parses/builds KDBX4 via its own construct-based codec — a valid
+  alternative for obtaining real, correctly encrypted `.kdbx4` files.
+- **Real fixtures from the KeePassXC repository** (`tests/data/*.kdbx`,
+  sparse-checkout cloned `tests/` from
+  `https://github.com/keepassxreboot/keepassxc.git`) yielded only one
+  usable file in KDBX4 format without keyfile/YubiKey requirements:
+  `Format400.kdbx` (TwoFish + Argon2d + GZip, password `t`). Other
+  KDBX4 files in the repository (`KeyFileProtected.kdbx`,
   `KeyFileProtectedNoPassword.kdbx`, `YubiKeyProtectedPasswords.kdbx`,
-  `NewDatabaseBrowser.kdbx`) требуют keyfile/YubiKey challenge-response и не
-  покрывают нужные комбинации KDF/шифра паролем.
-- **Баг в `pykeepass` при генерации кастомных KDF/cipher-комбинаций**: при
-  мутации `dh.kdf_parameters.data.dict['$UUID'].value` (смена KDF на
-  Argon2id/AES-KDF) без дополнительных действий сохранённый файл
-  расшифровывался с ключом, вычисленным по **старым** параметрам (несовпадение
-  с реально записанным в файл заголовком) — потому что верхнеуровневое поле
-  `header` в `pykeepass.kdbx_parsing.kdbx.KDBX` обёрнуто в `construct.RawCopy`,
-  который при билде использует закэшированные сырые байты `data`, если ключ
-  `data` присутствует в объекте, полностью игнорируя изменения `value`.
-  Исправление: `del kp.kdbx.header['data']` перед `.save()` — тогда `RawCopy`
-  вынужден пересобрать байты из мутированного дерева `.value`.
-- **Второй баг**: при добавлении нового ключа в variant dictionary (поле `R`
-  для AES-KDF) все элементы этого словаря строятся через
-  `construct.RepeatUntil`, использующий один и тот же предикат
-  (`item.next_byte == 0x00`) и для парсинга, и для билда. Если у ВСЕХ
-  элементов `next_byte=0`, билд останавливается после первого же элемента.
-  Нужно явно перелинковать список: у элемента, который был последним до
-  добавления нового, `next_byte` должен указывать на `type`-байт нового
-  последнего элемента, а у нового последнего — `next_byte=0`.
-- **`pykeepass.delete_entry()` не пишет `<DeletedObjects>`**: для файла
-  `argon2d-aes256-gzip-deleted.kdbx` запись об удалении добавлена вручную —
-  прямая манипуляция `lxml`-деревом (`kp.tree.getroot()`) с вставкой
+  `NewDatabaseBrowser.kdbx`) require keyfile/YubiKey challenge-response and do not
+  cover the needed KDF/cipher combinations with password only.
+- **Bug in `pykeepass` when generating custom KDF/cipher combinations**: when
+  mutating `dh.kdf_parameters.data.dict['$UUID'].value` (changing KDF to
+  Argon2id/AES-KDF) without additional steps, the saved file
+  decrypted with a key computed from **old** parameters (mismatch
+  with what was actually written to the file header) — because the top-level
+  `header` field in `pykeepass.kdbx_parsing.kdbx.KDBX` is wrapped in `construct.RawCopy`,
+  which on build uses cached raw `data` bytes if the
+  `data` key is present in the object, completely ignoring changes to `value`.
+  Fix: `del kp.kdbx.header['data']` before `.save()` — then `RawCopy`
+  is forced to rebuild bytes from the mutated `.value` tree.
+- **Second bug**: when adding a new key to the variant dictionary (field `R`
+  for AES-KDF) all elements of that dictionary are built via
+  `construct.RepeatUntil`, using the same predicate
+  (`item.next_byte == 0x00`) for both parsing and building. If ALL
+  elements have `next_byte=0`, build stops after the first element.
+  The list must be explicitly relinked: the element that was last before
+  adding the new one must have `next_byte` pointing to the new last element's `type` byte, and the new last — `next_byte=0`.
+- **`pykeepass.delete_entry()` does not write `<DeletedObjects>`**: for file
+  `argon2d-aes256-gzip-deleted.kdbx` the deletion record was added manually —
+  direct manipulation of the `lxml` tree (`kp.tree.getroot()`) inserting
   `<DeletedObject><UUID>...</UUID><DeletionTime>...</DeletionTime></DeletedObject>`
-  перед `kp.save()`.
-- **KeePassKit build**: собран `xcodebuild -scheme "KeePassKit macOS"` из
-  чистого клона (`git clone --depth 1 --recurse-submodules
-  https://github.com/MacPass/KeePassKit.git`, коммит от 2026-11-13, т.е.
-  библиотека поддерживается активно). Первая попытка сборки провалилась
-  (`'KissXML/KissXML.h' file not found`) — недостающая зависимость KissXML не
-  вендорится в репозитории и не указана как submodule, только через
-  Cartfile/Podfile. Собрана отдельно (`git clone
+  before `kp.save()`.
+- **KeePassKit build**: built `xcodebuild -scheme "KeePassKit macOS"` from
+  a clean clone (`git clone --depth 1 --recurse-submodules
+  https://github.com/MacPass/KeePassKit.git`, commit from 2026-11-13, i.e.
+  the library is actively maintained). First build attempt failed
+  (`'KissXML/KissXML.h' file not found`) — missing KissXML dependency not
+  vendored in the repository and not listed as a submodule, only via
+  Cartfile/Podfile. Built separately (`git clone
   https://github.com/MacPass/KissXML.git`, `xcodebuild -scheme "KissXML
-  (macOS)"`) и подключена через `FRAMEWORK_SEARCH_PATHS`. После этого сборка
-  `KeePassKit macOS` прошла успешно (`** BUILD SUCCEEDED **`).
-- **Спайк-инструмент**: `/tmp/mypass-spike/KeePassKitSpike/SpikeTool/main.swift`
-  — одноразовый Swift executable, собранный напрямую `swiftc -F
-  <DerivedData>/Build/Products/Debug` (без полноценного Xcode-проекта),
-  использующий `import KeePassKit` (framework module) и
+  (macOS)"`) and linked via `FRAMEWORK_SEARCH_PATHS`. After that,
+  `KeePassKit macOS` build succeeded (`** BUILD SUCCEEDED **`).
+- **Spike tool**: `/tmp/mypass-spike/KeePassKitSpike/SpikeTool/main.swift`
+  — one-off Swift executable, built directly with `swiftc -F
+  <DerivedData>/Build/Products/Debug` (without a full Xcode project),
+  using `import KeePassKit` (framework module) and
   `KPKTree(data:key:)` / `KPKCompositeKey(keys: [KPKPasswordKey(password:)])`.
-  Каталоги `/tmp/mypass-spike/KeePassKitSpike/` (клоны KeePassKit, KissXML,
-  DerivedData, спайк-инструмент) — одноразовые, не коммитятся и подлежат
-  удалению.
+  Directories `/tmp/mypass-spike/KeePassKitSpike/` (KeePassKit, KissXML clones,
+  DerivedData, spike tool) — one-off, not committed and subject to
+  deletion.

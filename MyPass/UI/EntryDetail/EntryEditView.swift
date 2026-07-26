@@ -31,34 +31,34 @@ struct EntryEditView: View {
 
     var body: some View {
         Form {
-            TextField("Название", text: $title)
-            TextField("Логин", text: $login)
+            TextField("Title", text: $title)
+            TextField("Username", text: $login)
             HStack {
-                SecureField("Пароль", text: $password)
-                Button("Сгенерировать") { showPasswordGenerator = true }
+                SecureField("Password", text: $password)
+                Button("Generate") { showPasswordGenerator = true }
             }
             TextField("URL", text: $url)
-            TextField("Заметки", text: $notes, axis: .vertical)
-            TextField("otpauth:// или secret", text: $otpauthInput)
+            TextField("Notes", text: $notes, axis: .vertical)
+            TextField("otpauth:// or secret", text: $otpauthInput)
 
-            Section("Дополнительные поля") {
+            Section("Additional Fields") {
                 ForEach(extraFields.indices, id: \.self) { index in
                     HStack {
-                        TextField("Ключ", text: $extraFields[index].key)
-                        TextField("Значение", text: $extraFields[index].value)
-                        Button("Удалить", systemImage: "minus.circle") {
+                        TextField("Key", text: $extraFields[index].key)
+                        TextField("Value", text: $extraFields[index].value)
+                        Button("Remove", systemImage: "minus.circle") {
                             extraFields.remove(at: index)
                         }
                     }
                 }
-                Button("Добавить поле", systemImage: "plus") {
+                Button("Add Field", systemImage: "plus") {
                     extraFields.append((key: "", value: ""))
                 }
             }
 
             HStack {
-                Button("Отмена") { dismiss() }
-                Button("Сохранить", action: save)
+                Button("Cancel") { dismiss() }
+                Button("Save", action: save)
                     .buttonStyle(.borderedProminent)
             }
         }

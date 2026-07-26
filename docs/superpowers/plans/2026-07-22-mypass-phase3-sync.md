@@ -1,18 +1,18 @@
-# MyPass Phase 3: Синхронизация (Sync) — Implementation Plan
+# MyPass Phase 3: Synchronization (Sync) - Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Реализовать Фазу 3 синхронизации — бэкенды локальной папки / iCloud Drive / SFTP с автоматическим merge по KeePassXC-семантике, согласно разделу «Синхронизация» дизайн-спеки.
+**Goal:** Implement Phase 3 of synchronization - local folder / iCloud Drive / SFTP backends with automatic merge using KeePassXC semantics, according to the “Synchronization” section of the design specifications.
 
-**Architecture:** Новый пакет `Packages/SyncKit` с протоколом `StorageBackend` (read/write/modificationDate/exists), чистой функцией `MergeEngine`, работающей над деревьями `KdbxDatabase` по UUID, и оркестратором `SyncEngine`, реализующим download-if-changed→merge→atomic-upload; `VaultSession` приложения `MyPass` подключается к нему, а `VaultFileStore` остаётся слоем локального бэкапа.
+**Architecture:** New package `Packages/SyncKit` with protocol `StorageBackend`(read/write/modificationDate/exists), pure function `MergeEngine` working on trees `KdbxDatabase` by UUID, and orchestrator `SyncEngine`, which implements download-if-changed→merge→atomic-upload;`VaultSession` app `MyPass` connects to it and `VaultFileStore` remains a local backup layer.
 
-**Tech Stack:** Swift 5.10, локальный SwiftPM-пакет `SyncKit`, зависящий от `MyPassKit`, Foundation FileManager/FSEvents, NSFileCoordinator/NSFilePresenter для iCloud, SFTP-библиотека (Citadel или mft — решается в Task 8), Keychain (Security framework) для SFTP-учётных данных.
+**Tech Stack:** Swift 5.10, local SwiftPM package `SyncKit`, depending on `MyPassKit`, Foundation FileManager/FSEvents, NSFileCoordinator/NSFilePresenter for iCloud, SFTP library (Citadel or mft - decided in Task 8), Keychain (Security framework) for SFTP credentials.
 
 ## Global Constraints
 
 - Platform floor: macOS 14.0, Swift tools version 5.10 (matches `Packages/MyPassKit/Package.swift` and `project.yml`).
 - `SyncKit` package depends on `MyPassKit` via local relative path dependency; `SyncKit` MUST NOT depend on the `MyPass` app target (wrong dependency direction — `MyPass` depends on `SyncKit`, not vice versa).
-- `StorageBackend` protocol and `MergeEngine` are synchronous/throws-based, matching existing codebase style (`KdbxDatabase.open`, `VaultFileStore.load`/`save` are all synchronous throws-based) — no async/await introduced in this phase.
+- `StorageBackend` protocol and `MergeEngine` are synchronous/throws-based, matching existing codebase style (`KdbxDatabase.open`, `VaultFileStore.load `/` save` are all synchronous throws-based) — no async/await introduced in this phase.
 - `MergeEngine` has zero I/O dependencies — pure function over `KdbxDatabase` values, fully unit-testable without any backend.
 - Out of scope, deferred to later phases: browser extensions (Safari/Chrome) — Phase 4; iOS/iPadOS + AutoFill — Phase 5; Passkeys — Phase 6.
 - No placeholders: every step below contains complete, real Swift code — never "TODO"/"implement later"/"similar to Task N" (repeat the code in full each time).
@@ -25,11 +25,11 @@
 - Create: `Packages/SyncKit/Package.swift`
 - Create: `Packages/SyncKit/Sources/SyncKit/StorageBackend.swift`
 - Create: `Packages/SyncKit/Sources/SyncKit/InMemoryStorageBackend.swift`
-- Modify: `project.yml` (добавить пакет `SyncKit` и зависимость таргета `MyPass` от него)
+- Modify: `project.yml`(add package `SyncKit` and target dependency `MyPass` from it)
 - Test: `Packages/SyncKit/Tests/SyncKitTests/InMemoryStorageBackendTests.swift`
 
 **Interfaces:**
-- Consumes: ничего из предыдущих фаз — это фундамент Фазы 3.
+- Consumes: nothing from the previous phases - this is the foundation of Phase 3.
 - Produces:
 ```swift
 public protocol StorageBackend {
@@ -44,7 +44,7 @@ public final class InMemoryStorageBackend: StorageBackend {
     public var writeError: Error?
 }
 ```
-`StorageBackend` — базовый протокол, потребляемый Task 2 (`LocalFolderBackend`), Task 6 (`SyncEngine`) и всеми будущими бэкендами (iCloud — Part B, SFTP — Part B/C). `InMemoryStorageBackend` — тестовый двойник; `MergeEngine` (Task 4/5) в нём не нуждается, так как не делает I/O, но Task 6's network-failure тесты используют его `writeError`.
+`StorageBackend`- the base protocol consumed by Task 2 (`LocalFolderBackend`), Task 6 (`SyncEngine`) and all future backends (iCloud - Part B, SFTP - Part B/C).`InMemoryStorageBackend`— test double;`MergeEngine`(Task 4/5) does not need it, since it does not do I/O, but Task 6's network-failure tests use it `writeError `.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -115,7 +115,7 @@ final class InMemoryStorageBackendTests: XCTestCase {
 
 - [ ] **Step 2: Run test to verify it fails**
 
-Run: `cd Packages/SyncKit && swift test --filter InMemoryStorageBackendTests` (SwiftPM package tests use `swift test`, matching Phase 2's Task 1 convention for `MyPassKit`; app-target tests instead use `xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -only-testing:...`, matching Phase 2's Task 2 onward — `SyncKit` is a plain SwiftPM package like `MyPassKit`, so it uses `swift test`.)
+Run: `cd Packages/SyncKit && swift test --filter InMemoryStorageBackendTests` (SwiftPM package tests use `swift test`, matching Phase 2's Task 1 convention for `MyPassKit`; app-target tests instead use `xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -only-testing:...`, matching Phase 2's Task 2 onward — `SyncKit` is a plain SwiftPM package like `MyPassKit`, so it uses `swift test `.)
 Expected: FAIL — the package does not exist yet (`Package.swift` missing / no such module `SyncKit`).
 
 - [ ] **Step 3: Write minimal implementation**
@@ -245,14 +245,14 @@ packages:
 
 Run, in order:
 1. `cd Packages/SyncKit && swift test` — Expected: all `SyncKitTests` PASS.
-2. `xcodegen generate` (repo root) — Expected: prints `Generated project at MyPass.xcodeproj`.
+2. `xcodegen generate` (repo root) — Expected: prints `Generated project at MyPass.xcodeproj `.
 3. `xcodebuild -project MyPass.xcodeproj -scheme MyPass build` (Phase 2's Task 2 full-build convention) — Expected: `** BUILD SUCCEEDED **`, now linking `SyncKit` into the `MyPass` target with no errors.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add Packages/SyncKit project.yml
-git commit -m "SyncKit: скаффолдинг пакета, StorageBackend протокол, InMemoryStorageBackend (Фаза 3, Task 1)"
+git commit -m "SyncKit: package scaffolding, StorageBackend protocol, InMemoryStorageBackend (Phase 3, Task 1)"
 ```
 
 ---
@@ -436,7 +436,7 @@ public final class LocalFolderBackend: StorageBackend {
 }
 ```
 
-(the `startAccessingSecurityScopedResource()`/`defer { stopAccessingSecurityScopedResource() }` pattern is applied around every file operation, per spec; `startAccessingSecurityScopedResource()` returning `false` in a non-sandboxed context — e.g. this test suite — is not itself an error, so the fallback path still performs the operation directly, mirroring `VaultFileStore.atomicWrite`'s temp-file-then-`replaceItemAt` pattern.)
+(the `startAccessingSecurityScopedResource()`/` defer { stopAccessingSecurityScopedResource() }` pattern is applied around every file operation, per spec; `startAccessingSecurityScopedResource()` returning `false` in a non-sandboxed context — e.g. this test suite — is not itself an error, so the fallback path still performs the operation directly, mirroring `VaultFileStore.atomicWrite`'s temp-file-then-`replaceItemAt` pattern.)
 
 - [ ] **Step 4: Run test to verify it passes**
 
@@ -447,7 +447,7 @@ Expected: PASS (4/4).
 
 ```bash
 git add Packages/SyncKit/Sources/SyncKit/LocalFolderBackend.swift Packages/SyncKit/Tests/SyncKitTests/LocalFolderBackendTests.swift
-git commit -m "LocalFolderBackend: security-scoped bookmark + атомарная запись (Фаза 3, Task 2)"
+git commit -m "LocalFolderBackend: security-scoped bookmark + atomic write (Phase 3, Task 2)"
 ```
 
 ---
@@ -459,7 +459,7 @@ git commit -m "LocalFolderBackend: security-scoped bookmark + атомарная
 - Test: `Packages/SyncKit/Tests/SyncKitTests/LocalFolderChangeWatcherTests.swift`
 
 **Interfaces:**
-- Consumes: `CoreServices`/`Foundation` FSEvents C API (`FSEventStreamCreate`, `FSEventStreamStart`, `FSEventStreamStop`, `FSEventStreamInvalidate`, `FSEventStreamRelease`, `FSEventStreamScheduleWithRunLoop`).
+- Consumes: `CoreServices `/`Foundation` FSEvents C API (`FSEventStreamCreate`, `FSEventStreamStart`, `FSEventStreamStop`, `FSEventStreamInvalidate`, `FSEventStreamRelease`, `FSEventStreamScheduleWithRunLoop`).
 - Produces:
 ```swift
 public final class LocalFolderChangeWatcher {
@@ -468,7 +468,7 @@ public final class LocalFolderChangeWatcher {
     public func stop()
 }
 ```
-Consumed by Part B's `SyncEngine`/app-level auto-sync trigger (watches the configured local sync folder and kicks off a sync pass on external change) and by the `MyPass` app's iCloud-folder integration in Part B.
+Consumed by Part B's `SyncEngine `/app-level auto-sync trigger (watches the configured local sync folder and kicks off a sync pass on external change) and by the `MyPass` app's iCloud-folder integration in Part B.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -625,7 +625,7 @@ Expected: PASS (2/2). If `testChangeInWatchedFolderFiresOnChange` is flaky due t
 
 ```bash
 git add Packages/SyncKit/Sources/SyncKit/LocalFolderChangeWatcher.swift Packages/SyncKit/Tests/SyncKitTests/LocalFolderChangeWatcherTests.swift
-git commit -m "LocalFolderChangeWatcher: FSEvents-наблюдатель с debounce 0.5s (Фаза 3, Task 3)"
+git commit -m "LocalFolderChangeWatcher: FSEvents watcher with debounce 0.5s (Phase 3, Task 3)"
 ```
 
 ---
@@ -1013,7 +1013,7 @@ Expected: PASS (6/6).
 
 ```bash
 git add Packages/SyncKit/Sources/SyncKit/MergeEngine.swift Packages/SyncKit/Tests/SyncKitTests/MergeEngineBasicTests.swift
-git commit -m "MergeEngine: базовый merge add/edit по UUID, история изменений (Фаза 3, Task 4)"
+git commit -m "MergeEngine: basic merge add/edit by UUID, change history (Phase 3, Task 4)"
 ```
 
 ---
@@ -1025,7 +1025,7 @@ git commit -m "MergeEngine: базовый merge add/edit по UUID, истор�
 - Test: `Packages/SyncKit/Tests/SyncKitTests/MergeEngineDeletionsAndMovesTests.swift`
 
 **Interfaces:**
-- Consumes: same `KdbxDatabase`/`KdbxGroup`/`KdbxEntry`/`KdbxDeletedObject` types as Task 4; Task 4's private helpers `collectEntries(in:)`, `collectGroups(in:)`, `mergeEntry(local:remote:)`, `mergeGroup(uuid:localGroup:remoteGroup:localEntries:remoteEntries:localGroups:remoteGroups:)` are extended in place, signatures unchanged from Task 4 except where noted below.
+- Consumes: same `KdbxDatabase `/`KdbxGroup `/`KdbxEntry `/`KdbxDeletedObject` types as Task 4; Task 4's private helpers `collectEntries(in:)`, `collectGroups(in:)`, `mergeEntry(local:remote:)`, `mergeGroup(uuid:localGroup:remoteGroup:localEntries:remoteEntries:localGroups:remoteGroups:)` are extended in place, signatures unchanged from Task 4 except where noted below.
 - Produces: same public signature `public static func merge(local: KdbxDatabase, remote: KdbxDatabase) -> KdbxDatabase` — behavior extended, not the signature. Consumed by Task 6 (`SyncEngine`) unchanged.
 
 - [ ] **Step 1: Write the failing test**
@@ -1256,7 +1256,7 @@ final class MergeEngineDeletionsAndMovesTests: XCTestCase {
 }
 ```
 
-Note: `KdbxDatabase(rootGroup:deletedObjects:recycleBinGroupUUID:)` and `KdbxDatabase.recycleBinGroupUUID` already exist in the current `MyPassKit` (`Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift`) — Task 4 already reads/passes this field through via its naive `local.recycleBinGroupUUID ?? remote.recycleBinGroupUUID` placeholder. This task does NOT modify `MyPassKit` at all; it only extends `MergeEngine` in `SyncKit`.
+Note: `KdbxDatabase(rootGroup:deletedObjects:recycleBinGroupUUID:)` and `KdbxDatabase.recycleBinGroupUUID` already exist in the current `MyPassKit` (`Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift`) — Task 4 already reads/passes this field through via its naive `local.recycleBinGroupUUID ?? remote.recycleBinGroupUUID` placeholder. This task does NOT modify `MyPassKit` at all; it only extends `MergeEngine` in `SyncKit `.
 
 - [ ] **Step 2: Run test to verify it fails**
 
@@ -1264,13 +1264,13 @@ Run: `cd Packages/SyncKit && swift test --filter MergeEngineDeletionsAndMovesTes
 Expected: 7 of 8 tests FAIL, 1 passes already:
 - `testRecycleBinGroupUUIDPrefersNonNil` PASSES already — Task 4's naive `local.recycleBinGroupUUID ?? remote.recycleBinGroupUUID` happens to produce the exact same result as rule 8's full "both non-nil→keep; one non-nil→use it; both nil→nil" logic for every case this test exercises.
 - `testDeleteLocalEditRemoteNewerResurrects` / `testDeleteRemoteEditLocalNewerResurrects` FAIL — Task 4's naive `deletedObjects` union (`local.deletedObjects + remote.deletedObjects`, no pruning) still lists the resurrected uuid as deleted, so `XCTAssertFalse(merged.deletedObjects.contains { ... })` fails.
-- `testDeleteLocalEditRemoteOlderDeletionWins` / `testDeleteRemoteEditLocalOlderDeletionWins` FAIL — Task 4 never prunes a tree node just because the other side recorded a deletion for its uuid, so the entry that should have been dropped is still present in `merged.rootGroup.entries`.
+- `testDeleteLocalEditRemoteOlderDeletionWins` / `testDeleteRemoteEditLocalOlderDeletionWins` FAIL — Task 4 never prunes a tree node just because the other side recorded a deletion for its uuid, so the entry that should have been dropped is still present in `merged.rootGroup.entries `.
 - `testMoveLocalNewerLocationWins` / `testMoveRemoteNewerLocationWins` FAIL — Task 4's `mergeGroup` decides entry inclusion independently per parent group (whichever side has that uuid as a child there), with no `locationChanged` tie-break, so a moved entry appears duplicated under BOTH the old and new parent instead of only the winning one — the `XCTAssertFalse` on the losing parent's `entries.contains` fails.
 - `testDeletedObjectsUnionKeepsLaterDeletionTime` FAILS — Task 4's naive union keeps both copies of the same uuid (no dedup), so `merged.deletedObjects.filter { $0.uuid == deletedUUID }.count` is 2, not 1, and the retained `deletionTime` is whichever happened to come first in the concatenation, not necessarily the later one.
 
 - [ ] **Step 3: Extend MergeEngine for rules 5-7 (rule 8 already correct from Task 4)**
 
-Extend `Packages/SyncKit/Sources/SyncKit/MergeEngine.swift`. Replace the body of `public static func merge(local:remote:)` from Task 4 with:
+Extend `Packages/SyncKit/Sources/SyncKit/MergeEngine.swift `. Replace the body of `public static func merge(local:remote:)` from Task 4 with:
 
 ```swift
     public static func merge(local: KdbxDatabase, remote: KdbxDatabase) -> KdbxDatabase {
@@ -1566,7 +1566,7 @@ Because this corrected helper needs each candidate uuid's ACTUAL parent uuid on 
     }
 ```
 
-Add the parent-map builder used to populate `localEntryParents`/`remoteEntryParents`, and update the top-level `merge(local:remote:)` to build and pass them:
+Add the parent-map builder used to populate `localEntryParents `/` remoteEntryParents`, and update the top-level `merge(local:remote:)` to build and pass them:
 
 ```swift
     private static func collectEntryParents(in group: KdbxGroup) -> [UUID: UUID] {
@@ -1583,7 +1583,7 @@ Add the parent-map builder used to populate `localEntryParents`/`remoteEntryPare
     }
 ```
 
-In `merge(local:remote:)`, after computing `localGroups`/`remoteGroups`, add:
+In `merge(local:remote:)`, after computing `localGroups `/` remoteGroups`, add:
 
 ```swift
         let localEntryParents = collectEntryParents(in: local.rootGroup)
@@ -1617,13 +1617,13 @@ Expected: PASS (8/8).
 - [ ] **Step 5: Run the full SyncKit and MyPassKit suites to check for regressions**
 
 Run: `cd Packages/SyncKit && swift test`, then `cd Packages/MyPassKit && swift test`
-Expected: all `SyncKitTests` (Tasks 1-5, cumulative) PASS; all `MyPassKitTests`/`MyPassKitPublicAPITests` PASS — this task does not touch `MyPassKit`, so its suite is unaffected.
+Expected: all `SyncKitTests` (Tasks 1-5, cumulative) PASS; all `MyPassKitTests `/`MyPassKitPublicAPITests` PASS — this task does not touch `MyPassKit`, so its suite is unaffected.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add Packages/SyncKit/Sources/SyncKit/MergeEngine.swift Packages/SyncKit/Tests/SyncKitTests/MergeEngineDeletionsAndMovesTests.swift
-git commit -m "MergeEngine: удаления/resurrection, перемещения по locationChanged, дедуп deletedObjects (Фаза 3, Task 5)"
+git commit -m "MergeEngine: deletions/resurrection, moving by locationChanged, deducing deletedObjects (Phase 3, Task 5)"
 ```
 
 ---
@@ -1636,7 +1636,7 @@ git commit -m "MergeEngine: удаления/resurrection, перемещени�
 - Test: `Packages/SyncKit/Tests/SyncKitTests/SyncEngineTests.swift`
 
 **Interfaces:**
-- Consumes: `StorageBackend`/`InMemoryStorageBackend` (Task 1), `MergeEngine.merge(local:remote:)` (Tasks 4-5), `MyPassKit.KdbxDatabase`/`.open(data:password:)`/`.save(password:cipher:compression:)`, `KdbxCipher`, `KdbxCompression` (all public, `Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift` + `Format/KdbxOuterHeader.swift`).
+- Consumes: `StorageBackend `/`InMemoryStorageBackend` (Task 1), `MergeEngine.merge(local:remote:)` (Tasks 4-5), `MyPassKit.KdbxDatabase `/`.open(data:password:)`/`.save(password:cipher:compression:)`, `KdbxCipher`, `KdbxCompression` (all public, `Packages/MyPassKit/Sources/MyPassKit/KdbxDatabase.swift` + `Format/KdbxOuterHeader.swift`).
 - Produces:
 ```swift
 public protocol SyncCheckpointStore {
@@ -1853,7 +1853,7 @@ final class SyncEngineTests: XCTestCase {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd Packages/SyncKit && swift test --filter SyncEngineTests`
-Expected: FAIL — `SyncEngine`/`SyncCheckpointStore`/`InMemorySyncCheckpointStore`/`SyncResult` do not exist yet (compile error).
+Expected: FAIL — `SyncEngine `/`SyncCheckpointStore `/`InMemorySyncCheckpointStore `/`SyncResult` do not exist yet (compile error).
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -2010,25 +2010,25 @@ Expected: all `SyncKitTests` (Tasks 1-6, cumulative) PASS.
 
 ```bash
 git add Packages/SyncKit/Sources/SyncKit/SyncCheckpointStore.swift Packages/SyncKit/Sources/SyncKit/SyncEngine.swift Packages/SyncKit/Tests/SyncKitTests/SyncEngineTests.swift
-git commit -m "SyncKit: SyncEngine — checkpoint-aware download/merge/upload orchестратор (Фаза 3, Task 6)"
+git commit -m "SyncKit: SyncEngine - checkpoint-aware download/merge/upload orchestrator (Phase 3, Task 6)"
 ```
 
 ---
 
-### Task 7: Подключить SyncEngine к VaultSession
+### Task 7: Connect SyncEngine to VaultSession
 
 **Files:**
 - Modify: `MyPass/State/VaultSession.swift`
-- Modify: `project.yml` (добавить пакет `SyncKit` и зависимость таргета `MyPass` от него — если ещё не сделано в Task 1; см. примечание в Step 3)
-- Test: `MyPassTests/VaultSessionTests.swift` (добавить 3 новых теста к 4 существующим)
+- Modify: `project.yml`(add package `SyncKit` and target dependency `MyPass` from it - if not already done in Task 1; see note in Step 3)
+- Test: `MyPassTests/VaultSessionTests.swift`(add 3 new tests to 4 existing ones)
 
 **Interfaces:**
-- Consumes: `SyncKit.SyncEngine`/`.sync(local:password:cipher:compression:)`, `SyncKit.SyncResult`, `SyncKit.InMemoryStorageBackend`, `SyncKit.InMemorySyncCheckpointStore` (Task 6); `MyPass/Models/KdbxEntry+Convenience.swift`'s `.title` extension (existing, Phase 2); `MyPass/Models/KdbxGroup+DeepCopy.swift`'s `.deepCopy()` extension (existing, Phase 2, unchanged by this task).
+- Consumes: `SyncKit.SyncEngine `/`.sync(local:password:cipher:compression:)`, `SyncKit.SyncResult`, `SyncKit.InMemoryStorageBackend`, `SyncKit.InMemorySyncCheckpointStore` (Task 6); `MyPass/Models/KdbxEntry+Convenience.swift`'s `.title` extension (existing, Phase 2); `MyPass/Models/KdbxGroup+DeepCopy.swift`'s `.deepCopy()` extension (existing, Phase 2, unchanged by this task).
 - Produces: `VaultSession.init(fileStore:syncEngine:)` — an additional `syncEngine: SyncEngine? = nil` parameter (default `nil` keeps every existing Phase 2 call site — the real `MyPass/State/VaultSession.swift` currently has `init(fileStore: VaultFileStore)` only — compiling unchanged), plus sync integration inside `unlock(password:)` and `persist(_:)`. No change to `VaultSession`'s existing public surface (`state`, `lastSaveError`, `currentDatabase`, `lock()`, `save(password:)`, `mutate(_:)`, `acknowledgeSaveError()`).
 
 - [ ] **Step 1: Write the failing tests**
 
-Append these 3 tests to the end of the existing `MyPassTests/VaultSessionTests.swift` (inside the closing `}` of `final class VaultSessionTests`, after `testRapidBackToBackMutationsBothPersistWithoutCorruption`), and add `import SyncKit` at the top alongside the existing `import XCTest`/`import MyPassKit`/`@testable import MyPass`:
+Append these 3 tests to the end of the existing `MyPassTests/VaultSessionTests.swift` (inside the closing `}` of `final class VaultSessionTests`, after `testRapidBackToBackMutationsBothPersistWithoutCorruption`), and add `import SyncKit` at the top alongside the existing `import XCTest `/` import MyPassKit `/`@testable import MyPass`:
 
 ```swift
 import XCTest
@@ -2195,7 +2195,7 @@ import SyncKit
         // generic local-save-failed one.
         var sawSyncError = false
         for _ in 0..<30 {
-            if let message = session.lastSaveError, message.contains("синхронизация") {
+            if let message = session.lastSaveError, message.contains("synchronization") {
                 sawSyncError = true
                 break
             }
@@ -2208,11 +2208,11 @@ import SyncKit
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -only-testing:MyPassTests/VaultSessionTests`
-Expected: FAIL — compile error (`no such module 'SyncKit'` if Task 1's `project.yml`/`xcodegen generate` wiring hasn't been applied to this checkout yet, otherwise `argument syncEngine could not be matched`/`extra argument` since `VaultSession.init` doesn't accept `syncEngine:` yet).
+Expected: FAIL — compile error (`no such module 'SyncKit'` if Task 1's `project.yml `/` xcodegen generate` wiring hasn't been applied to this checkout yet, otherwise `argument syncEngine could not be matched `/` extra argument` since `VaultSession.init` doesn't accept `syncEngine:` yet).
 
 - [ ] **Step 3: Write minimal implementation**
 
-If `project.yml` does not already list `SyncKit` under `packages:` and under the `MyPass` target's `dependencies:` (Task 1, Step 5, should already have applied this — this step is a no-op re-check, not a duplicate edit), apply it now and run `xcodegen generate`.
+If `project.yml` does not already list `SyncKit` under `packages:` and under the `MyPass` target's `dependencies:` (Task 1, Step 5, should already have applied this — this step is a no-op re-check, not a duplicate edit), apply it now and run `xcodegen generate `.
 
 Replace the full contents of `MyPass/State/VaultSession.swift` with:
 
@@ -2337,7 +2337,7 @@ final class VaultSession: ObservableObject {
         do {
             result = try syncEngine.sync(local: db, password: password, cipher: .aes256, compression: .gzip)
         } catch {
-            lastSaveError = "Не удалось синхронизировать хранилище: \(error)"
+            lastSaveError = "Failed to sync storage: \(error)"
             return db
         }
         guard case .merged(let mergedDatabase) = result else { return db }
@@ -2345,7 +2345,7 @@ final class VaultSession: ObservableObject {
             let data = try mergedDatabase.save(password: password, cipher: .aes256, compression: .gzip)
             try fileStore.save(data: data)
         } catch {
-            lastSaveError = "Не удалось сохранить объединённые изменения локально: \(error)"
+            lastSaveError = "Failed to save merged changes locally: \(error)"
         }
         return mergedDatabase
     }
@@ -2366,7 +2366,7 @@ final class VaultSession: ObservableObject {
                 try fileStore.save(data: data)
             } catch {
                 DispatchQueue.main.async { [weak self] in
-                    self?.lastSaveError = "Не удалось сохранить изменения: \(error)"
+                    self?.lastSaveError = "Failed to save changes: \(error)"
                 }
                 return
             }
@@ -2391,7 +2391,7 @@ final class VaultSession: ObservableObject {
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
-                    self?.lastSaveError = "Локальное сохранение выполнено, но синхронизация не удалась: \(error)"
+                    self?.lastSaveError = "Local save completed, but synchronization failed: \(error)"
                 }
             }
         }
@@ -2407,33 +2407,33 @@ Expected: PASS (7/7 — 4 existing + 3 new).
 - [ ] **Step 5: Run the full MyPass test suite to check for regressions**
 
 Run: `xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS'`, then `cd Packages/SyncKit && swift test`, then `cd Packages/MyPassKit && swift test`
-Expected: all pass — every existing `VaultSession` call site across `MyPass/` (views/view models constructing `VaultSession(fileStore:)` without a `syncEngine:` argument) keeps compiling unchanged, since the new parameter defaults to `nil`.
+Expected: all pass — every existing `VaultSession` call site across `MyPass/` (views/view models constructing `VaultSession(fileStore:)` without a `syncEngine:` argument) keeps compiling unchanged, since the new parameter defaults to `nil `.
 
 - [ ] **Step 6: Commit**
 
 ```bash
 git add MyPass/State/VaultSession.swift MyPassTests/VaultSessionTests.swift project.yml
-git commit -m "VaultSession: подключить SyncEngine — sync при unlock и при persist (Фаза 3, Task 7)"
+git commit -m "VaultSession: connect SyncEngine - sync on unlock and persist (Phase 3, Task 7)"
 ```
 
 ---
 
-### Task 8: Выбор SFTP-библиотеки — Citadel
+### Task 8: Selecting an SFTP Library - Citadel
 
 **Files:**
-- Modify: `Packages/SyncKit/Package.swift` (добавить зависимость на Citadel)
+- Modify: `Packages/SyncKit/Package.swift`(add dependency on Citadel)
 - Test: `Packages/SyncKit/Tests/SyncKitTests/CitadelDependencySmokeTests.swift`
 
 **Interfaces:**
-- Consumes: ничего из предыдущих задач Фазы 3 напрямую — это задача выбора и подключения третьесторонней зависимости, которую Task 10 затем использует для реализации `SFTPBackend`.
-- Produces: обновлённый `Packages/SyncKit/Package.swift` с зависимостью `orlandos-nl/Citadel` (продукт `Citadel`), плюс подтверждение (через smoke-тесты) что реальные типы `Citadel`-библиотеки (`Curve25519.Signing.PrivateKey(sshEd25519:decryptionKey:)`, `SSHAuthenticationMethod.ed25519(username:privateKey:)`, `InvalidOpenSSHKey`) линкуются и работают как ожидается. Потребляется Task 10 (`SFTPBackend`, `TrustOnFirstUseHostKeyValidator`).
+- Consumes: none of the previous Phase 3 tasks directly - this is a task of selecting and connecting a third party dependency that Task 10 then uses to implement `SFTPBackend `.
+- Produces: updated `Packages/SyncKit/Package.swift` with addiction `orlandos-nl/Citadel`(product `Citadel`), plus confirmation (via smoke tests) that the real types `Citadel`-libraries (`Curve25519.Signing.PrivateKey(sshEd25519:decryptionKey:)`, `SSHAuthenticationMethod.ed25519(username:privateKey:)`, `InvalidOpenSSHKey`) link and work as expected. Task 10 consumed (`SFTPBackend`, `TrustOnFirstUseHostKeyValidator`).
 
-**Решение: Citadel, а не mft.**
+**Solution: Citadel, not mft.**
 
-Global Constraints (шапка плана) формулирует выбор как «Citadel или mft». `mplpl/mft` («Swift SFTP Client Framework») — реальная библиотека, но распространяется только как Xcode-проект (`mft.xcodeproj`), собирающий вокруг забандленных бинарных `libssh 0.11.0`/`openssl 3.3.1` в виде xcframework — у неё нет `Package.swift`, и подключить её к `Packages/SyncKit` (чистый SwiftPM-пакет, где каждая задача этого плана запускается через `swift build`/`swift test`) означало бы либо векорить xcframework вручную в репозиторий, либо писать собственный `Package.swift`-обёртку с бинарной целью — оба варианта выходят за рамки «пакет с локальной path-зависимостью на MyPassKit» из Architecture-строки плана. Citadel (`orlandos-nl/Citadel`), напротив:
-- чистый Swift поверх `apple/swift-nio` + форка `Wellz26/swift-nio-ssh`, подключается обычной строкой `.package(url:from:)` — без бинарных артефактов;
-- async/await-нативный SSH/SFTP-клиент (`SSHClient`, `SFTPClient`) с реальным, подтверждённым API: `SSHClient.connect(host:port:authenticationMethod:hostKeyValidator:reconnect:...)`, `SSHAuthenticationMethod.ed25519(username:privateKey:)`, `SSHHostKeyValidator.custom(_:)` (кастомная TOFU-валидация — см. Task 10), `Curve25519.Signing.PrivateKey(sshEd25519:decryptionKey:)` (парсинг зашифрованного passphrase'ом OpenSSH-ключа) — всё подтверждено прямым чтением исходников `orlandos-nl/Citadel` тега `0.12.1`;
-- уже поддерживает SFTP (`SFTPClient`, `SFTPFileAttributes`, `SFTPOpenFileFlags`) как часть той же библиотеки, а не отдельного пакета.
+Global Constraints (plan header) states the choice as “Citadel or mft”.`mplpl/mft`(“Swift SFTP Client Framework”) is a real library, but is distributed only as an Xcode project (`mft.xcodeproj`), gathering around banded binary `libssh 0.11.0`/` openssl 3.3.1` in the form of xcframework - it doesn’t have `Package.swift`, and connect it to `Packages/SyncKit`(pure SwiftPM package, where each task of this plan is launched via `swift build `/` swift test`) would mean either pushing xcframework manually into the repository, or writing your own `Package.swift`-a wrapper with a binary target - both options go beyond the “package with local path dependency on MyPassKit” from the Architecture line of the plan. Citadel (`orlandos-nl/Citadel`), against:
+- pure Swift on top `apple/swift-nio`+ fork `Wellz26/swift-nio-ssh`, connected with a regular line `.package(url:from:)`- without binary artifacts;
+- async/await native SSH/SFTP client (`SSHClient`, `SFTPClient`) with a real, verified API:`SSHClient.connect(host:port:authenticationMethod:hostKeyValidator:reconnect:...)`, `SSHAuthenticationMethod.ed25519(username:privateKey:)`, `SSHHostKeyValidator.custom(_:)`(custom TOFU validation - see Task 10),`Curve25519.Signing.PrivateKey(sshEd25519:decryptionKey:)`(parsing an OpenSSH key encrypted by passphrase) - everything is confirmed by direct reading of the source code `orlandos-nl/Citadel` tag `0.12.1`;
+- already supports SFTP (`SFTPClient`, `SFTPFileAttributes`, `SFTPOpenFileFlags`) as part of the same library, rather than a separate package.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -2541,7 +2541,7 @@ Replace `Packages/SyncKit/Package.swift`'s `dependencies:`/`SyncKit`-target `dep
 - [ ] **Step 4: Run test to verify it passes**
 
 Run: `cd Packages/SyncKit && swift test --filter CitadelDependencySmokeTests`
-Expected: PASS (4/4) — SwiftPM resolves and builds Citadel (and its transitive `swift-nio`/`Wellz26/swift-nio-ssh`/`swift-crypto` dependencies) successfully.
+Expected: PASS (4/4) — SwiftPM resolves and builds Citadel (and its transitive `swift-nio `/`Wellz26/swift-nio-ssh `/` swift-crypto` dependencies) successfully.
 
 - [ ] **Step 5: Run the full SyncKit suite to check for regressions**
 
@@ -2552,19 +2552,19 @@ Expected: all `SyncKitTests` (Tasks 1-8, cumulative) PASS.
 
 ```bash
 git add Packages/SyncKit/Package.swift Packages/SyncKit/Tests/SyncKitTests/CitadelDependencySmokeTests.swift
-git commit -m "SyncKit: подключить Citadel (SFTP-библиотека) — smoke-тесты (Фаза 3, Task 8)"
+git commit -m "SyncKit: connect Citadel (SFTP library) - smoke tests (Phase 3, Task 8)"
 ```
 
 ---
 
-### Task 9: CredentialKeychainStore — хранение SFTP-учётных данных в Keychain
+### Task 9: CredentialKeychainStore - storing SFTP credentials in Keychain
 
 **Files:**
 - Create: `Packages/SyncKit/Sources/SyncKit/CredentialKeychainStore.swift`
 - Test: `Packages/SyncKit/Tests/SyncKitTests/CredentialKeychainStoreTests.swift`
 
 **Interfaces:**
-- Consumes: `Security` framework (`SecItemAdd`/`SecItemCopyMatching`/`SecItemDelete`), тот же паттерн Keychain-доступа, что и `BiometricKeyStore` (Фаза 2) — generic password item (`kSecClassGenericPassword`) с `kSecAttrService`/`kSecAttrAccount`, а не biometry-gated item (без `kSecAttrAccessControl`/`LAContext`, так как SFTP-учётные данные не должны требовать Touch ID на каждый sync-цикл).
+- Consumes: `Security` framework (`SecItemAdd `/`SecItemCopyMatching `/`SecItemDelete`), the same Keychain access pattern as `BiometricKeyStore`(Phase 2) - generic password item (`kSecClassGenericPassword`) With `kSecAttrService `/` kSecAttrAccount`, not biometry-gated item (without `kSecAttrAccessControl `/`LAContext`, since SFTP credentials should not require Touch ID per sync cycle).
 - Produces:
 ```swift
 public struct SFTPCredentials: Equatable, Codable {
@@ -2694,7 +2694,7 @@ final class CredentialKeychainStoreTests: XCTestCase {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd Packages/SyncKit && swift test --filter CredentialKeychainStoreTests`
-Expected: FAIL — `SFTPCredentials`/`CredentialStoring`/`CredentialKeychainStore`/`InMemoryCredentialStore` do not exist yet (compile error).
+Expected: FAIL — `SFTPCredentials `/`CredentialStoring `/`CredentialKeychainStore `/`InMemoryCredentialStore` do not exist yet (compile error).
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -2819,22 +2819,22 @@ Expected: all `SyncKitTests` (Tasks 1-9, cumulative) PASS.
 
 ```bash
 git add Packages/SyncKit/Sources/SyncKit/CredentialKeychainStore.swift Packages/SyncKit/Tests/SyncKitTests/CredentialKeychainStoreTests.swift
-git commit -m "SyncKit: CredentialKeychainStore — хранение SFTP-учётных данных в Keychain (Фаза 3, Task 9)"
+git commit -m "SyncKit: CredentialKeychainStore - storing SFTP credentials in Keychain (Phase 3, Task 9)"
 ```
 
 ---
 
-### Task 10: SFTPBackend — StorageBackend поверх Citadel с TOFU host-key проверкой
+### Task 10: SFTPBackend - StorageBackend over Citadel with TOFU host-key check
 
 **Files:**
-- Modify: `Packages/SyncKit/Package.swift` (добавить `swift-nio`, `Wellz26/swift-nio-ssh` как явные зависимости — Citadel уже тянет их транзитивно с Task 8, но `SFTPBackend`/`TrustOnFirstUseHostKeyValidator` используют `NIO`/`NIOFoundationCompat`/`NIOSSH`-типы напрямую, что требует явных `.product(...)` записей)
+- Modify: `Packages/SyncKit/Package.swift`(add `swift-nio`, `Wellz26/swift-nio-ssh` like explicit dependencies - Citadel already pulls them transitively with Task 8, but `SFTPBackend `/`TrustOnFirstUseHostKeyValidator` use `NIO `/`NIOFoundationCompat `/`NIOSSH`-types directly, which requires explicit `.product(...)` records)
 - Create: `Packages/SyncKit/Sources/SyncKit/TrustOnFirstUseHostKeyValidator.swift`
 - Create: `Packages/SyncKit/Sources/SyncKit/SFTPBackend.swift`
 - Test: `Packages/SyncKit/Tests/SyncKitTests/TrustOnFirstUseHostKeyValidatorTests.swift`
 - Test: `Packages/SyncKit/Tests/SyncKitTests/SFTPBackendTests.swift`
 
 **Interfaces:**
-- Consumes: `StorageBackend` (Task 1), Citadel (Task 8) — `SSHClient.connect(host:port:authenticationMethod:hostKeyValidator:reconnect:group:)`, `SSHClient.close()`, `SSHClient.withSFTP(_:)`, `SFTPClient.getAttributes(at:)`/`.withFile(filePath:flags:_:)`/`.remove(at:)`/`.rename(at:to:)`, `SFTPOpenFileFlags`, `SFTPFileAttributes.accessModificationTime?.modificationTime`, `SSHHostKeyValidator.custom(_:)`, `SSHAuthenticationMethod.ed25519(username:privateKey:)`, `Curve25519.Signing.PrivateKey(sshEd25519:decryptionKey:)` — `apple/swift-nio-ssh`'s `NIOSSHClientServerAuthenticationDelegate`/`NIOSSHPublicKey`/`String(openSSHPublicKey:)` — `CredentialStoring`/`SFTPCredentials` (Task 9, consumed by the CALLER that assembles `SFTPBackendConfiguration`, not by `SFTPBackend` itself).
+- Consumes: `StorageBackend` (Task 1), Citadel (Task 8) — `SSHClient.connect(host:port:authenticationMethod:hostKeyValidator:reconnect:group:)`, `SSHClient.close()`, `SSHClient.withSFTP(_:)`, `SFTPClient.getAttributes(at:)`/`.withFile(filePath:flags:_:)`/`.remove(at:)`/`.rename(at:to:)`, `SFTPOpenFileFlags`, `SFTPFileAttributes.accessModificationTime?.modificationTime`, `SSHHostKeyValidator.custom(_:)`, `SSHAuthenticationMethod.ed25519(username:privateKey:)`, `Curve25519.Signing.PrivateKey(sshEd25519:decryptionKey:)` — `apple/swift-nio-ssh`'s `NIOSSHClientServerAuthenticationDelegate `/`NIOSSHPublicKey `/`String(openSSHPublicKey:)` — `CredentialStoring `/`SFTPCredentials` (Task 9, consumed by the CALLER that assembles `SFTPBackendConfiguration`, not by `SFTPBackend` itself).
 - Produces:
 ```swift
 public protocol TrustedHostKeyStore {
@@ -3064,9 +3064,9 @@ final class SFTPBackendTests: XCTestCase {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd Packages/SyncKit && swift test --filter TrustOnFirstUseHostKeyValidatorTests`
-Expected: FAIL — `TrustOnFirstUseHostKeyValidator`/`InMemoryTrustedHostKeyStore`/`TrustOnFirstUseError` do not exist yet (compile error).
+Expected: FAIL — `TrustOnFirstUseHostKeyValidator `/`InMemoryTrustedHostKeyStore `/`TrustOnFirstUseError` do not exist yet (compile error).
 Run: `cd Packages/SyncKit && swift test --filter SFTPBackendTests`
-Expected: FAIL — `SFTPBackend`/`SFTPBackendConfiguration` do not exist yet (compile error). Once `MYPASS_SFTP_INTEGRATION_TESTS=1` is also set against a real Docker container (Step 4 below), still expected to fail the same way until Step 3 is applied.
+Expected: FAIL — `SFTPBackend `/`SFTPBackendConfiguration` do not exist yet (compile error). Once `MYPASS_SFTP_INTEGRATION_TESTS=1` is also set against a real Docker container (Step 4 below), still expected to fail the same way until Step 3 is applied.
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -3077,7 +3077,7 @@ ssh-keygen -t ed25519 -N "" -f /tmp/hostkey_a -C "host-a"
 ssh-keygen -t ed25519 -N "" -f /tmp/hostkey_b -C "host-b"
 ```
 
-(the two `let hostAPublicKeyLine`/`hostBPublicKeyLine` constants in the test above must be replaced with whatever `cat /tmp/hostkey_a.pub`/`cat /tmp/hostkey_b.pub` actually print — ed25519 public key material is deterministic from the private key, so the literal base64 blob shown above is illustrative and will differ per-generation; the executing agent must substitute the real generated value before running Step 4.)
+(the two `let hostAPublicKeyLine `/` hostBPublicKeyLine` constants in the test above must be replaced with whatever `cat /tmp/hostkey_a.pub `/` cat /tmp/hostkey_b.pub` actually print — ed25519 public key material is deterministic from the private key, so the literal base64 blob shown above is illustrative and will differ per-generation; the executing agent must substitute the real generated value before running Step 4.)
 
 Add `swift-nio` and the `Wellz26/swift-nio-ssh` fork Citadel itself depends on as explicit dependencies in `Packages/SyncKit/Package.swift` (full updated `dependencies:`/targets' `dependencies:`, replacing Task 8's version):
 
@@ -3423,17 +3423,17 @@ Expected: all `SyncKitTests` (Tasks 1-10, cumulative) PASS (integration/Keychain
 
 ```bash
 git add Packages/SyncKit/Package.swift Packages/SyncKit/Sources/SyncKit/TrustOnFirstUseHostKeyValidator.swift Packages/SyncKit/Sources/SyncKit/SFTPBackend.swift Packages/SyncKit/Tests/SyncKitTests/TrustOnFirstUseHostKeyValidatorTests.swift Packages/SyncKit/Tests/SyncKitTests/SFTPBackendTests.swift
-git commit -m "SyncKit: SFTPBackend поверх Citadel — TOFU host-key проверка, sync-обёртка над async SFTP-клиентом (Фаза 3, Task 10)"
+git commit -m "SyncKit: SFTPBackend over Citadel - TOFU host-key check, sync wrapper over async SFTP client (Phase 3, Task 10)"
 ```
 
-### Task 11: iCloudBackend — StorageBackend поверх iCloud Drive ubiquity-контейнера
+### Task 11: iCloudBackend - StorageBackend on top of iCloud Drive ubiquity container
 
 **Files:**
 - Create: `Packages/SyncKit/Sources/SyncKit/iCloudBackend.swift`
 - Test: `Packages/SyncKit/Tests/SyncKitTests/iCloudBackendTests.swift`
 
 **Interfaces:**
-- Consumes: `StorageBackend` (Task 1); `Foundation.FileManager` ubiquity APIs (`url(forUbiquityContainerIdentifier:)`, `startDownloadingUbiquitousItem(at:)`), `Foundation.NSFileCoordinator`/`NSFilePresenter`, `URLResourceKey.ubiquitousItemDownloadingStatusKey`.
+- Consumes: `StorageBackend` (Task 1); `Foundation.FileManager` ubiquity APIs (`url(forUbiquityContainerIdentifier:)`, `startDownloadingUbiquitousItem(at:)`), `Foundation.NSFileCoordinator `/`NSFilePresenter`, `URLResourceKey.ubiquitousItemDownloadingStatusKey `.
 - Produces:
 ```swift
 public enum iCloudBackendError: Error, Equatable {
@@ -3447,7 +3447,7 @@ public final class iCloudBackend: StorageBackend {
     public var onRemoteChange: (() -> Void)? { get set }
 }
 ```
-`iCloudBackend` is the concrete `StorageBackend` handed to `SyncEngine` (Task 6) once a user selects the iCloud Drive backend — no changes to `SyncEngine`/`MergeEngine` are needed, per Task 6's design goal of any `StorageBackend` being pluggable. Consumed by Task 12 (Settings UI wiring + `VaultSession` construction). `onRemoteChange` mirrors Task 3's `LocalFolderChangeWatcher(folderURL:onChange:)` callback shape — it fires (via the internal `NSFilePresenter`'s `presentedItemDidChange()`) whenever iCloud delivers a change to the vault file made by another device while this process is running, giving Task 12 the same "external change → trigger a sync pass" hook for the iCloud backend that `LocalFolderChangeWatcher` gives the Local backend.
+`iCloudBackend` is the concrete `StorageBackend` handed to `SyncEngine` (Task 6) once a user selects the iCloud Drive backend — no changes to `SyncEngine `/`MergeEngine` are needed, per Task 6's design goal of any `StorageBackend` being pluggable. Consumed by Task 12 (Settings UI wiring + `VaultSession` construction). `onRemoteChange` mirrors Task 3's `LocalFolderChangeWatcher(folderURL:onChange:)` callback shape — it fires (via the internal `NSFilePresenter`'s `presentedItemDidChange()`) whenever iCloud delivers a change to the vault file made by another device while this process is running, giving Task 12 the same "external change → trigger a sync pass" hook for the iCloud backend that `LocalFolderChangeWatcher` gives the Local backend.
 
 - [ ] **Step 1: Write the failing test**
 
@@ -3535,7 +3535,7 @@ final class iCloudBackendUngatedTests: XCTestCase {
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `cd Packages/SyncKit && swift test --filter iCloudBackendTests`
-Expected: FAIL — `iCloudBackend`/`iCloudBackendError` do not exist yet (compile error).
+Expected: FAIL — `iCloudBackend `/` iCloudBackendError` do not exist yet (compile error).
 Run: `cd Packages/SyncKit && swift test --filter iCloudBackendUngatedTests`
 Expected: FAIL — same compile error (both classes live in the same not-yet-compiling file).
 
@@ -3555,13 +3555,13 @@ public enum iCloudBackendError: Error, Equatable {
 /// goes through `NSFileCoordinator` so overlapping access from other
 /// processes (Finder, other MyPass instances, the file-provider daemon
 /// itself) is safely serialized — per the design spec's iCloud backend
-/// section ("NSFileCoordinator + NSFilePresenter; conflict-версии
-/// (NSFileVersion) прогоняются через merge и удаляются"). The
+/// section("NSFileCoordinator + NSFilePresenter; conflict-versions
+/// (NSFileVersion) are run through merge and deleted"). The
 /// conflict-version sweep itself is `MergeEngine`'s job once `SyncEngine`
 /// downloads the current file (Tasks 4-6); this class's job is only to
 /// guarantee coordinated, safe I/O and that a read never returns a
 /// partially-downloaded placeholder (`ensureDownloaded`, called from
-/// `read()`), per the design doc's "iCloud задерживает выгрузку" risk row.
+/// `read()`), per the design doc's "iCloud delays upload" risk row.
 public final class iCloudBackend: StorageBackend {
     private let containerURL: URL
     private let relativePath: String
@@ -3719,25 +3719,25 @@ Expected: all `SyncKitTests` (Tasks 1-11, cumulative) PASS (integration/Keychain
 
 ```bash
 git add Packages/SyncKit/Sources/SyncKit/iCloudBackend.swift Packages/SyncKit/Tests/SyncKitTests/iCloudBackendTests.swift
-git commit -m "SyncKit: iCloudBackend поверх NSFileCoordinator/NSFilePresenter, ensureDownloaded против частично выгруженных файлов (Фаза 3, Task 11)"
+git commit -m "SyncKit: iCloudBackend on top of NSFileCoordinator/NSFilePresenter, ensureDownloaded against partially downloaded files (Phase 3, Task 11)"
 ```
 
 ---
 
-### Task 12: Settings UI — выбор бэкенда Local/iCloud, подключение к VaultSession
+### Task 12: Settings UI - select Local/iCloud backend, connect to VaultSession
 
 **Files:**
-- Modify: `MyPass/UI/Settings/SettingsView.swift` (сделать `.local`/`.iCloud` доступными, добавить выбор папки и статус iCloud-контейнера)
-- Modify: `MyPass/MyPassApp.swift` (собрать подходящий `StorageBackend`/`SyncEngine` и передать в `VaultSession`; добавить периодический таймер и FSEvents-триггер для внешних изменений)
-- Modify: `MyPass/State/VaultSession.swift` (добавить `triggerBackgroundSync()` — небольшое дополнение поверх Task 7's файла, без изменения существующих методов)
+- Modify: `MyPass/UI/Settings/SettingsView.swift`(do `.local `/`.iCloud` available, add folder selection and iCloud container status)
+- Modify: `MyPass/MyPassApp.swift`(assemble a suitable `StorageBackend `/`SyncEngine` and transfer to `VaultSession`; add a periodic timer and FSEvents trigger for external changes)
+- Modify: `MyPass/State/VaultSession.swift`(add `triggerBackgroundSync()`- a small addition on top of the Task 7's file, without changing existing methods)
 - Create: `MyPass/State/SyncBackendResolver.swift`
-- Test: `MyPassTests/SettingsViewSyncBackendTests.swift` (новый файл — не существовал ранее)
+- Test: `MyPassTests/SettingsViewSyncBackendTests.swift`(new file - did not exist before)
 
 **Interfaces:**
-- Consumes: `SyncKit.LocalFolderBackend`/`.init(bookmarkData:filename:)`/`.createBookmark(for:)` (Task 2), `SyncKit.LocalFolderChangeWatcher`/`.init(folderURL:onChange:)`/`.start()`/`.stop()` (Task 3), `SyncKit.iCloudBackend`/`.init(relativePath:containerIdentifier:)`/`.onRemoteChange` (Task 11), `SyncKit.SyncEngine`/`.init(remote:checkpointStore:)` (Task 6), `SyncKit.UserDefaultsSyncCheckpointStore`/`.init(defaults:key:)` (Task 6), `SyncKit.StorageBackend` (Task 1); `MyPass/State/VaultSession.swift`'s real, existing `init(fileStore: VaultFileStore, syncEngine: SyncEngine? = nil)` (Task 7); the real, existing `SyncBackendOption` enum and `SettingsView` in `MyPass/UI/Settings/SettingsView.swift` (Phase 2, unmodified by Phase 3 until this task).
-- Produces: `SyncBackendOption.local.isAvailable`/`.iCloud.isAvailable` now `true` (`.sftp.isAvailable` stays `false` until Task 13); a new, additive `VaultSession.triggerBackgroundSync()` method (fileprivate helpers `syncOnUnlock`/`persist(_:)` from Task 7 are reused unchanged — no signature in Task 7's produced surface changes); `SyncBackendResolver.resolveLocalFolderBackend(bookmarkData:)`/`.resolveICloudBackend(relativePath:)` — pure(ish) resolution helpers consumed by `MyPassApp.init()` and unit-tested directly without SwiftUI. Consumed by Task 13 (extends the same `SettingsView.swift`/`MyPassApp.swift`/`SyncBackendResolver.swift` with the SFTP case).
+- Consumes: `SyncKit.LocalFolderBackend `/`.init(bookmarkData:filename:)`/`.createBookmark(for:)` (Task 2), `SyncKit.LocalFolderChangeWatcher `/`.init(folderURL:onChange:)`/`.start()`/`.stop()` (Task 3), `SyncKit.iCloudBackend `/`.init(relativePath:containerIdentifier:)`/`.onRemoteChange` (Task 11), `SyncKit.SyncEngine `/`.init(remote:checkpointStore:)` (Task 6), `SyncKit.UserDefaultsSyncCheckpointStore `/`.init(defaults:key:)` (Task 6), `SyncKit.StorageBackend` (Task 1); `MyPass/State/VaultSession.swift`'s real, existing `init(fileStore: VaultFileStore, syncEngine: SyncEngine? = nil)` (Task 7); the real, existing `SyncBackendOption` enum and `SettingsView` in `MyPass/UI/Settings/SettingsView.swift` (Phase 2, unmodified by Phase 3 until this task).
+- Produces: `SyncBackendOption.local.isAvailable `/`.iCloud.isAvailable` now `true` (`.sftp.isAvailable` stays `false` until Task 13); a new, additive `VaultSession.triggerBackgroundSync()` method (fileprivate helpers `syncOnUnlock `/` persist(_:)` from Task 7 are reused unchanged — no signature in Task 7's produced surface changes); `SyncBackendResolver.resolveLocalFolderBackend(bookmarkData:)`/`.resolveICloudBackend(relativePath:)` — pure(ish) resolution helpers consumed by `MyPassApp.init()` and unit-tested directly without SwiftUI. Consumed by Task 13 (extends the same `SettingsView.swift `/`MyPassApp.swift `/`SyncBackendResolver.swift` with the SFTP case).
 
-This task also closes a gap surfaced during this plan's whole-document self-review (see `## Self-Review` below): Task 3's `LocalFolderChangeWatcher` was created but never wired to anything (its own Interfaces note deferred that to "Part B's app-level auto-sync trigger"), and the design spec's sync cycle ("при открытии, после сохранения, **по таймеру, вручную**") has two triggers — periodic and manual — that Tasks 6-7 don't implement (they only wire sync at unlock and after-save). `VaultSession.triggerBackgroundSync()` plus this task's `MyPassApp.swift` timer and `LocalFolderChangeWatcher`/`iCloudBackend.onRemoteChange` wiring close all four.
+This task also closes a gap surfaced during this plan's whole-document self-review (see `## Self-Review` below): Task 3's `LocalFolderChangeWatcher` was created but never wired to anything (its own Interfaces note deferred that to "Part B's app-level auto-sync trigger"), and the design spec's sync cycle ("on opening, after saving, **by timer, manually**") has two triggers - periodic and manual - that Tasks 6-7 don't implement (they only wire sync at unlock and after-save).`VaultSession.triggerBackgroundSync()` plus this task's `MyPassApp.swift` timer and `LocalFolderChangeWatcher `/` iCloudBackend.onRemoteChange` wiring close all four.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -3856,7 +3856,7 @@ import MyPassKit
 import SyncKit
 
 enum SyncBackendOption: String, CaseIterable, Identifiable {
-    case local = "Локальный файл"
+    case local = "Local file"
     case iCloud = "iCloud Drive"
     case sftp = "SFTP"
 
@@ -3903,16 +3903,16 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Автоблокировка") {
-                Stepper("Таймаут: \(Int(autoLockTimeoutMinutes)) мин", value: $autoLockTimeoutMinutes, in: 1...120)
+            Section("Auto-lock") {
+                Stepper("Timeout: \(Int(autoLockTimeoutMinutes)) min", value: $autoLockTimeoutMinutes, in: 1...120)
             }
-            Section("Резервные копии") {
-                Stepper("Хранить последних: \(backupCount)", value: $backupCount, in: 1...50)
+            Section("Backups") {
+                Stepper("Store the latest: \(backupCount)", value: $backupCount, in: 1...50)
             }
-            Section("Синхронизация") {
-                Picker("Бэкенд", selection: $syncBackendRawValue) {
+            Section("Synchronization") {
+                Picker("Backend", selection: $syncBackendRawValue) {
                     ForEach(SyncBackendOption.allCases) { option in
-                        Text(option.isAvailable ? option.rawValue : "\(option.rawValue) (скоро)")
+                        Text(option.isAvailable ? option.rawValue : "\(option.rawValue) (coming soon)")
                             .tag(option.rawValue)
                     }
                 }
@@ -3923,13 +3923,13 @@ struct SettingsView: View {
                 case .iCloud:
                     iCloudSection
                 case .sftp:
-                    Text("SFTP появится в следующей задаче Фазы 3.")
+                    Text("SFTP will appear in the next Phase 3 task.")
                         .foregroundStyle(.secondary)
                 }
 
-                Button("Синхронизировать сейчас") {
+                Button("Sync now") {
                     vaultSession.triggerBackgroundSync()
-                    manualSyncStatusMessage = "Запущено…"
+                    manualSyncStatusMessage = "Launched..."
                 }
                 if let manualSyncStatusMessage {
                     Text(manualSyncStatusMessage)
@@ -3959,14 +3959,14 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             if let bookmarkData = syncLocalFolderBookmarkData, !bookmarkData.isEmpty,
                let backend = SyncBackendResolver.resolveLocalFolderBackend(bookmarkData: bookmarkData) {
-                Text("Папка выбрана.")
+                Text("The folder is selected.")
                     .foregroundStyle(.secondary)
                     .task { _ = backend } // keeps `backend` from being flagged unused; construction itself already validates the bookmark
             } else {
-                Text("Папка не выбрана.")
+                Text("No folder selected.")
                     .foregroundStyle(.secondary)
             }
-            Button("Выбрать папку…") {
+            Button("Select folder...") {
                 let panel = NSOpenPanel()
                 panel.canChooseFiles = false
                 panel.canChooseDirectories = true
@@ -3981,10 +3981,10 @@ struct SettingsView: View {
     private var iCloudSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             if iCloudContainerAvailable {
-                Text("Контейнер iCloud доступен.")
+                Text("iCloud container is available.")
                     .foregroundStyle(.secondary)
             } else {
-                Text(iCloudContainerCheckMessage ?? "iCloud Drive недоступен — войдите в iCloud и включите iCloud Drive в Системных настройках.")
+                Text(iCloudContainerCheckMessage ?? "iCloud Drive is not available - Sign in to iCloud and turn on iCloud Drive in System Preferences.")
                     .foregroundStyle(.orange)
             }
         }
@@ -3998,10 +3998,10 @@ struct SettingsView: View {
             iCloudContainerCheckMessage = nil
         } catch iCloudBackendError.containerUnavailable {
             iCloudContainerAvailable = false
-            iCloudContainerCheckMessage = "iCloud Drive недоступен — войдите в iCloud и включите iCloud Drive в Системных настройках."
+            iCloudContainerCheckMessage = "iCloud Drive is not available - Sign in to iCloud and turn on iCloud Drive in System Preferences."
         } catch {
             iCloudContainerAvailable = false
-            iCloudContainerCheckMessage = "Не удалось проверить контейнер iCloud: \(error)"
+            iCloudContainerCheckMessage = "Failed to verify iCloud container: \(error)"
         }
     }
 }
@@ -4020,9 +4020,9 @@ struct MyPassApp: App {
     /// Default inactivity timeout before the vault auto-locks, per the design spec (15 minutes).
     private static let defaultAutoLockTimeout: TimeInterval = 900
 
-    /// Design spec's sync cycle triggers "при открытии, после сохранения" are
+    /// Design spec's sync cycle triggers "when opening, after saving" are
     /// wired directly inside `VaultSession` (Task 7). This interval covers
-    /// the remaining "по таймеру" trigger.
+    /// the remaining "by timer" trigger.
     private static let backgroundSyncInterval: TimeInterval = 300
 
     @NSApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
@@ -4095,7 +4095,7 @@ struct MyPassApp: App {
             return event
         }
 
-        // Design spec sync trigger "по таймеру".
+        // Design spec sync trigger "by timer".
         AppDelegate.backgroundSyncTimer = Timer.scheduledTimer(
             withTimeInterval: Self.backgroundSyncInterval,
             repeats: true
@@ -4103,8 +4103,8 @@ struct MyPassApp: App {
             session?.triggerBackgroundSync()
         }
 
-        // Design spec's Local-folder backend requirement "FSEvents для
-        // внешних изменений" — closes the forward reference Task 3 left
+        // Design spec's Local-folder backend requirement "FSEvents for
+        // external changes" — closes the forward reference Task 3 left
         // open ("Consumed by ... app-level auto-sync trigger").
         if syncBackendOption == .local, let folderURL = localFolderURLForWatcher {
             let watcher = LocalFolderChangeWatcher(folderURL: folderURL) { [weak session] in
@@ -4167,21 +4167,21 @@ Expected: all pass, including the existing `VaultSessionTests` (Task 7) — `Vau
 
 ```bash
 git add MyPass/UI/Settings/SettingsView.swift MyPass/MyPassApp.swift MyPass/AppDelegate.swift MyPass/State/VaultSession.swift MyPass/State/SyncBackendResolver.swift MyPassTests/SettingsViewSyncBackendTests.swift
-git commit -m "Settings: включить Local/iCloud бэкенды, подключить SyncEngine к VaultSession, периодический + внешний триггеры sync (Фаза 3, Task 12)"
+git commit -m "Settings: enable Local/iCloud backends, connect SyncEngine to VaultSession, periodic + external sync triggers (Phase 3, Task 12)"
 ```
 
 ---
 
-### Task 13: Settings UI — форма конфигурации SFTP
+### Task 13: Settings UI - SFTP configuration form
 
 **Files:**
-- Modify: `MyPass/UI/Settings/SettingsView.swift` (сделать `.sftp` доступным, добавить форму конфигурации)
-- Modify: `MyPass/MyPassApp.swift` (добавить ветку `.sftp` в сборку `StorageBackend`)
+- Modify: `MyPass/UI/Settings/SettingsView.swift`(do `.sftp` available, add configuration form)
+- Modify: `MyPass/MyPassApp.swift`(add thread `.sftp` to the assembly `StorageBackend`)
 - Create: `MyPass/State/SFTPConnectionTester.swift`
-- Test: `MyPassTests/SettingsViewSyncBackendTests.swift` (добавить тесты к файлу из Task 12)
+- Test: `MyPassTests/SettingsViewSyncBackendTests.swift`(add tests to file from Task 12)
 
 **Interfaces:**
-- Consumes: `SyncKit.SFTPBackend`/`.init(configuration:trustedHostKeyStore:group:)`, `SyncKit.SFTPBackendConfiguration`/`.init(host:port:username:remotePath:privateKeyPEM:privateKeyPassphrase:)`, `SyncKit.UserDefaultsTrustedHostKeyStore`/`.init(defaults:keyPrefix:)` (Task 10); `SyncKit.CredentialKeychainStore`/`.init()`, `SyncKit.SFTPCredentials`/`.init(username:privateKeyPEM:privateKeyPassphrase:)`, `SyncKit.CredentialStoring`/`.loadCredentials(forHost:)`/`.store(_:forHost:)` (Task 9); `SyncKit.StorageBackend` (Task 1); Task 12's `SyncBackendOption`, `SettingsView`, `MyPassApp.init()`'s backend-construction `switch`, `SyncBackendResolver`.
+- Consumes: `SyncKit.SFTPBackend `/`.init(configuration:trustedHostKeyStore:group:)`, `SyncKit.SFTPBackendConfiguration `/`.init(host:port:username:remotePath:privateKeyPEM:privateKeyPassphrase:)`, `SyncKit.UserDefaultsTrustedHostKeyStore `/`.init(defaults:keyPrefix:)` (Task 10); `SyncKit.CredentialKeychainStore `/`.init()`, `SyncKit.SFTPCredentials `/`.init(username:privateKeyPEM:privateKeyPassphrase:)`, `SyncKit.CredentialStoring `/`.loadCredentials(forHost:)`/`.store(_:forHost:)` (Task 9); `SyncKit.StorageBackend` (Task 1); Task 12's `SyncBackendOption`, `SettingsView`, `MyPassApp.init()`'s backend-construction `switch`, `SyncBackendResolver `.
 - Produces: `SyncBackendOption.sftp.isAvailable` now `true`; `SyncBackendResolver.buildSFTPConfiguration(host:port:username:remotePath:credentials:) -> SFTPBackendConfiguration?` (pure, testable); a new type:
 ```swift
 enum SFTPConnectionTesterError: Error {
@@ -4198,9 +4198,9 @@ struct SFTPConnectionTester {
     func testConnection() -> Result<Void, Error>
 }
 ```
-`backendFactory` defaults to a real `SFTPBackend` but is injectable, so `SFTPConnectionTesterTests` can supply a fake `StorageBackend` without any network/Docker dependency. Consumed by `SettingsView`'s "Проверить соединение" button and by this task's tests.
+`backendFactory` defaults to a real `SFTPBackend` but is injectable, so `SFTPConnectionTesterTests` can supply a fake `StorageBackend` without any network/Docker dependency. Consumed by `SettingsView`'s "Test connection" button and by this task's tests.
 
-**Известный пробел (см. `## Self-Review`):** design-спека упоминает опциональную поддержку OpenSSH-сертификатов для SFTP ("опционально OpenSSH-сертификат"), но `SFTPBackendConfiguration` (Task 10) не имеет поля для сертификата — Citadel's `SSHAuthenticationMethod.ed25519(username:privateKey:)` (единственный аутентификационный метод, использованный в Task 10) не принимает сертификат. Поле `syncSFTPCertificatePath` ниже сохраняет путь к файлу сертификата в UI ради будущей задачи, но оно **не используется** нигде в реальном SSH-подключении — это явно откомментировано в коде ниже и в риск-таблице дизайн-спеки этот риск уже зафиксирован как принятый ("SFTP-библиотека без OpenSSH-сертификатов").
+**Known gap (see `## Self-Review`):** the design spec mentions optional support for OpenSSH certificates for SFTP (“optional OpenSSH certificate”), but `SFTPBackendConfiguration`(Task 10) does not have a certificate field - Citadel's `SSHAuthenticationMethod.ed25519(username:privateKey:)`(the only authentication method used in Task 10) does not accept a certificate. Field `syncSFTPCertificatePath` below saves the path to the certificate file in the UI for the sake of a future task, but it is **not used** anywhere in the actual SSH connection - this is explicitly commented out in the code below and in the risk table of the design specs this risk is already recorded as accepted (“SFTP library without OpenSSH certificates”).
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -4310,12 +4310,12 @@ Append these tests to the end of `MyPassTests/SettingsViewSyncBackendTests.swift
     }
 ```
 
-And add `import SyncKit` alongside the existing `import XCTest`/`@testable import MyPass` at the top of the file if Task 12 didn't already add it (it did — this is a no-op re-check).
+And add `import SyncKit` alongside the existing `import XCTest `/`@testable import MyPass` at the top of the file if Task 12 didn't already add it (it did — this is a no-op re-check).
 
 - [ ] **Step 2: Run test to verify it fails**
 
 Run: `xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -only-testing:MyPassTests/SettingsViewSyncBackendTests`
-Expected: FAIL — compile error (`SyncBackendResolver.buildSFTPConfiguration`/`SFTPConnectionTester`/`SFTPConnectionTesterError` do not exist yet).
+Expected: FAIL — compile error (`SyncBackendResolver.buildSFTPConfiguration `/`SFTPConnectionTester `/`SFTPConnectionTesterError` do not exist yet).
 
 - [ ] **Step 3: Write minimal implementation**
 
@@ -4330,7 +4330,7 @@ enum SFTPConnectionTesterError: Error, Equatable {
 }
 
 /// Wraps a single `StorageBackend.exists()` call as a connectivity probe for
-/// the Settings "Проверить соединение" button. `backendFactory` defaults to
+/// the Settings "Check connection" button. `backendFactory` defaults to
 /// building a real `SFTPBackend`, but is injectable so tests can supply a
 /// fake `StorageBackend` without any network/Docker dependency — this is
 /// the preferred design flagged in this task's spec over gating the whole
@@ -4395,7 +4395,7 @@ Add the following to `MyPass/State/SyncBackendResolver.swift`, inside the `enum 
     }
 ```
 
-Modify `MyPass/UI/Settings/SettingsView.swift` — replace the full contents with (adds the SFTP form/state on top of Task 12's version; `.local`/`.iCloud` sections and the manual-sync button are unchanged from Task 12):
+Modify `MyPass/UI/Settings/SettingsView.swift` — replace the full contents with (adds the SFTP form/state on top of Task 12's version; `.local `/`.iCloud` sections and the manual-sync button are unchanged from Task 12):
 
 ```swift
 import SwiftUI
@@ -4404,7 +4404,7 @@ import MyPassKit
 import SyncKit
 
 enum SyncBackendOption: String, CaseIterable, Identifiable {
-    case local = "Локальный файл"
+    case local = "Local file"
     case iCloud = "iCloud Drive"
     case sftp = "SFTP"
 
@@ -4429,7 +4429,7 @@ struct SettingsView: View {
     @AppStorage("syncSFTPUsername") private var sftpUsername: String = ""
     @AppStorage("syncSFTPRemotePath") private var sftpRemotePath: String = "/upload/vault.kdbx"
     @AppStorage("syncSFTPPrivateKeyPath") private var sftpPrivateKeyPath: String = ""
-    // UI-only bookkeeping — see this task's "Известный пробел" note above:
+    // UI-only bookkeeping — see this task's "Known gap" note above:
     // not wired into SFTPBackendConfiguration (Task 10 has no certificate
     // field), kept only so the chosen path survives across Settings reopens.
     @AppStorage("syncSFTPCertificatePath") private var sftpCertificatePath: String = ""
@@ -4458,14 +4458,14 @@ struct SettingsView: View {
 
     var body: some View {
         Form {
-            Section("Автоблокировка") {
-                Stepper("Таймаут: \(Int(autoLockTimeoutMinutes)) мин", value: $autoLockTimeoutMinutes, in: 1...120)
+            Section("Auto-lock") {
+                Stepper("Timeout: \(Int(autoLockTimeoutMinutes)) min", value: $autoLockTimeoutMinutes, in: 1...120)
             }
-            Section("Резервные копии") {
-                Stepper("Хранить последних: \(backupCount)", value: $backupCount, in: 1...50)
+            Section("Backups") {
+                Stepper("Store the latest: \(backupCount)", value: $backupCount, in: 1...50)
             }
-            Section("Синхронизация") {
-                Picker("Бэкенд", selection: $syncBackendRawValue) {
+            Section("Synchronization") {
+                Picker("Backend", selection: $syncBackendRawValue) {
                     ForEach(SyncBackendOption.allCases) { option in
                         Text(option.rawValue).tag(option.rawValue)
                     }
@@ -4480,9 +4480,9 @@ struct SettingsView: View {
                     sftpSection
                 }
 
-                Button("Синхронизировать сейчас") {
+                Button("Sync now") {
                     vaultSession.triggerBackgroundSync()
-                    manualSyncStatusMessage = "Запущено…"
+                    manualSyncStatusMessage = "Launched..."
                 }
                 if let manualSyncStatusMessage {
                     Text(manualSyncStatusMessage)
@@ -4510,13 +4510,13 @@ struct SettingsView: View {
         VStack(alignment: .leading, spacing: 4) {
             if let bookmarkData = syncLocalFolderBookmarkData, !bookmarkData.isEmpty,
                SyncBackendResolver.resolveLocalFolderBackend(bookmarkData: bookmarkData) != nil {
-                Text("Папка выбрана.")
+                Text("The folder is selected.")
                     .foregroundStyle(.secondary)
             } else {
-                Text("Папка не выбрана.")
+                Text("No folder selected.")
                     .foregroundStyle(.secondary)
             }
-            Button("Выбрать папку…") {
+            Button("Select folder...") {
                 let panel = NSOpenPanel()
                 panel.canChooseFiles = false
                 panel.canChooseDirectories = true
@@ -4531,10 +4531,10 @@ struct SettingsView: View {
     private var iCloudSection: some View {
         VStack(alignment: .leading, spacing: 4) {
             if iCloudContainerAvailable {
-                Text("Контейнер iCloud доступен.")
+                Text("iCloud container is available.")
                     .foregroundStyle(.secondary)
             } else {
-                Text(iCloudContainerCheckMessage ?? "iCloud Drive недоступен — войдите в iCloud и включите iCloud Drive в Системных настройках.")
+                Text(iCloudContainerCheckMessage ?? "iCloud Drive is not available - Sign in to iCloud and turn on iCloud Drive in System Preferences.")
                     .foregroundStyle(.orange)
             }
         }
@@ -4542,21 +4542,21 @@ struct SettingsView: View {
 
     private var sftpSection: some View {
         VStack(alignment: .leading, spacing: 6) {
-            TextField("Хост", text: $sftpHost)
-            Stepper("Порт: \(sftpPort)", value: $sftpPort, in: 1...65535)
-            TextField("Пользователь", text: $sftpUsername)
+            TextField("Host", text: $sftpHost)
+            Stepper("Port: \(sftpPort)", value: $sftpPort, in: 1...65535)
+            TextField("User", text: $sftpUsername)
                 .onChange(of: sftpUsername) { _, _ in persistCredentialsToKeychain() }
-            TextField("Путь на сервере", text: $sftpRemotePath)
-            SecureField("Passphrase ключа (если есть)", text: $sftpPassphrase)
+            TextField("Server path", text: $sftpRemotePath)
+            SecureField("Passphrase of the key (if any)", text: $sftpPassphrase)
                 .onChange(of: sftpPassphrase) { _, _ in persistCredentialsToKeychain() }
 
             HStack {
-                Text(sftpPrivateKeyPath.isEmpty ? "Ключ не выбран" : sftpPrivateKeyPath)
+                Text(sftpPrivateKeyPath.isEmpty ? "Key not selected" : sftpPrivateKeyPath)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Button("Выбрать приватный ключ…") {
+                Button("Select private key...") {
                     let panel = NSOpenPanel()
                     panel.canChooseFiles = true
                     panel.canChooseDirectories = false
@@ -4572,26 +4572,26 @@ struct SettingsView: View {
             }
 
             HStack {
-                Text(sftpCertificatePath.isEmpty ? "Сертификат не выбран (опционально)" : sftpCertificatePath)
+                Text(sftpCertificatePath.isEmpty ? "Certificate not selected (optional)" : sftpCertificatePath)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
                     .truncationMode(.middle)
-                Button("Выбрать сертификат…") {
+                Button("Select certificate...") {
                     let panel = NSOpenPanel()
                     panel.canChooseFiles = true
                     panel.canChooseDirectories = false
                     panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK, let url = panel.url {
                         // Path-only, UI bookkeeping — see this task's
-                        // "Известный пробел" note: not yet wired into any
+                        // "Known gap" note: not yet wired into any
                         // real SSH authentication.
                         sftpCertificatePath = url.path
                     }
                 }
             }
 
-            Button("Проверить соединение") {
+            Button("Check connection") {
                 testSFTPConnection()
             }
             switch connectionTestState {
@@ -4600,7 +4600,7 @@ struct SettingsView: View {
             case .testing:
                 ProgressView().controlSize(.small)
             case .success:
-                Label("Соединение успешно", systemImage: "checkmark.circle.fill")
+                Label("Connection successful", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
             case .failure(let message):
                 Label(message, systemImage: "xmark.circle.fill")
@@ -4662,10 +4662,10 @@ struct SettingsView: View {
             iCloudContainerCheckMessage = nil
         } catch iCloudBackendError.containerUnavailable {
             iCloudContainerAvailable = false
-            iCloudContainerCheckMessage = "iCloud Drive недоступен — войдите в iCloud и включите iCloud Drive в Системных настройках."
+            iCloudContainerCheckMessage = "iCloud Drive is not available - Sign in to iCloud and turn on iCloud Drive in System Preferences."
         } catch {
             iCloudContainerAvailable = false
-            iCloudContainerCheckMessage = "Не удалось проверить контейнер iCloud: \(error)"
+            iCloudContainerCheckMessage = "Failed to verify iCloud container: \(error)"
         }
     }
 }
@@ -4711,14 +4711,14 @@ Expected: all pass.
 
 ```bash
 git add MyPass/UI/Settings/SettingsView.swift MyPass/MyPassApp.swift MyPass/State/SFTPConnectionTester.swift MyPass/State/SyncBackendResolver.swift MyPassTests/SettingsViewSyncBackendTests.swift
-git commit -m "Settings: форма конфигурации SFTP, проверка соединения, Keychain-хранение passphrase (Фаза 3, Task 13)"
+git commit -m "Settings: SFTP configuration form, connection check, Keychain storage passphrase (Phase 3, Task 13)"
 ```
 
 ---
 
-Этот план последовательно вводит соглашение env-var-гейтинга для тестов, зависящих от внешних ресурсов недоступных в обычном CI-раннере: `MYPASS_KEYCHAIN_TESTS` (Task 9, реальный Keychain), `MYPASS_SFTP_INTEGRATION_TESTS` (Task 10, реальный SFTP-сервер), `MYPASS_ICLOUD_INTEGRATION_TESTS` (Task 11, реальный ubiquity-контейнер). Task 14 ниже — не альтернатива этому соглашению, а конкретная, воспроизводимая реализация внешнего ресурса, который Task 10's `MYPASS_SFTP_INTEGRATION_TESTS` гейт ожидает: локальный Docker-контейнер `atmoz/sftp`, поднятый на `127.0.0.1:2222`, с пользователем `testuser` и SSH-ключом `/tmp/citadel_smoke_key`/`.pub`, — то есть ровно то, что Task 10's `SFTPBackendTests.swift` уже документирует в шапке файла как ручную инструкцию для локального запуска. CI должен: (1) запустить `run.sh`, (2) `export MYPASS_SFTP_INTEGRATION_TESTS=1`, (3) `cd Packages/SyncKit && swift test --filter SFTPBackendTests`, (4) запустить `teardown.sh` — вне зависимости от результата шага 3 (в реальном CI-конфиге это оформляется через `trap`/`always()`-блок, здесь показано последовательно ради ясности TDD-шагов ниже).
+This plan consistently introduces the env-var gating convention for tests that depend on external resources not available in a regular CI runner:`MYPASS_KEYCHAIN_TESTS`(Task 9, real Keychain),`MYPASS_SFTP_INTEGRATION_TESTS`(Task 10, real SFTP server),`MYPASS_ICLOUD_INTEGRATION_TESTS`(Task 11, real ubiquity container). Task 14 below is not an alternative to this convention, but a specific, reproducible implementation of an external resource that Task 10's `MYPASS_SFTP_INTEGRATION_TESTS` gate expects: local Docker container `atmoz/sftp`, raised on `127.0.0.1:2222`, with user `testuser` and SSH key `/tmp/citadel_smoke_key `/`.pub`, - that is, exactly what Task 10's `SFTPBackendTests.swift` is already documented in the file header as manual instructions for running locally. CI must: (1) run `run.sh`, (2) `export MYPASS_SFTP_INTEGRATION_TESTS=1`, (3) `cd Packages/SyncKit && swift test --filter SFTPBackendTests`, (4) run `teardown.sh`- regardless of the result of step 3 (in a real CI config this is done through `trap `/` always()`-block, shown here sequentially for the sake of clarity of the TDD steps below).
 
-### Task 14: Docker sshd — воспроизводимый фикстур для SFTP-интеграционных тестов
+### Task 14: Docker sshd - Reproducible fixture for SFTP integration tests
 
 **Files:**
 - Create: `Packages/SyncKit/Tests/Fixtures/docker-sshd/Dockerfile`
@@ -4730,7 +4730,7 @@ git commit -m "Settings: форма конфигурации SFTP, провер�
 - Consumes: Task 10's `SFTPBackendTests.swift` (hardcodes `127.0.0.1:2222`, user `testuser`, private key at `/tmp/citadel_smoke_key` with passphrase `correct-horse-battery-staple`, remote paths under `/upload/`) and Task 8's `CitadelDependencySmokeTests.swift` (same key path/passphrase) — this fixture's `run.sh` produces exactly that environment so both test files, unmodified, work against it.
 - Produces: `run.sh` (idempotent: builds+starts a named `mypass-test-sshd` container, generates the fixture keys if absent, waits for sshd to accept TCP connections), `teardown.sh` (stops+removes the container). Not consumed by any Swift code — this is test infrastructure only, invoked from the command line / CI job steps, not from `swift test` itself.
 
-Это не Swift-задача (в отличие от Задач 1-13), поэтому её "TDD"-шаги ниже — не red/green/refactor над XCTest, а red/green над реальным Docker-контейнером и реальным `swift test --filter SFTPBackendTests`: Step 1 создаёт фикстуру, Step 2 проверяет, что она поднимается и проходит healthcheck, Step 3 — что Task 10's ранее `XCTSkip`-гейтнутые тесты реально выполняются и проходят против неё, Step 4 проверяет корректный teardown, Step 5 коммитит файлы фикстуры.
+This is not a Swift task (unlike Tasks 1-13), so its "TDD" steps below are not red/green/refactor over XCTest, but red/green over a real Docker container and a real `swift test --filter SFTPBackendTests`: Step 1 creates the fixture, Step 2 makes sure it lifts and passes the healthcheck, Step 3 does what Task 10's did earlier `XCTSkip`-gated tests are actually executed and pass against it, Step 4 checks for correct teardown, Step 5 commits fixture files.
 
 - [ ] **Step 1: Write the Dockerfile and scripts**
 
@@ -4896,7 +4896,7 @@ Expected: empty table (just the header row) — no running or stopped container 
 
 ```bash
 git add Packages/SyncKit/Tests/Fixtures/docker-sshd/Dockerfile Packages/SyncKit/Tests/Fixtures/docker-sshd/README.md Packages/SyncKit/Tests/Fixtures/docker-sshd/run.sh Packages/SyncKit/Tests/Fixtures/docker-sshd/teardown.sh Packages/SyncKit/Tests/Fixtures/docker-sshd/test_key Packages/SyncKit/Tests/Fixtures/docker-sshd/test_key.pub Packages/SyncKit/Tests/Fixtures/docker-sshd/ssh_host_ed25519_key Packages/SyncKit/Tests/Fixtures/docker-sshd/ssh_host_ed25519_key.pub Packages/SyncKit/Tests/Fixtures/docker-sshd/ssh_host_rsa_key Packages/SyncKit/Tests/Fixtures/docker-sshd/ssh_host_rsa_key.pub
-git commit -m "SyncKit: Docker-фикстура atmoz/sftp для MYPASS_SFTP_INTEGRATION_TESTS (Фаза 3, Task 14)"
+git commit -m "SyncKit: Docker atmoz/sftp fixture for MYPASS_SFTP_INTEGRATION_TESTS (Phase 3, Task 14)"
 ```
 
 ---
@@ -4905,22 +4905,22 @@ git commit -m "SyncKit: Docker-фикстура atmoz/sftp для MYPASS_SFTP_IN
 
 ### 1. Spec coverage
 
-Сверка с `docs/superpowers/specs/2026-07-21-mypass-design.md`'s `## Синхронизация`:
+Reconciliation with `docs/superpowers/specs/2026-07-21-mypass-design.md`'s `## Synchronization`:
 
-- «локальная рабочая копия... бэкенд — удалённая точка правды» → `VaultFileStore` (Phase 2, unchanged) + `StorageBackend` (Task 1) + `SyncEngine` (Task 6) architecture split, described in this plan's own Architecture line.
-- «Цикл: 1. Скачать удалённый файл, если изменился. 2. Не менялся → загрузить свой. 3. Менялся → merge → загрузить результат.» → `SyncEngine.sync(local:password:cipher:compression:)` (Task 6), checkpoint-driven skip-vs-merge logic, tested by `SyncEngineTests`.
-- «Загрузка атомарна (для SFTP: upload во временное имя → rename на сервере)» → `SFTPBackend.write(_:)` (Task 10): write to `.tmp-<uuid>`, verify bytes, remove old, rename. `LocalFolderBackend.write(_:)` (Task 2) uses the analogous temp-file + `replaceItemAt` pattern. `iCloudBackend.write(_:)` (Task 11) uses `NSFileCoordinator`'s `.forReplacing` coordinated write (iCloud's own atomicity guarantee for coordinated writes, no separate temp-file dance needed at this layer).
-- «Merge (семантика KeePassXC Synchronize)»: UUID matching, newer-`lastModificationTime` wins with loser in History, `DeletedObjects` vs edit by event time, moves by `locationChanged`, no dialogs — all covered by `MergeEngine.merge(local:remote:)` (Tasks 4-5), with dedicated rule-by-rule tests (rules 1-4+9 in Task 4, rules 5-8 in Task 5).
-- «iCloud Drive: NSFileCoordinator + NSFilePresenter; conflict-версии (NSFileVersion) прогоняются через merge и удаляются» → `iCloudBackend` (Task 11) implements the NSFileCoordinator/NSFilePresenter half in full. **Частичный пробел:** explicit `NSFileVersion` conflict-version enumeration/cleanup ("прогоняются через merge и удаляются") is NOT implemented anywhere in Tasks 1-11 — `iCloudBackend.read()`/`write(_:)` rely on `NSFileCoordinator` to avoid creating conflict versions in the common case, but do not enumerate `NSFileVersion.unresolvedConflictVersionsOfItem(at:)` and merge+discard them if iCloud ever does create one (e.g., after an extended offline period on two devices). This is a real, explicitly-flagged gap — a future task would add a `resolveConflictVersions()` step to `iCloudBackend` calling `NSFileVersion`'s API before/after each `sync()` pass.
-- «Локальная папка: выбор папки, security-scoped bookmark, FSEvents» → `LocalFolderBackend`/`createBookmark(for:)` (Task 2), `LocalFolderChangeWatcher` (Task 3), folder-picker + bookmark persistence (Task 12). Fully covered — including wiring `LocalFolderChangeWatcher`'s `onChange` to `VaultSession.triggerBackgroundSync()`, added in Task 12 to close Task 3's own forward reference (Task 3's Interfaces note originally deferred this to "Part B's app-level auto-sync trigger").
-- «SFTP: host, port, путь, пользователь, приватный ключ, опционально OpenSSH-сертификат. Host key — TOFU. Passphrase — в Keychain. Кандидаты: Citadel, mft.» → library choice + rationale (Task 8), TOFU host-key validator (Task 10's `TrustOnFirstUseHostKeyValidator`, though see note below on `known_hosts` vs `UserDefaults`), Keychain-stored passphrase via `CredentialKeychainStore` (Task 9), full config form (Task 13). **Явный пробел:** OpenSSH-сертификат аутентификация НЕ реализована — `SFTPBackendConfiguration` (Task 10) и Citadel's `SSHAuthenticationMethod` usage support only ed25519 private-key auth, no certificate field. Task 13's certificate file picker is UI-only bookkeeping, explicitly commented as not wired into any real connection (see Task 13's "Известный пробел" note). This traces directly to the design doc's own risk table row ("SFTP-библиотека без OpenSSH-сертификатов | Ранний прототип в фазе 3; худший случай — C-биндинги libssh") — the risk was accepted, not silently dropped, but it remains unimplemented and should be a named follow-up task before Phase 3 is considered fully spec-complete.
-- «Host key — TOFU по known_hosts» — Task 10 implements TOFU semantics correctly (first-seen key trusted, mismatched key on reconnect rejected — verified by 4 `TrustOnFirstUseHostKeyValidatorTests`), but stores the trusted key via `UserDefaultsTrustedHostKeyStore` (a `UserDefaults` key-value pair), not a literal `~/.ssh/known_hosts`-format file. This is a naming/storage-format deviation from the spec's literal wording, not a semantic gap — the TOFU guarantee itself is fully met, and using `UserDefaults` is defensible for the app's own management (no dependency on `ssh`'s own known_hosts format/location, no interference with the user's real known_hosts). Noting explicitly here rather than silently.
-- «Сбой сети посреди sync → рабочая копия не тронута, повтор в следующем цикле» → `SyncEngineTests.testMidCycleFailureLeavesCheckpointAndLocalUntouched` (Task 6) and `VaultSessionTests`' network-failure test (Task 7, line ~2160 of this plan) both cover this directly.
-- «Цикл: при открытии, после сохранения, по таймеру, вручную» — Tasks 6-7 wire only two of these four triggers (at-unlock via `syncOnUnlock`, after-save via `persist(_:)`'s call into `syncEngine.sync(...)`). The remaining two (periodic timer, manual trigger) were a genuine gap found during this self-review and fixed inline in Task 12: `VaultSession.triggerBackgroundSync()` + `MyPassApp`'s `Timer.scheduledTimer(withTimeInterval: 300, ...)` (periodic) + Settings' "Синхронизировать сейчас" button (manual). All four triggers are now covered.
+- “local working copy... backend - remote point of truth” →`VaultFileStore` (Phase 2, unchanged) + `StorageBackend` (Task 1) + `SyncEngine` (Task 6) architecture split, described in this plan's own Architecture line.
+- “Cycle: 1. Download the deleted file if it has changed. 2. Has not changed → upload your own. 3. Changed → merge → load the result.” →`SyncEngine.sync(local:password:cipher:compression:)` (Task 6), checkpoint-driven skip-vs-merge logic, tested by `SyncEngineTests `.
+- “Upload is atomic (for SFTP: upload to a temporary name → rename on the server)” →`SFTPBackend.write(_:)` (Task 10): write to `.tmp-<uuid>`, verify bytes, remove old, rename. `LocalFolderBackend.write(_:)` (Task 2) uses the analogous temp-file + `replaceItemAt` pattern. `iCloudBackend.write(_:)` (Task 11) uses `NSFileCoordinator`'s `.forReplacing` coordinated write (iCloud's own atomicity guarantee for coordinated writes, no separate temp-file dance needed at this layer).
+- “Merge (KeePassXC Synchronize semantics)”: UUID matching, newer-`lastModificationTime` wins with loser in History, `DeletedObjects` vs edit by event time, moves by `locationChanged`, no dialogs — all covered by `MergeEngine.merge(local:remote:)` (Tasks 4-5), with dedicated rule-by-rule tests (rules 1-4+9 in Task 4, rules 5-8 in Task 5).
+- “iCloud Drive: NSFileCoordinator + NSFilePresenter; conflict versions (NSFileVersion) are run through merge and deleted" →`iCloudBackend`(Task 11) implements the NSFileCoordinator/NSFilePresenter half in full. **Partial space:** explicit `NSFileVersion` conflict-version enumeration/cleanup (“run through merge and deleted”) is NOT implemented anywhere in Tasks 1-11 —`iCloudBackend.read()`/` write(_:)` rely on `NSFileCoordinator` to avoid creating conflict versions in the common case, but do not enumerate `NSFileVersion.unresolvedConflictVersionsOfItem(at:)` and merge+discard them if iCloud ever does create one (e.g., after an extended offline period on two devices). This is a real, explicitly-flagged gap — a future task would add a `resolveConflictVersions()` step to `iCloudBackend` calling `NSFileVersion`'s API before/after each `sync()` pass.
+- “Local folder: folder selection, security-scoped bookmark, FSEvents” →`LocalFolderBackend `/` createBookmark(for:)` (Task 2), `LocalFolderChangeWatcher` (Task 3), folder-picker + bookmark persistence (Task 12). Fully covered — including wiring `LocalFolderChangeWatcher`'s `onChange` to `VaultSession.triggerBackgroundSync()`, added in Task 12 to close Task 3's own forward reference (Task 3's Interfaces note originally deferred this to "Part B's app-level auto-sync trigger").
+- “SFTP: host, port, path, user, private key, optional OpenSSH certificate. Host key - TOFU. Passphrase - in Keychain. Candidates: Citadel, mft.” → library choice + rationale (Task 8), TOFU host-key validator (Task 10's `TrustOnFirstUseHostKeyValidator`, though see note below on `known_hosts` vs `UserDefaults`), Keychain-stored passphrase via `CredentialKeychainStore`(Task 9), full config form (Task 13). **Explicit space:** OpenSSH certificate authentication NOT implemented -`SFTPBackendConfiguration`(Task 10) and Citadel's `SSHAuthenticationMethod` usage support only ed25519 private-key auth, no certificate field. Task 13's certificate file picker is UI-only bookkeeping, explicitly commented as not wired into any real connection (see Task 13's "Known Space" note). This traces directly to the design doc's own risk table row ("SFTP library without OpenSSH certificates | Early prototype in Phase 3; worst case - libssh C bindings") - the risk was accepted, not silently dropped, but it remains unimplemented and should be a named follow-up task before Phase 3 is considered fully spec-complete.
+- “Host key - TOFU by known_hosts” - Task 10 implements TOFU semantics correctly (first-seen key trusted, mismatched key on reconnect rejected - verified by 4 `TrustOnFirstUseHostKeyValidatorTests`), but stores the trusted key via `UserDefaultsTrustedHostKeyStore` (a `UserDefaults` key-value pair), not a literal `~/.ssh/known_hosts`-format file. This is a naming/storage-format deviation from the spec's literal wording, not a semantic gap — the TOFU guarantee itself is fully met, and using `UserDefaults` is defensible for the app's own management (no dependency on `ssh`'s own known_hosts format/location, no interference with the user's real known_hosts). Noting explicitly here rather than silently.
+- “Network failure in the middle of sync → working copy is not touched, repeat in the next cycle” →`SyncEngineTests.testMidCycleFailureLeavesCheckpointAndLocalUntouched` (Task 6) and `VaultSessionTests`' network-failure test (Task 7, line ~2160 of this plan) both cover this directly.
+- “Cycle: when opening, after saving, by timer, manually” - Tasks 6-7 wire only two of these four triggers (at-unlock via `syncOnUnlock`, after-save via `persist(_:)`'s call into `syncEngine.sync(...)`). The remaining two (periodic timer, manual trigger) were a genuine gap found during this self-review and fixed inline in Task 12: `VaultSession.triggerBackgroundSync()` + `MyPassApp`'s `Timer.scheduledTimer(withTimeInterval: 300, ...)`(periodic) + Settings' "Synchronize now" button (manual). All four triggers are now covered.
 
 ### 2. Placeholder scan
 
-Grepped the entire file (Tasks 1-14, this Self-Review section, and the header) for `TODO`, `implement later`, `similar to Task`, `handle appropriately`, `FIXME`. The only hits are the header's own "No placeholders" rule line (`никогда "TODO"/"implement later"/"similar to Task N"` — the rule text itself, expected and excluded per this review's instructions) and this Self-Review section's own prose describing that rule and describing the two gaps above (which reference the *concept* of a gap, not literal placeholder code — every Step 3 in Tasks 1-14 contains complete, runnable code, not a stub). No unexpected hits.
+Grepped the entire file (Tasks 1-14, this Self-Review section, and the header) for `TODO`, `implement later`, `similar to Task`, `handle appropriately`, `FIXME `. The only hits are the header's own "No placeholders" rule line (`never "TODO"/"implement later"/"similar to Task N"` — the rule text itself, expected and excluded per this review's instructions) and this Self-Review section's own prose describing that rule and describing the two gaps above (which reference the *concept* of a gap, not literal placeholder code — every Step 3 in Tasks 1-14 contains complete, runnable code, not a stub). No unexpected hits.
 
 ### 3. Type consistency
 
@@ -4931,7 +4931,7 @@ Cross-checked every reused signature against its origin task's Produces block (n
 - `SyncCheckpointStore` / `UserDefaultsSyncCheckpointStore.init(defaults:key:)` (Task 6) — Task 12 calls it with `key: "com.mypass.sync.checkpoint.\(syncBackendOption.rawValue)")`; there is no `backendIdentifier:` parameter (confirmed by reading Task 6's actual Produces block) — Task 12/13 do not use that label anywhere.
 - `CredentialStoring` / `SFTPCredentials` (Task 9: `loadCredentials(forHost:)`, `store(_:forHost:)`, `removeCredentials(forHost:)`) — used with the `forHost:` label consistently in Task 13's `SettingsView` and `SyncBackendResolver.buildSFTPConfiguration`; there is no `account:`-keyed variant anywhere in Tasks 9-14.
 - `SFTPConnectionConfig` does not exist anywhere in this plan — the real Task 10 type is `SFTPBackendConfiguration` (`host:port:username:remotePath:privateKeyPEM:privateKeyPassphrase:`), used with that exact name and those exact labels in Tasks 13-14. No stray references to a `SFTPConnectionConfig` name were introduced.
-- `SFTPBackend.init(configuration:trustedHostKeyStore:group:)` (Task 10) — Task 13's `SFTPConnectionTester` and `MyPassApp.init()`'s `.sftp` case both call it with `configuration:`/`trustedHostKeyStore:` (no `knownHostsURL:` parameter exists on the real type — confirmed by reading Task 10's Produces block directly rather than assuming it).
+- `SFTPBackend.init(configuration:trustedHostKeyStore:group:)` (Task 10) — Task 13's `SFTPConnectionTester` and `MyPassApp.init()`'s `.sftp` case both call it with `configuration:`/` trustedHostKeyStore:` (no `knownHostsURL:` parameter exists on the real type — confirmed by reading Task 10's Produces block directly rather than assuming it).
 - `iCloudBackend.init(relativePath:containerIdentifier:)` (Task 11) — used identically in `SyncBackendResolver.resolveICloudBackend` and `SettingsView.refreshICloudStatus` (Task 12/13).
 - `LocalFolderBackend.init(bookmarkData:filename:)` / `.createBookmark(for:)` (Task 2) — used identically in `SyncBackendResolver.resolveLocalFolderBackend` and `SettingsView`'s folder-picker button (Task 12).
 - `MergeEngine.merge(local:remote:) -> KdbxDatabase` (Tasks 4-5, non-throwing) — only consumed internally by `SyncEngine` (Task 6); no Task 11-14 code calls it directly, so no risk of a signature mismatch being introduced downstream.
@@ -4941,7 +4941,7 @@ No mismatches found beyond the two explicitly-flagged spec-coverage gaps above (
 
 ## Execution Handoff
 
-Plan complete and saved to `docs/superpowers/plans/2026-07-22-mypass-phase3-sync.md`. Two execution options:
+Plan complete and saved to `docs/superpowers/plans/2026-07-22-mypass-phase3-sync.md `. Two execution options:
 
 1. **Subagent-Driven (recommended)** — I dispatch a fresh subagent per task, review between tasks, fast iteration
 2. **Inline Execution** — Execute tasks in this session using executing-plans, batch execution with checkpoints

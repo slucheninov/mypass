@@ -3,13 +3,13 @@ import Sodium
 @testable import MyPassKit
 
 final class KeyDerivationTests: XCTestCase {
-    /// Кросс-проверка самой обёртки над swift-sodium/libsodium: тестовый вектор
-    /// взят из тестового набора libsodium (test/default/pwhash_argon2id.c, tv3()),
-    /// НЕ из "сырых" эталонных векторов Argon2 (phc-winner-argon2/kats), т.к.
-    /// libsodium's crypto_pwhash API не поддерживает опциональные secret/associatedData
-    /// параметры "сырого" Argon2 (что и не нужно — KDBX4 их тоже не использует, см.
-    /// Global Constraints). Проверяем через encoded-строку, т.к. это именно то, что
-    /// зафиксировано в исходнике теста libsodium.
+    /// Cross-check of the swift-sodium/libsodium wrapper itself: the test vector
+    /// comes from libsodium's test suite (test/default/pwhash_argon2id.c, tv3()),
+    /// NOT from the "raw" Argon2 reference vectors (phc-winner-argon2/kats), because
+    /// libsodium's crypto_pwhash API does not support optional secret/associatedData
+    /// parameters of "raw" Argon2 (which is fine — KDBX4 does not use them either, see
+    /// Global Constraints). We verify via the encoded string, because that is exactly what
+    /// is fixed in the libsodium test source.
     ///
     /// NOTE: tv3()'s test index 0 (m=4096,t=0,p=1) is intentionally an edge case in
     /// libsodium's own test — the C test only *prints* a warning on failure there
@@ -35,9 +35,9 @@ final class KeyDerivationTests: XCTestCase {
         ) else {
             return XCTFail("pwHash.str returned nil")
         }
-        // Проверяем структуру и совместимость параметров, а не байт-в-байт равенство
-        // (соль генерируется случайно при каждом вызове str(), поэтому строка отличается
-        // от эталонной; для детерминированной проверки используем verify выше):
+        // Verify structure and parameter compatibility, not byte-for-byte equality
+        // (salt is generated randomly on each str() call, so the string differs
+        // from the reference; use verify above for a deterministic check):
         XCTAssertTrue(hashStr.hasPrefix("$argon2id$v=19$m=4096,t=19,p=1$"))
         XCTAssertTrue(sodium.pwHash.strVerify(hash: hashStr, passwd: passwd))
     }
@@ -46,7 +46,7 @@ final class KeyDerivationTests: XCTestCase {
         var kdf = VariantDictionary()
         kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
         kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
-        kdf.items["M"] = .uint64(19 * 1024 * 1024) // 19 MiB — минимум OWASP-рекомендаций
+        kdf.items["M"] = .uint64(19 * 1024 * 1024) // 19 MiB — OWASP-recommended minimum
         kdf.items["I"] = .uint64(2)
         kdf.items["P"] = .uint32(1)
         kdf.items["V"] = .uint32(0x13)

@@ -66,10 +66,10 @@
       'position:fixed;bottom:16px;right:16px;z-index:2147483647;background:#1f2937;' +
       'color:#f9fafb;padding:12px 16px;border-radius:8px;font-family:sans-serif;' +
       'font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;gap:8px;';
-    banner.textContent = 'Сохранить пароль в MyPass?';
+    banner.textContent = 'Save password to MyPass?';
 
     const saveButton = document.createElement('button');
-    saveButton.textContent = 'Сохранить';
+    saveButton.textContent = 'Save';
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
     saveButton.addEventListener('click', () => {
       chrome.runtime.sendMessage({ type: 'proposeSaveLogin', url, username, password });
