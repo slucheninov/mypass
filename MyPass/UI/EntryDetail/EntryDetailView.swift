@@ -180,12 +180,21 @@ struct EntryDetailView: View {
             }
             .onReceive(timer) { now = $0 }
             .sheet(isPresented: $showHistory) {
-                HistoryView(entry: entry) { updated in
-                    vaultSession.mutate { database in
-                        EntryPersistence.replaceEntry(updated, in: database.rootGroup)
+                HistoryView(
+                    entry: entry,
+                    onRestore: { updated in
+                        vaultSession.mutate { database in
+                            EntryPersistence.replaceEntry(updated, in: database.rootGroup)
+                        }
+                        showHistory = false
+                    },
+                    onClearHistory: { updated in
+                        vaultSession.mutate { database in
+                            EntryPersistence.replaceEntry(updated, in: database.rootGroup)
+                        }
+                        showHistory = false
                     }
-                    showHistory = false
-                }
+                )
             }
             .onChange(of: navigationState.selectedEntryID) { _, newID in
                 if let newID, newID != lastTouchedEntryID {
