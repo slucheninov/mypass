@@ -3,16 +3,6 @@ import AppKit
 import MyPassKit
 import SyncKit
 
-enum SyncBackendOption: String, CaseIterable, Identifiable {
-    case local = "Local File"
-    case iCloud = "iCloud Drive"
-    case sftp = "SFTP"
-
-    var id: String { rawValue }
-
-    var isAvailable: Bool { true }
-}
-
 struct SettingsView: View {
     @AppStorage("autoLockTimeoutMinutes") private var autoLockTimeoutMinutes: Double = 15
     @AppStorage("backupCount") private var backupCount: Int = 10
@@ -362,18 +352,5 @@ struct SettingsView: View {
             iCloudContainerAvailable = false
             iCloudContainerCheckMessage = "Could not verify iCloud container: \(error)"
         }
-    }
-}
-
-private struct SettingsHelperText: View {
-    let text: String
-
-    var body: some View {
-        Text(text)
-            .font(.system(size: 11))
-            .foregroundStyle(.secondary)
-            .lineSpacing(3)
-            .fixedSize(horizontal: false, vertical: true)
-            .padding(.top, 2)
     }
 }
