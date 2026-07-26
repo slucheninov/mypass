@@ -55,7 +55,18 @@ struct GroupSidebarView: View {
                         }
                 }
             } header: {
-                SidebarSectionHeader(title: "Groups")
+                SidebarSectionHeader(title: "Groups") {
+                    AnyView(
+                        Button {
+                            addSubgroupFromHeader()
+                        } label: {
+                            Image(systemName: "plus")
+                                .font(.system(size: 11, weight: .semibold))
+                        }
+                        .buttonStyle(.plain)
+                        .help("New Group")
+                    )
+                }
             }
 
             Section {
@@ -79,15 +90,48 @@ struct GroupSidebarView: View {
         guard let database = vaultSession.currentDatabase else { return "0" }
         return category.countDisplay(for: database)
     }
+
+    private func addSubgroupFromHeader() {
+        var newGroupID: UUID?
+        vaultSession.mutate { database in
+            let parent: KdbxGroup
+            if let selectedID = navigationState.selectedGroupID,
+               let selected = findGroup(uuid: selectedID, in: database.rootGroup),
+               !GroupTreeOperations.isRecycleBinGroup(selected) {
+                parent = selected
+            } else {
+                parent = database.rootGroup
+            }
+            let created = GroupTreeOperations.addSubgroup(named: "New Group", to: parent)
+            newGroupID = created.uuid
+        }
+        if let newGroupID {
+            navigationState.selectedGroupID = newGroupID
+            navigationState.exitCategoryModeForGroupSelection()
+        }
+    }
+
+    private func findGroup(uuid: UUID, in group: KdbxGroup) -> KdbxGroup? {
+        if group.uuid == uuid { return group }
+        for sub in group.subgroups {
+            if let found = findGroup(uuid: uuid, in: sub) { return found }
+        }
+        return nil
+    }
 }
 
 private struct SidebarSectionHeader: View {
     let title: String
+    var trailing: (() -> AnyView)? = nil
 
     var body: some View {
-        Text(title.uppercased())
-            .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.secondary)
+        HStack {
+            Text(title.uppercased())
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.secondary)
+            Spacer()
+            if let trailing { trailing() }
+        }
     }
 }
 
