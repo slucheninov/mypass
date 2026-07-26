@@ -95,7 +95,24 @@ struct MyPassApp: App {
             hostBinaryPath: NativeMessagingHostInstaller.debugChromeHostBinaryPath,
             extensionID: NativeMessagingHostInstaller.developmentPlaceholderExtensionID
         )
-        _navigationState = StateObject(wrappedValue: NavigationState())
+        let navigationState = NavigationState()
+        _navigationState = StateObject(wrappedValue: navigationState)
+
+        // Фаза 4, Task 13: real UI for ExtensionBridgeService.onSaveProposal (Task 5's
+        // extension point). The dispatch to main is technically redundant here since
+        // LoopbackServer (Task 6) already dispatches onto the main thread before
+        // invoking the handler that eventually calls this closure — but the window
+        // activation calls below specifically need to run after SwiftUI has had a
+        // chance to process the `@Published pendingSaveProposal` change (so the sheet
+        // exists before we bring the window forward), so the async hop stays as
+        // defense-in-depth rather than being removed.
+        extensionBridgeService.onSaveProposal = { [weak navigationState] url, username, password in
+            DispatchQueue.main.async {
+                navigationState?.pendingSaveProposal = PendingSaveProposal(url: url, username: username, password: password)
+                NSApp.activate(ignoringOtherApps: true)
+                NSApp.windows.first(where: { $0.isVisible || $0.canBecomeMain })?.makeKeyAndOrderFront(nil)
+            }
+        }
 
         let controller = AutoLockController(
             vaultSession: session,

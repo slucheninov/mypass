@@ -26,6 +26,28 @@ struct ContentView: View {
                 actions: {},
                 message: { Text(vaultSession.lastSaveError ?? "") }
             )
+            .sheet(item: $navigationState.pendingSaveProposal) { proposal in
+                EntryEditView(existingEntry: draftEntry(from: proposal)) { entry in
+                    vaultSession.mutate { database in
+                        database.rootGroup.entries.append(entry)
+                    }
+                    navigationState.pendingSaveProposal = nil
+                }
+            }
         }
+    }
+
+    private func draftEntry(from proposal: PendingSaveProposal) -> KdbxEntry {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now,
+            history: []
+        )
+        entry.title = proposal.registrableDomain
+        entry.login = proposal.username
+        entry.password = proposal.password
+        entry.url = proposal.url
+        return entry
     }
 }
