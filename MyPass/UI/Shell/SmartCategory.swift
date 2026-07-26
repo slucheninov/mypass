@@ -1,4 +1,5 @@
 import SwiftUI
+import MyPassKit
 
 enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
     case all
@@ -19,15 +20,8 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
         }
     }
 
-    /// Wave 1: static placeholder only — not computed from vault data.
-    var placeholderCount: String {
-        switch self {
-        case .all: return "58"
-        case .favorites: return "0"
-        case .codes: return "15"
-        case .security: return "—"
-        case .deleted: return "0"
-        }
+    func countDisplay(for database: KdbxDatabase) -> String {
+        SmartCategoryCounts.countDisplay(for: self, database: database)
     }
 
     /// Accent tint for category dot and selection pill (mockup reference colors; semantic where possible).

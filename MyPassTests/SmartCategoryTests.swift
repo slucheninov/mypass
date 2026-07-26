@@ -1,4 +1,5 @@
 import XCTest
+import MyPassKit
 @testable import MyPass
 
 final class SmartCategoryTests: XCTestCase {
@@ -17,12 +18,21 @@ final class SmartCategoryTests: XCTestCase {
         XCTAssertEqual(SmartCategory.deleted.title, "Deleted")
     }
 
-    func testPlaceholderCounts() {
-        XCTAssertEqual(SmartCategory.all.placeholderCount, "58")
-        XCTAssertEqual(SmartCategory.favorites.placeholderCount, "0")
-        XCTAssertEqual(SmartCategory.codes.placeholderCount, "15")
-        XCTAssertEqual(SmartCategory.security.placeholderCount, "—")
-        XCTAssertEqual(SmartCategory.deleted.placeholderCount, "0")
+    func testCountDisplayDelegatesToSmartCategoryCounts() throws {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: []
+        )
+        entry.title = "One"
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: now, lastModificationTime: now, locationChanged: now,
+            entries: [entry], subgroups: []
+        )
+        let db = KdbxDatabase(rootGroup: root, deletedObjects: [])
+        XCTAssertEqual(SmartCategory.all.countDisplay(for: db), "1")
+        XCTAssertEqual(SmartCategory.security.countDisplay(for: db), "—")
     }
 
     func testIdentifiableUsesRawValue() {

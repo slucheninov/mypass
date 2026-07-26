@@ -1,0 +1,40 @@
+import Foundation
+import MyPassKit
+
+enum SmartCategoryCounts {
+    static func countDisplay(for category: SmartCategory, database: KdbxDatabase) -> String {
+        switch category {
+        case .security:
+            return "—"
+        case .favorites:
+            return "0"
+        case .all:
+            return String(allCount(in: database))
+        case .codes:
+            return String(codesCount(in: database))
+        case .deleted:
+            return String(deletedCount(in: database))
+        }
+    }
+
+    private static func allEntries(in database: KdbxDatabase) -> [KdbxEntry] {
+        EntrySearch.allEntries(in: database.rootGroup)
+    }
+
+    private static func allCount(in database: KdbxDatabase) -> Int {
+        allEntries(in: database).filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }.count
+    }
+
+    private static func codesCount(in database: KdbxDatabase) -> Int {
+        allEntries(in: database).filter {
+            guard let secret = $0.totpSecretBase32 else { return false }
+            return !secret.isEmpty
+        }.count
+    }
+
+    private static func deletedCount(in database: KdbxDatabase) -> Int {
+        guard let binUUID = database.recycleBinGroupUUID,
+              let bin = database.rootGroup.subgroups.first(where: { $0.uuid == binUUID }) else { return 0 }
+        return bin.entries.count
+    }
+}

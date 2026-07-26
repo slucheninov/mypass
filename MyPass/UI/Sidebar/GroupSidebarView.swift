@@ -13,6 +13,7 @@ struct GroupSidebarView: View {
                 ForEach(SmartCategory.allCases) { category in
                     SmartCategorySidebarRow(
                         category: category,
+                        countText: vaultSession.currentDatabase.map { category.countDisplay(for: $0) } ?? "0",
                         isSelected: navigationState.selectedSmartCategory == category
                     ) {
                         // Wave 1: visual selection only — entry list filtering is unchanged.
@@ -89,6 +90,7 @@ private struct SidebarSectionHeader: View {
 
 private struct SmartCategorySidebarRow: View {
     let category: SmartCategory
+    let countText: String
     let isSelected: Bool
     let action: () -> Void
 
@@ -101,7 +103,7 @@ private struct SmartCategorySidebarRow: View {
                 Text(category.title)
                     .foregroundStyle(.primary)
                 Spacer(minLength: 4)
-                Text(category.placeholderCount)
+                Text(countText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
