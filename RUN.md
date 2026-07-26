@@ -43,15 +43,34 @@
 | `MYPASS_SFTP_INTEGRATION_TESTS=1` | SFTP-інтеграція в SyncKit; перед запуском підняти Docker-фікстуру: `cd Packages/SyncKit/Tests/Fixtures/docker-sshd && ./run.sh` (зупинка: `./teardown.sh`) |
 | `MYPASS_ICLOUD_INTEGRATION_TESTS=1` | iCloud-інтеграційні тести SyncKit |
 
-## Chrome e2e (ручна перевірка)
+## Chrome-розширення
 
-1. Завантажити розпаковане розширення: **Chrome → Extensions → Load unpacked** → каталог [`ChromeExtension/`](ChromeExtension/).
-2. У **MyPass → Settings** вказати ID розширення, папку Native Messaging Hosts і встановити host (зібраний `ChromeHost`).
-3. Запустити фікстурний HTTP-сервер:
+### Як додати в Chrome (розпаковане)
+
+1. **Передумова:** JS-розширення лежить у [`ChromeExtension/`](ChromeExtension/) — окремого кроку збірки для нього немає; завантажуйте цю папку як є. Native host (`ChromeHost`) — окремо; його збирають скриптами з розділу [Швидкий старт](#швидкий-старт) (див. нижче [Підключення до MyPass](#підключення-до-mypass-native-messaging)).
+2. Відкрийте Chrome → перейдіть на `chrome://extensions` (або **Меню → Розширення → Керування розширеннями**).
+3. Увімкніть **Режим розробника** (Developer mode) — перемикач у правому верхньому куті.
+4. Натисніть **Завантажити розпаковане розширення** (Load unpacked).
+5. Оберіть каталог репозиторію [`ChromeExtension/`](ChromeExtension/) (повний шлях: `<repo>/ChromeExtension/`).
+6. Переконайтеся, що на картці відображається **MyPass** (версія 0.1.0).
+7. Скопіюйте **ID** розширення (32-символьний рядок на картці) — він знадобиться в MyPass Settings.
+8. Після змін у JS-файлах: на тій же сторінці натисніть іконку оновлення (reload) на картці MyPass.
+
+### Підключення до MyPass (native messaging)
+
+1. Запустіть MyPass (див. [Швидкий старт](#швидкий-старт)).
+2. Відкрийте **MyPass → Settings**.
+3. Вставте **ID розширення** з кроку вище.
+4. Вкажіть папку **Native Messaging Hosts** (стандартний шлях Chrome на macOS).
+5. Натисніть **Install host** — має встановитися зібраний `ChromeHost` (попередньо `./scripts/build-chrome-host.sh` або `./scripts/build-all.sh`).
+
+### Chrome e2e (ручна перевірка)
+
+1. Запустіть фікстурний HTTP-сервер:
    ```sh
    cd ChromeExtension/tests/fixtures && python3 -m http.server 8765
    ```
-4. Короткий чеклист:
+2. Короткий чеклист:
    - [ ] Popup показує збіги для домену фікстури
    - [ ] Autofill заповнює логін/пароль за явною дією користувача
    - [ ] Після входу пропонується зберегти новий запис
