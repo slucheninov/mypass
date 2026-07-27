@@ -166,6 +166,19 @@ final class iCloudBackendUserFolderTests: XCTestCase {
         XCTAssertGreaterThan(secondDate, firstDate)
     }
 
+    func testModificationDateReflectsExternalFileChangeOnSameBackendInstance() throws {
+        let backend = try iCloudBackend(root: .userFolder(bookmark: bookmark), relativePath: "vault.kdbx")
+        try backend.write(Data("initial".utf8))
+        let firstDate = try XCTUnwrap(backend.modificationDate())
+
+        Thread.sleep(forTimeInterval: 1.1)
+        let externalPath = tempDir.appendingPathComponent("vault.kdbx")
+        try Data("external-update".utf8).write(to: externalPath)
+
+        let secondDate = try XCTUnwrap(backend.modificationDate())
+        XCTAssertGreaterThan(secondDate, firstDate)
+    }
+
     func testEnsureDownloadedIsANoOpForANonUbiquitousFile() throws {
         let backend = try iCloudBackend(root: .userFolder(bookmark: bookmark), relativePath: "vault.kdbx")
         try backend.write(Data("plain local file, not managed by iCloud".utf8))

@@ -134,15 +134,24 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
         folderURL.appendingPathComponent(relativePath)
     }
 
+    /// Re-fetches resource values from disk, bypassing Foundation's per-URL cache.
+    /// `fileURL` is a stored `let`; repeated `resourceValues(forKeys:)` on it
+    /// returns cached values. Clearing via a local `var` copy works because
+    /// `NSURL`'s resource-value cache is not copy-on-write — mutating the copy
+    /// clears entries the stored `let` reads through.
+    private func freshResourceValues(forKeys keys: Set<URLResourceKey>) throws -> URLResourceValues {
+        var url = fileURL
+        url.removeAllCachedResourceValues()
+        return try url.resourceValues(forKeys: keys)
+    }
+
     public func exists() throws -> Bool {
         FileManager.default.fileExists(atPath: fileURL.path)
     }
 
     public func modificationDate() throws -> Date? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        var url = fileURL
-        url.removeAllCachedResourceValues()
-        let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
+        let values = try freshResourceValues(forKeys: [.contentModificationDateKey])
         return values.contentModificationDate
     }
 
@@ -199,10 +208,10 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
         // `startDownloadingUbiquitousItem` throws for such paths. Skipping is
         // both correct and what makes `.userFolder` roots testable outside
         // iCloud Drive.
-        let ubiquityFlags = try? fileURL.resourceValues(forKeys: [.isUbiquitousItemKey])
+        let ubiquityFlags = try? freshResourceValues(forKeys: [.isUbiquitousItemKey])
         guard ubiquityFlags?.isUbiquitousItem == true else { return }
 
-        let initial = try fileURL.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
+        let initial = try freshResourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
         if initial.ubiquitousItemDownloadingStatus == .current {
             return
         }
@@ -211,7 +220,7 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
 
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            let latest = try fileURL.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
+            let latest = try freshResourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
             if latest.ubiquitousItemDownloadingStatus == .current {
                 return
             }
