@@ -29,13 +29,27 @@ if [[ -n "${BUILT_PRODUCTS_DIR:-}" ]]; then
 fi
 
 if [[ -z "$APP" || ! -d "$APP" ]]; then
-  APP=$(find ~/Library/Developer/Xcode/DerivedData -maxdepth 3 -type d -name 'MyPass.app' -path '*/Build/Products/Debug/*' 2>/dev/null | head -1 || true)
+  APP=$(
+    find ~/Library/Developer/Xcode/DerivedData -maxdepth 3 -type d -name 'MyPass.app' -path '*/Build/Products/Debug/*' -print0 2>/dev/null \
+      | xargs -0 stat -f '%m %N' 2>/dev/null \
+      | sort -rn \
+      | head -1 \
+      | cut -d' ' -f2- \
+      || true
+  )
 fi
 
 if [[ -z "$APP" || ! -d "$APP" ]]; then
   echo "Error: MyPass.app not found after build." >&2
   echo "Tried BUILT_PRODUCTS_DIR from xcodebuild -showBuildSettings and DerivedData search." >&2
   exit 1
+fi
+
+# Incremental builds can update AppIcon.icns without changing the .app bundle mtime, leaving Dock/Launch Services icon cache stale.
+touch "$APP"
+LSREGISTER="/System/Library/Frameworks/CoreServices.framework/Versions/A/Frameworks/LaunchServices.framework/Versions/A/Support/lsregister"
+if [[ -x "$LSREGISTER" ]]; then
+  "$LSREGISTER" -f "$APP" || true
 fi
 
 open "$APP"
