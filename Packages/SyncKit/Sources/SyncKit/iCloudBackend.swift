@@ -3,61 +3,135 @@ import Foundation
 public enum iCloudBackendError: Error, Equatable {
     case containerUnavailable
     case downloadTimedOut
+    case folderBookmarkUnresolvable
+    case folderUnavailable
 }
 
-/// `StorageBackend` over an iCloud Drive ubiquity container. Every read/write
-/// goes through `NSFileCoordinator` so overlapping access from other
-/// processes (Finder, other MyPass instances, the file-provider daemon
-/// itself) is safely serialized — per the design spec's iCloud backend
-/// section ("NSFileCoordinator + NSFilePresenter; conflict versions
-/// (NSFileVersion) are merged and removed"). The
-/// conflict-version sweep itself is `MergeEngine`'s job once `SyncEngine`
-/// downloads the current file (Tasks 4-6); this class's job is only to
-/// guarantee coordinated, safe I/O and that a read never returns a
-/// partially-downloaded placeholder (`ensureDownloaded`, called from
-/// `read()`), per the design doc's "iCloud delays eviction" risk row.
+/// Where an `iCloudBackend` instance keeps its remote file.
+public enum iCloudRoot {
+    /// A real iCloud ubiquity container. Requires
+    /// `com.apple.developer.icloud-container-identifiers`, a restricted
+    /// entitlement that needs a paid Apple Developer account, so this root is
+    /// unreachable in ad-hoc-signed local builds. `nil` means "the app's first
+    /// configured container".
+    case ubiquityContainer(identifier: String?)
+    /// A user-picked folder — normally inside `~/Library/Mobile
+    /// Documents/com~apple~CloudDocs` — reached through a security-scoped
+    /// bookmark. Needs only the sandbox entitlements the app already has:
+    /// `com.apple.security.files.user-selected.read-write` and
+    /// `com.apple.security.files.bookmarks.app-scope`.
+    case userFolder(bookmark: Data)
+}
+
+/// `StorageBackend` over iCloud Drive. Every read/write goes through
+/// `NSFileCoordinator` so overlapping access from other processes (Finder,
+/// other MyPass instances, the file-provider daemon itself) is safely
+/// serialized — per the design spec's iCloud backend section
+/// ("NSFileCoordinator + NSFilePresenter; conflict versions (NSFileVersion)
+/// are merged and removed"). Both roots share that coordinated I/O, the
+/// download materialisation in `ensureDownloaded`, and the conflict sweep in
+/// `resolveConflictVersions`; they differ only in how the file URL is
+/// resolved. Plain uncoordinated I/O (as in `LocalFolderBackend`) is not
+/// good enough for a file inside iCloud Drive: an evicted file could read as
+/// a placeholder instead of the vault bytes, and parallel edits from another
+/// device would never reach `NSFileVersion` conflict resolution.
 public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBackend {
-    private let containerURL: URL
-    private let relativePath: String
+    private let fileURL: URL
+    /// Non-nil only for `.userFolder` roots whose security scope this instance
+    /// actually acquired, so `deinit` can balance it. Held for the lifetime of
+    /// the backend rather than per operation, mirroring the lifetime of the
+    /// `NSFilePresenter` registration below.
+    private let securityScopedFolderURL: URL?
     private let presenter: iCloudFilePresenter
 
-    public init(relativePath: String, containerIdentifier: String? = nil) throws {
-        guard let containerURL = FileManager.default.url(forUbiquityContainerIdentifier: containerIdentifier) else {
-            throw iCloudBackendError.containerUnavailable
+    public init(root: iCloudRoot, relativePath: String) throws {
+        switch root {
+        case .ubiquityContainer(let identifier):
+            guard let containerURL = FileManager.default.url(forUbiquityContainerIdentifier: identifier) else {
+                throw iCloudBackendError.containerUnavailable
+            }
+            fileURL = Self.coordinatedURL(containerURL: containerURL, relativePath: relativePath)
+            securityScopedFolderURL = nil
+
+        case .userFolder(let bookmark):
+            var isStale = false
+            guard !bookmark.isEmpty,
+                  let folderURL = try? URL(
+                      resolvingBookmarkData: bookmark,
+                      options: .withSecurityScope,
+                      relativeTo: nil,
+                      bookmarkDataIsStale: &isStale
+                  ),
+                  !isStale else {
+                throw iCloudBackendError.folderBookmarkUnresolvable
+            }
+            // `false` here does not mean failure: an unsandboxed process (the
+            // `swift test` runner) needs no security scope and still reads the
+            // folder fine, exactly as `LocalFolderBackend` assumes. Only a
+            // missing directory is a real error.
+            let didStartAccessing = folderURL.startAccessingSecurityScopedResource()
+            var isDirectory: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: folderURL.path, isDirectory: &isDirectory),
+                  isDirectory.boolValue else {
+                if didStartAccessing {
+                    folderURL.stopAccessingSecurityScopedResource()
+                }
+                throw iCloudBackendError.folderUnavailable
+            }
+            fileURL = Self.coordinatedURL(folderURL: folderURL, relativePath: relativePath)
+            securityScopedFolderURL = didStartAccessing ? folderURL : nil
         }
-        self.containerURL = containerURL
-        self.relativePath = relativePath
-        self.presenter = iCloudFilePresenter(
-            presentedItemURL: Self.coordinatedURL(containerURL: containerURL, relativePath: relativePath)
-        )
+
+        presenter = iCloudFilePresenter(presentedItemURL: fileURL)
         NSFileCoordinator.addFilePresenter(presenter)
+    }
+
+    /// Ubiquity-container convenience initialiser, kept so existing call sites
+    /// and the future paid-account setup keep working unchanged.
+    public convenience init(relativePath: String = "vault.kdbx", containerIdentifier: String? = nil) throws {
+        try self.init(root: .ubiquityContainer(identifier: containerIdentifier), relativePath: relativePath)
     }
 
     deinit {
         NSFileCoordinator.removeFilePresenter(presenter)
+        securityScopedFolderURL?.stopAccessingSecurityScopedResource()
+    }
+
+    /// Creates the bookmark a `.userFolder` root is built from. Same option
+    /// set as `LocalFolderBackend.createBookmark(for:)` — with
+    /// `com.apple.security.files.bookmarks.app-scope` entitled, this is an
+    /// app-scoped bookmark that survives relaunch.
+    public static func createFolderBookmark(for folderURL: URL) throws -> Data {
+        try folderURL.bookmarkData(
+            options: .withSecurityScope,
+            includingResourceValuesForKeys: nil,
+            relativeTo: nil
+        )
     }
 
     /// Fires when iCloud delivers a change to the presented file made by
-    /// another device/process while this backend instance is alive — see
-    /// this task's Interfaces note above. `nil` by default (Task 6's
-    /// `SyncEngine` never needs this; only Task 12's app-level wiring does).
+    /// another device/process while this backend instance is alive. `nil` by
+    /// default (`SyncEngine` never needs it; only app-level wiring does).
     public var onRemoteChange: (() -> Void)? {
         get { presenter.onChange }
         set { presenter.onChange = newValue }
     }
 
-    /// Pure helper computing the file URL for `relativePath` inside
-    /// `containerURL` without touching the filesystem, so it's directly
-    /// unit-testable without a real iCloud container. `Documents` is the
-    /// standard iCloud Drive-visible subdirectory of a ubiquity container —
-    /// files placed directly at the container root are not shown in the
-    /// Finder/iCloud Drive UI.
+    /// Pure helper computing the file URL for `relativePath` inside a ubiquity
+    /// container, so it is directly unit-testable without a real container.
+    /// `Documents` is the standard iCloud Drive-visible subdirectory of a
+    /// ubiquity container — files placed directly at the container root are
+    /// not shown in the Finder/iCloud Drive UI.
     static func coordinatedURL(containerURL: URL, relativePath: String) -> URL {
         containerURL.appendingPathComponent("Documents").appendingPathComponent(relativePath)
     }
 
-    private var fileURL: URL {
-        Self.coordinatedURL(containerURL: containerURL, relativePath: relativePath)
+    /// Pure helper computing the file URL for `relativePath` inside a
+    /// user-picked folder. No `Documents` component: that subdirectory is a
+    /// ubiquity-container convention, and the user already picked the exact
+    /// folder the vault should live in.
+    static func coordinatedURL(folderURL: URL, relativePath: String) -> URL {
+        folderURL.appendingPathComponent(relativePath)
     }
 
     public func exists() throws -> Bool {
@@ -66,7 +140,9 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
 
     public func modificationDate() throws -> Date? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        let values = try fileURL.resourceValues(forKeys: [.contentModificationDateKey])
+        var url = fileURL
+        url.removeAllCachedResourceValues()
+        let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
         return values.contentModificationDate
     }
 
@@ -118,6 +194,14 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
     public func ensureDownloaded(timeout: TimeInterval = 10) throws {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
 
+        // A file the iCloud file provider does not manage — a plain folder, or
+        // a test temp directory — has nothing to materialize, and
+        // `startDownloadingUbiquitousItem` throws for such paths. Skipping is
+        // both correct and what makes `.userFolder` roots testable outside
+        // iCloud Drive.
+        let ubiquityFlags = try? fileURL.resourceValues(forKeys: [.isUbiquitousItemKey])
+        guard ubiquityFlags?.isUbiquitousItem == true else { return }
+
         let initial = try fileURL.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
         if initial.ubiquitousItemDownloadingStatus == .current {
             return
@@ -137,20 +221,10 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
     }
 
     /// Folds any unresolved iCloud conflict versions of this backend's file
-    /// into a single merged version, via the caller-supplied `merge`
-    /// closure — one raw-`Data`-in, raw-`Data`-out step per conflict, so
-    /// `iCloudBackend` itself stays password/`KdbxDatabase`-agnostic (same
-    /// separation of concerns as `StorageBackend` overall — `SyncEngine` is
-    /// the one that knows how to decrypt/merge/re-encrypt, via the closure
-    /// it passes in). Returns `false` when there are no unresolved
-    /// conflicts. When conflicts exist: reads the current file content,
-    /// folds each conflict version's content into it in turn via `merge`,
-    /// writes the folded result back as the current version, and marks
-    /// every conflict version resolved so iCloud stops surfacing it.
-    /// Addresses the design spec's "conflict versions (NSFileVersion)
-    /// are merged and removed" requirement, which Task 11's
-    /// initial implementation deliberately deferred (see Phase 3 plan's
-    /// Self-Review).
+    /// into a single merged version, via the caller-supplied `merge` closure —
+    /// one raw-`Data`-in, raw-`Data`-out step per conflict, so `iCloudBackend`
+    /// itself stays password/`KdbxDatabase`-agnostic. Returns `false` when
+    /// there are no unresolved conflicts.
     public func resolveConflictVersions(merge: (Data, Data) throws -> Data) throws -> Bool {
         guard let conflictVersions = NSFileVersion.unresolvedConflictVersionsOfItem(at: fileURL),
               !conflictVersions.isEmpty else {
@@ -179,8 +253,7 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
 /// Minimal `NSFilePresenter` — required for `NSFileCoordinator`-coordinated
 /// access to correctly serialize against OTHER presenters of the same URL,
 /// and it doubles as this backend's external-change notification channel
-/// (`onChange`, forwarded from `presentedItemDidChange()`) per the design
-/// doc's iCloud-upload-delay risk mitigation.
+/// (`onChange`, forwarded from `presentedItemDidChange()`).
 final class iCloudFilePresenter: NSObject, NSFilePresenter {
     let presentedItemURL: URL?
     let presentedItemOperationQueue: OperationQueue = .main
