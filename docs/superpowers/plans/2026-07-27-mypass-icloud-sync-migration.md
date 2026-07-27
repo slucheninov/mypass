@@ -46,6 +46,8 @@
 
 The spec named these `defaultICloudDriveRootURL` / `isURLInsideICloudDrive`; they become members of an `ICloudDriveLocation` namespace instead. The spec's "or nil if absent" existence check is deliberately dropped: inside the app sandbox `FileManager.fileExists` on `~/Library/Mobile Documents/com~apple~CloudDocs` returns `false` until the user grants access via the open panel, so an existence check would make the open-panel prefill useless. The real home directory must come from `getpwuid(getuid())` because `NSHomeDirectory()` and `homeDirectoryForCurrentUser` both return the sandbox container path.
 
+Corrected after implementation: the root URL includes the `Library` segment — the path is `~/Library/Mobile Documents/com~apple~CloudDocs`.
+
 - [ ] **Step 1: Write the failing test file**
 
 Create `Packages/SyncKit/Tests/SyncKitTests/ICloudDriveLocationTests.swift` with the test class below. SyncKit package tests use `import XCTest` and `@testable import SyncKit`. Temp dirs are not needed here — these tests use fixed paths and the live `iCloudDriveRootURL`.
@@ -146,6 +148,7 @@ public enum ICloudDriveLocation {
     /// report "absent" for every user who has not completed setup yet.
     public static var iCloudDriveRootURL: URL? {
         realHomeDirectoryURL?
+            .appendingPathComponent("Library", isDirectory: true)
             .appendingPathComponent(mobileDocumentsDirectoryName, isDirectory: true)
             .appendingPathComponent(cloudDocsDirectoryName, isDirectory: true)
     }
@@ -203,6 +206,8 @@ git commit -m "feat(synckit): add iCloud Drive folder location helpers"
 - Produces: `public enum iCloudRoot { case ubiquityContainer(identifier: String?); case userFolder(bookmark: Data) }`; `public init(root: iCloudRoot, relativePath: String) throws`; `public convenience init(relativePath: String = "vault.kdbx", containerIdentifier: String? = nil) throws`; `public static func createFolderBookmark(for folderURL: URL) throws -> Data`; `iCloudBackendError` gains `.folderBookmarkUnresolvable` and `.folderUnavailable`; `static func coordinatedURL(folderURL: URL, relativePath: String) -> URL`
 
 The convenience initialiser keeps its existing `containerIdentifier:` parameter because `iCloudBackendUngatedTests.testInitThrowsContainerUnavailableWithBogusIdentifier` calls `iCloudBackend(relativePath:containerIdentifier:)` and must keep compiling unchanged. `.withSecurityScope` is the app-scoped bookmark flavour once `com.apple.security.files.bookmarks.app-scope` is in the entitlements, so the new root reuses exactly the option set `LocalFolderBackend` already uses. A `false` return from `startAccessingSecurityScopedResource()` must NOT be an error: in an unsandboxed `swift test` runner it returns `false` while plain access still works, which is why `LocalFolderBackend` falls back the same way. `.folderUnavailable` is reserved for "resolved path is not an existing directory". `ensureDownloaded` must skip non-ubiquitous files. `startDownloadingUbiquitousItem(at:)` throws for a path the iCloud file provider does not manage, so without a `URLResourceKey.isUbiquitousItemKey` guard every `read()` against a plain folder (including all ungated tests) would fail.
+
+Because `fileURL` becomes a stored `let`, `URL`'s per-instance resource-value cache makes `modificationDate()` and `ensureDownloaded()`'s status polling read stale values. Every `resourceValues(forKeys:)` read therefore goes through the private `freshResourceValues(forKeys:)` helper, which reads through a copy whose cache was just cleared.
 
 - [ ] **Step 1: Append the failing `iCloudBackendUserFolderTests` class to the test file**
 
@@ -266,6 +271,19 @@ final class iCloudBackendUserFolderTests: XCTestCase {
         let secondDate = try XCTUnwrap(backend.modificationDate())
 
         XCTAssertEqual(try backend.read(), Data("v2".utf8))
+        XCTAssertGreaterThan(secondDate, firstDate)
+    }
+
+    func testModificationDateReflectsExternalFileChangeOnSameBackendInstance() throws {
+        let backend = try iCloudBackend(root: .userFolder(bookmark: bookmark), relativePath: "vault.kdbx")
+        try backend.write(Data("initial".utf8))
+        let firstDate = try XCTUnwrap(backend.modificationDate())
+
+        Thread.sleep(forTimeInterval: 1.1)
+        let externalPath = tempDir.appendingPathComponent("vault.kdbx")
+        try Data("external-update".utf8).write(to: externalPath)
+
+        let secondDate = try XCTUnwrap(backend.modificationDate())
         XCTAssertGreaterThan(secondDate, firstDate)
     }
 
@@ -471,13 +489,24 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
         folderURL.appendingPathComponent(relativePath)
     }
 
+    /// Re-fetches resource values from disk, bypassing Foundation's per-URL cache.
+    /// `fileURL` is a stored `let`; repeated `resourceValues(forKeys:)` on it
+    /// returns cached values. Clearing via a local `var` copy works because
+    /// `NSURL`'s resource-value cache is not copy-on-write — mutating the copy
+    /// clears entries the stored `let` reads through.
+    private func freshResourceValues(forKeys keys: Set<URLResourceKey>) throws -> URLResourceValues {
+        var url = fileURL
+        url.removeAllCachedResourceValues()
+        return try url.resourceValues(forKeys: keys)
+    }
+
     public func exists() throws -> Bool {
         FileManager.default.fileExists(atPath: fileURL.path)
     }
 
     public func modificationDate() throws -> Date? {
         guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
-        let values = try fileURL.resourceValues(forKeys: [.contentModificationDateKey])
+        let values = try freshResourceValues(forKeys: [.contentModificationDateKey])
         return values.contentModificationDate
     }
 
@@ -534,10 +563,10 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
         // `startDownloadingUbiquitousItem` throws for such paths. Skipping is
         // both correct and what makes `.userFolder` roots testable outside
         // iCloud Drive.
-        let ubiquityFlags = try? fileURL.resourceValues(forKeys: [.isUbiquitousItemKey])
+        let ubiquityFlags = try? freshResourceValues(forKeys: [.isUbiquitousItemKey])
         guard ubiquityFlags?.isUbiquitousItem == true else { return }
 
-        let initial = try fileURL.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
+        let initial = try freshResourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
         if initial.ubiquitousItemDownloadingStatus == .current {
             return
         }
@@ -546,7 +575,7 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
 
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            let latest = try fileURL.resourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
+            let latest = try freshResourceValues(forKeys: [.ubiquitousItemDownloadingStatusKey])
             if latest.ubiquitousItemDownloadingStatus == .current {
                 return
             }
