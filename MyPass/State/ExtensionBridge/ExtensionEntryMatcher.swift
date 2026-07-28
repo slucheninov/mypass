@@ -25,10 +25,7 @@ enum ExtensionEntryMatcher {
     static func matchingEntries(in group: KdbxGroup, forURL urlString: String) -> [KdbxEntry] {
         guard let targetDomain = registrableDomain(from: urlString) else { return [] }
         return EntrySearch.allEntries(in: group).filter { entry in
-            guard !entry.url.isEmpty, let entryDomain = registrableDomain(from: entry.url) else {
-                return false
-            }
-            return entryDomain == targetDomain
+            entry.urls.contains { registrableDomain(from: $0) == targetDomain }
         }
     }
 }

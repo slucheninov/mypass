@@ -102,4 +102,24 @@ final class ExtensionEntryMatcherTests: XCTestCase {
         let matches = ExtensionEntryMatcher.matchingEntries(in: root, forURL: "https://example.com")
         XCTAssertEqual(matches.map(\.uuid), [entry.uuid])
     }
+
+    func testMatchingEntriesMatchesOnAdditionalUrlWhenPrimaryDiffers() {
+        var entry = makeEntry(url: "https://primary-only.example.com", title: "Multi-URL Entry")
+        entry.urls = ["https://primary-only.example.com", "https://secondary.example.com"]
+        let group = makeGroup(entries: [entry])
+
+        let matches = ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://secondary.example.com/login")
+
+        XCTAssertEqual(matches.map(\.uuid), [entry.uuid])
+    }
+
+    func testMatchingEntriesDoesNotMatchUnrelatedDomainEvenWithExtras() {
+        var entry = makeEntry(url: "https://primary-only.example.com", title: "Multi-URL Entry")
+        entry.urls = ["https://primary-only.example.com", "https://secondary.example.com"]
+        let group = makeGroup(entries: [entry])
+
+        let matches = ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://totally-unrelated.example.org")
+
+        XCTAssertTrue(matches.isEmpty)
+    }
 }
