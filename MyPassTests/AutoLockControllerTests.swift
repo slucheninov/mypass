@@ -81,4 +81,38 @@ final class AutoLockControllerTests: XCTestCase {
         XCTAssertEqual(session.state, .locked)
         _ = controller  // Keep reference to controller
     }
+
+    func testNilTimeoutNeverSchedulesATick() throws {
+        let fileStore = VaultFileStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "pw")
+
+        let clock = FakeClock()
+        let sleepObserver = FakeSleepObserver()
+        let controller = AutoLockController(vaultSession: session, clock: clock, sleepObserver: sleepObserver, timeout: nil)
+
+        XCTAssertTrue(clock.scheduled.isEmpty)
+        XCTAssertEqual(session.state, .unlocked(try XCTUnwrap(session.currentDatabase)))
+    }
+
+    func testLockOnSleepDisabledDoesNotLockOnSleep() throws {
+        let fileStore = VaultFileStore(directory: FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString))
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "pw")
+
+        let clock = FakeClock()
+        let sleepObserver = FakeSleepObserver()
+        let controller = AutoLockController(
+            vaultSession: session,
+            clock: clock,
+            sleepObserver: sleepObserver,
+            timeout: 900,
+            lockOnSleepEnabled: false
+        )
+
+        sleepObserver.fireSleep()
+
+        XCTAssertEqual(session.state, .unlocked(try XCTUnwrap(session.currentDatabase)))
+        _ = controller  // Keep reference to controller
+    }
 }
