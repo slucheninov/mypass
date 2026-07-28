@@ -144,6 +144,10 @@ struct MyPassApp: App {
             }
         }
 
+        // Best-effort cleanup of the pre-2026-07-28 Touch ID enrollment, which stored a
+        // derived key under a fixed "master" account. Safe to call even if nothing is stored.
+        try? BiometricKeyStore().remove(account: "master")
+
         let controller = AutoLockController(
             vaultSession: session,
             clock: RealAutoLockClock(),
