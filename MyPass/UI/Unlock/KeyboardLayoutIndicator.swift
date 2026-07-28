@@ -32,7 +32,12 @@ final class KeyboardLayoutObserver: ObservableObject {
               let rawName = TISGetInputSourceProperty(source, kTISPropertyLocalizedName) else {
             return "?"
         }
-        return Unmanaged<CFString>.fromOpaque(rawName).takeUnretainedValue() as String
+        let name = Unmanaged<CFString>.fromOpaque(rawName).takeUnretainedValue() as String
+        // Displayed as "UA" rather than the system's "Russian" label, per user preference.
+        if name.localizedCaseInsensitiveContains("Russian") {
+            return "UA"
+        }
+        return name
     }
 }
 
