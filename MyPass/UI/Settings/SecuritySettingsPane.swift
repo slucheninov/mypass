@@ -248,7 +248,10 @@ struct SecuritySettingsPane: View {
             unlockError = "Incorrect master password."
             cancelEnrollment()
         } catch {
-            unlockError = "Could not enable device unlock."
+            // TEMPORARY diagnostic detail while investigating a real-device Keychain
+            // failure — replace with a plain "Could not enable device unlock." once root
+            // caused and fixed.
+            unlockError = "Could not enable device unlock: \(error)"
             cancelEnrollment()
         }
     }
