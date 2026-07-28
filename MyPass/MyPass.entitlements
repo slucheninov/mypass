@@ -16,6 +16,7 @@
     <array>
         <string>com.mypass.app.keychain</string>
         <string>com.mypass.app.pairing</string>
+        <string>com.mypass.app.biometric</string>
     </array>
 </dict>
 </plist>

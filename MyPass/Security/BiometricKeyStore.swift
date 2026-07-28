@@ -17,6 +17,12 @@ enum BiometricKeyStoreError: Error {
 
 final class BiometricKeyStore: BiometricKeyStoring {
     private let service: String
+    // App-only access group, declared in MyPass.entitlements. Sandboxed apps with a
+    // keychain-access-groups entitlement must set kSecAttrAccessGroup explicitly on
+    // every query — omitting it produces errSecMissingEntitlement (-34018), which is
+    // exactly what happened here before this was added (see git history). Mirrors the
+    // established pattern in ExtensionPairingStore.swift.
+    private let accessGroup = "com.mypass.app.biometric"
 
     init(service: String = "com.mypass.app.biometric") {
         self.service = service
@@ -35,7 +41,8 @@ final class BiometricKeyStore: BiometricKeyStoring {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account
+            kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup
         ]
         SecItemDelete(query as CFDictionary)
 
@@ -55,6 +62,7 @@ final class BiometricKeyStore: BiometricKeyStoring {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup,
             kSecReturnData as String: true,
             kSecUseAuthenticationContext as String: context
         ]
@@ -74,7 +82,8 @@ final class BiometricKeyStore: BiometricKeyStoring {
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
-            kSecAttrAccount as String: account
+            kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup
         ]
         let status = SecItemDelete(query as CFDictionary)
         guard status == errSecSuccess || status == errSecItemNotFound else {
@@ -87,6 +96,7 @@ final class BiometricKeyStore: BiometricKeyStoring {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
+            kSecAttrAccessGroup as String: accessGroup,
             kSecReturnAttributes as String: true,
             kSecMatchLimit as String: kSecMatchLimitOne
         ]
