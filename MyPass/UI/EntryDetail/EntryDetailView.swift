@@ -37,6 +37,8 @@ struct EntryDetailView: View {
     @State private var now = Date()
     @State private var showHistory = false
     @State private var lastTouchedEntryID: UUID?
+    @State private var largeTypeField: LargeTypeField?
+    @State private var showWebsitesSheet = false
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
@@ -47,6 +49,12 @@ struct EntryDetailView: View {
         case password
         case totp
         case extra(String)
+    }
+
+    private enum LargeTypeField: Equatable {
+        case username
+        case password
+        case totp
     }
 
     private var currentEntry: KdbxEntry? {
@@ -95,24 +103,83 @@ struct EntryDetailView: View {
                             displayValue: entry.login,
                             copyValue: entry.login
                         )
+                        .contextMenu {
+                            Button("Copy Username") {
+                                copy(entry.login)
+                                flashCopied(.username)
+                            }
+                            Button("Show Large Type") {
+                                largeTypeField = .username
+                            }
+                        }
+                        .popover(isPresented: largeTypeBinding(.username)) {
+                            LargeTypePopover(text: entry.login, isMonospaced: false)
+                        }
 
                         DetailFieldDivider()
 
                         passwordRow(for: entry)
+                            .contextMenu {
+                                Button("Copy Password") {
+                                    copy(entry.password)
+                                    flashCopied(.password)
+                                }
+                                Button("Show Large Type") {
+                                    largeTypeField = .password
+                                }
+                            }
+                            .popover(isPresented: largeTypeBinding(.password)) {
+                                LargeTypePopover(text: entry.password)
+                            }
 
                         if let secret = entry.totpSecretBase32 {
                             DetailFieldDivider()
                             totpRow(secret: secret)
+                                .contextMenu {
+                                    Button("Copy Code") {
+                                        copy(currentTOTPCode(secret: secret))
+                                        flashCopied(.totp)
+                                    }
+                                    Button("Show Large Type") {
+                                        largeTypeField = .totp
+                                    }
+                                }
+                                .popover(isPresented: largeTypeBinding(.totp)) {
+                                    LargeTypePopover(text: currentTOTPCode(secret: secret))
+                                }
                         }
 
                         if !entry.urls.isEmpty {
                             DetailFieldDivider()
                             websiteRow(for: entry)
+                                .contextMenu {
+                                    Button("Open Website") { openWebsite(entry.url) }
+                                    Button("Copy Website") { copy(entry.url) }
+                                    Button("Change Website") { showWebsitesSheet = true }
+                                }
                         }
 
                         if let groupName = groupName(for: entry) {
                             DetailFieldDivider()
                             DetailFieldRow(label: "Group", value: groupName)
+                                .contextMenu {
+                                    if let database = vaultSession.currentDatabase {
+                                        let groups = GroupTreeOperations.selectableGroups(in: database.rootGroup, excludingRecycleBin: database.recycleBinGroupUUID)
+                                        let currentGroupID = GroupTreeOperations.entryLocation(entryID: entry.uuid, in: database.rootGroup)?.group.uuid
+                                        ForEach(groups, id: \.uuid) { group in
+                                            Button {
+                                                moveToGroup(group.uuid, entryID: entry.uuid)
+                                            } label: {
+                                                HStack {
+                                                    Text(group.name)
+                                                    if group.uuid == currentGroupID {
+                                                        Image(systemName: "checkmark")
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
                         }
 
                         DetailFieldDivider()
@@ -178,6 +245,15 @@ struct EntryDetailView: View {
                         }
                         showHistory = false
                     }
+                )
+            }
+            .sheet(isPresented: $showWebsitesSheet) {
+                WebsitesSheet(
+                    entryID: entry.uuid,
+                    entryTitle: entry.title,
+                    initialURLs: entry.urls,
+                    onDone: { _ in showWebsitesSheet = false },
+                    onCancel: { showWebsitesSheet = false }
                 )
             }
             .onChange(of: navigationState.selectedEntryID) { _, newID in
@@ -374,6 +450,25 @@ struct EntryDetailView: View {
         ClipboardAutoClear.schedule(value: value, after: ClipboardClearInterval.seconds(), pasteboard: pasteboard, clock: clock)
         if let id = navigationState.selectedEntryID {
             vaultSession.touchAccess(entryID: id)
+        }
+    }
+
+    private func largeTypeBinding(_ field: LargeTypeField) -> Binding<Bool> {
+        Binding(
+            get: { largeTypeField == field },
+            set: { isPresented in largeTypeField = isPresented ? field : nil }
+        )
+    }
+
+    private func openWebsite(_ urlString: String) {
+        let normalized = urlString.contains("://") ? urlString : "https://\(urlString)"
+        guard let url = URL(string: normalized) else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    private func moveToGroup(_ groupID: UUID, entryID: UUID) {
+        vaultSession.mutate { database in
+            GroupTreeOperations.moveEntry(withID: entryID, to: groupID, in: database.rootGroup)
         }
     }
 
