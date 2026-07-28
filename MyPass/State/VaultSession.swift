@@ -48,6 +48,13 @@ final class VaultSession: ObservableObject {
     /// Coalesces rapid `touchAccess` calls into a single debounced persist.
     private var touchAccessPersistWorkItem: DispatchWorkItem?
 
+    /// `true` while a debounced `touchAccess` persist is still waiting to run.
+    /// Exposed so tests can assert that starting a migration cancels it.
+    var hasPendingTouchAccessPersist: Bool {
+        guard let touchAccessPersistWorkItem else { return false }
+        return !touchAccessPersistWorkItem.isCancelled
+    }
+
     init(fileStore: VaultFileStore, syncEngine: SyncEngine? = nil) {
         self.fileStore = fileStore
         self.syncEngine = syncEngine
@@ -145,6 +152,72 @@ final class VaultSession: ObservableObject {
     func triggerBackgroundSync() {
         guard case .unlocked(let db) = state else { return }
         persist(db)
+    }
+
+    /// Reports what a candidate remote currently holds, so the connect flow can
+    /// offer the right reconciliation strategies. Runs on `persistQueue` because
+    /// probing an iCloud folder performs a coordinated read that can block for
+    /// the download timeout, and completes on the main queue.
+    func probeMigrationTarget(
+        remote: StorageBackend,
+        completion: @escaping (Result<VaultMigrationTargetProbe, Error>) -> Void
+    ) {
+        guard case .unlocked = state, sessionPassword != nil else {
+            DispatchQueue.main.async { completion(.failure(VaultMigrationError.vaultLocked)) }
+            return
+        }
+        let service = VaultMigrationService(fileStore: fileStore)
+        persistQueue.async {
+            let result = Result { try service.probe(remote: remote) }
+            DispatchQueue.main.async { completion(result) }
+        }
+    }
+
+    /// Connects this vault to `remote` using `strategy`. Must be called from the
+    /// main thread: preconditions and the debounce cancellation happen
+    /// synchronously, then the Argon2id derivations and remote I/O run on
+    /// `persistQueue` so migration cannot interleave with an autosave or a
+    /// background sync pass. When the strategy replaced the local database, the
+    /// published state is updated on the main queue before `completion` runs, so
+    /// the UI never shows stale entries.
+    func performMigration(
+        to remote: StorageBackend,
+        strategy: VaultMigrationStrategy,
+        completion: @escaping (Result<VaultMigrationOutcome, Error>) -> Void
+    ) {
+        guard case .unlocked(let db) = state, let password = sessionPassword else {
+            DispatchQueue.main.async { completion(.failure(VaultMigrationError.vaultLocked)) }
+            return
+        }
+
+        touchAccessPersistWorkItem?.cancel()
+        touchAccessPersistWorkItem = nil
+
+        // Same deep copy `persist(_:)` takes: the background work must not see
+        // the live, still-mutable group tree.
+        let snapshot = KdbxDatabase(
+            rootGroup: db.rootGroup.deepCopy(),
+            deletedObjects: db.deletedObjects,
+            recycleBinGroupUUID: db.recycleBinGroupUUID
+        )
+        let service = VaultMigrationService(fileStore: fileStore)
+
+        persistQueue.async {
+            let result = Result {
+                try service.migrate(
+                    local: snapshot,
+                    password: password,
+                    remote: remote,
+                    strategy: strategy
+                )
+            }
+            DispatchQueue.main.async { [weak self] in
+                if case .success(let outcome) = result, let mergedDatabase = outcome.mergedDatabase {
+                    self?.state = .unlocked(mergedDatabase)
+                }
+                completion(result)
+            }
+        }
     }
 
     /// Dismisses a surfaced save-error alert without affecting vault state.

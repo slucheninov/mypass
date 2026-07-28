@@ -274,4 +274,193 @@ final class VaultSessionTests: XCTestCase {
         }
         XCTAssertTrue(sawSyncError, "expected lastSaveError to surface a sync-specific failure message within the timeout")
     }
+
+    // MARK: - Migration
+
+    private func makeMigrationEntry(title: String) -> KdbxEntry {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(),
+            iconID: 0,
+            fields: [],
+            creationTime: now,
+            lastModificationTime: now,
+            lastAccessTime: now,
+            locationChanged: now,
+            history: []
+        )
+        entry.title = title
+        return entry
+    }
+
+    func testPerformMigrationIsRejectedWhileLocked() {
+        let session = VaultSession(fileStore: fileStore)
+        let expectation = expectation(description: "completion")
+
+        session.performMigration(to: InMemoryStorageBackend(), strategy: .seedRemote) { result in
+            switch result {
+            case .success:
+                XCTFail("expected failure while locked")
+            case .failure(let error):
+                guard case VaultMigrationError.vaultLocked = error else {
+                    return XCTFail("expected vaultLocked, got \(error)")
+                }
+            }
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 5)
+    }
+
+    func testProbeMigrationTargetIsRejectedWhileLocked() {
+        let session = VaultSession(fileStore: fileStore)
+        let expectation = expectation(description: "completion")
+
+        session.probeMigrationTarget(remote: InMemoryStorageBackend()) { result in
+            switch result {
+            case .success:
+                XCTFail("expected failure while locked")
+            case .failure(let error):
+                guard case VaultMigrationError.vaultLocked = error else {
+                    return XCTFail("expected vaultLocked, got \(error)")
+                }
+            }
+            expectation.fulfill()
+        }
+
+        wait(for: [expectation], timeout: 5)
+    }
+
+    func testPerformMigrationCancelsPendingTouchAccessPersist() throws {
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "correct-horse")
+
+        let entry = makeMigrationEntry(title: "Touched Entry")
+        session.mutate { database in
+            database.rootGroup.entries.append(entry)
+        }
+        session.touchAccess(entryID: entry.uuid)
+        XCTAssertTrue(session.hasPendingTouchAccessPersist)
+
+        let expectation = expectation(description: "completion")
+        session.performMigration(to: InMemoryStorageBackend(), strategy: .seedRemote) { result in
+            if case .failure(let error) = result {
+                XCTFail("expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        XCTAssertFalse(session.hasPendingTouchAccessPersist)
+
+        wait(for: [expectation], timeout: 30)
+    }
+
+    func testPerformMigrationSeedRemoteUploadsWithoutChangingInMemoryState() throws {
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "correct-horse")
+        session.mutate { database in
+            database.rootGroup.entries.append(self.makeMigrationEntry(title: "Local Only"))
+        }
+
+        let remote = InMemoryStorageBackend()
+        let expectation = expectation(description: "completion")
+        session.performMigration(to: remote, strategy: .seedRemote) { result in
+            switch result {
+            case .success(let outcome):
+                XCTAssertTrue(outcome.remoteWritten)
+                XCTAssertFalse(outcome.localReplaced)
+                XCTAssertNil(outcome.mergedDatabase)
+            case .failure(let error):
+                XCTFail("expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 60)
+
+        guard case .unlocked(let db) = session.state else {
+            return XCTFail("expected unlocked state")
+        }
+        XCTAssertEqual(Set(db.rootGroup.entries.map { $0.title }), ["Local Only"])
+
+        let remoteData = try XCTUnwrap(try remote.read())
+        let remoteDatabase = try KdbxDatabase.open(data: remoteData, password: "correct-horse")
+        XCTAssertEqual(Set(remoteDatabase.rootGroup.entries.map { $0.title }), ["Local Only"])
+    }
+
+    func testPerformMigrationAdoptRemotePublishesTheAdoptedDatabase() throws {
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "correct-horse")
+        session.mutate { database in
+            database.rootGroup.entries.append(self.makeMigrationEntry(title: "Local Only"))
+        }
+
+        var remoteEntry = makeMigrationEntry(title: "From Remote")
+        remoteEntry.title = "From Remote"
+        let remoteRoot = KdbxGroup(
+            uuid: UUID(),
+            name: "MyPass",
+            iconID: 0,
+            creationTime: Date(),
+            lastModificationTime: Date(),
+            locationChanged: Date(),
+            entries: [remoteEntry],
+            subgroups: []
+        )
+        let remoteDatabase = KdbxDatabase(rootGroup: remoteRoot, deletedObjects: [])
+        let remote = InMemoryStorageBackend(
+            initialData: try remoteDatabase.save(password: "correct-horse", cipher: .aes256, compression: .gzip)
+        )
+
+        let expectation = expectation(description: "completion")
+        session.performMigration(to: remote, strategy: .adoptRemote) { result in
+            switch result {
+            case .success(let outcome):
+                XCTAssertTrue(outcome.localReplaced)
+                XCTAssertFalse(outcome.remoteWritten)
+            case .failure(let error):
+                XCTFail("expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 60)
+
+        guard case .unlocked(let db) = session.state else {
+            return XCTFail("expected unlocked state")
+        }
+        XCTAssertEqual(Set(db.rootGroup.entries.map { $0.title }), ["From Remote"])
+    }
+
+    func testProbeMigrationTargetReportsOccupiedRemote() throws {
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "correct-horse")
+
+        let remoteDatabase = KdbxDatabase(
+            rootGroup: KdbxGroup(
+                uuid: UUID(),
+                name: "MyPass",
+                iconID: 0,
+                creationTime: Date(),
+                lastModificationTime: Date(),
+                locationChanged: Date(),
+                entries: [makeMigrationEntry(title: "From Remote")],
+                subgroups: []
+            ),
+            deletedObjects: []
+        )
+        let remoteData = try remoteDatabase.save(password: "correct-horse", cipher: .aes256, compression: .gzip)
+        let remote = InMemoryStorageBackend(initialData: remoteData)
+
+        let expectation = expectation(description: "completion")
+        session.probeMigrationTarget(remote: remote) { result in
+            switch result {
+            case .success(let probe):
+                XCTAssertTrue(probe.exists)
+                XCTAssertEqual(probe.byteCount, remoteData.count)
+                XCTAssertNotNil(probe.modificationDate)
+            case .failure(let error):
+                XCTFail("expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+        wait(for: [expectation], timeout: 30)
+    }
 }
