@@ -5,6 +5,7 @@ import SyncKit
 struct SyncSettingsPane: View {
     @AppStorage("syncBackend") private var syncBackendRawValue: String = SyncBackendOption.local.rawValue
     @AppStorage("syncLocalFolderBookmark") private var syncLocalFolderBookmarkData: Data?
+    @AppStorage("syncICloudFolderBookmark") private var syncICloudFolderBookmarkData: Data?
 
     // SFTP non-secret fields — host/port/username/remotePath/paths only.
     // The private key PEM and its passphrase NEVER go through @AppStorage/
@@ -25,8 +26,9 @@ struct SyncSettingsPane: View {
     @State private var sftpPassphrase: String = ""
     @State private var connectionTestState: ConnectionTestState = .idle
 
-    @State private var iCloudContainerAvailable: Bool = true
-    @State private var iCloudContainerCheckMessage: String?
+    @State private var iCloudFolderDisplayPath: String?
+    @State private var iCloudStatusMessage: String?
+    @State private var showingMigrationSheet = false
     @State private var manualSyncStatusMessage: String?
 
     @EnvironmentObject private var vaultSession: VaultSession
@@ -107,15 +109,43 @@ struct SyncSettingsPane: View {
     }
 
     private var iCloudSection: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            if iCloudContainerAvailable {
-                Text("iCloud container is available.")
+        VStack(alignment: .leading, spacing: 6) {
+            if let iCloudFolderDisplayPath {
+                Text("Mirroring the vault to: \(iCloudFolderDisplayPath)")
                     .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
             } else {
-                Text(iCloudContainerCheckMessage ?? "iCloud Drive is unavailable — sign in to iCloud and enable iCloud Drive in System Settings.")
-                    .foregroundStyle(.orange)
+                Text("MyPass mirrors its encrypted vault into a folder inside your iCloud Drive, which needs no Apple Developer account. Syncing through a private iCloud container would require a paid developer account and is not enabled in this build.")
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            if let iCloudStatusMessage {
+                Text(iCloudStatusMessage)
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            if !isVaultUnlocked {
+                Text("Unlock the vault first: MyPass needs your vault password to read a vault that is already in the chosen folder.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            Button(iCloudFolderDisplayPath == nil ? "Set Up iCloud Sync…" : "Change iCloud Folder…") {
+                showingMigrationSheet = true
+            }
+            .disabled(!isVaultUnlocked)
         }
+        .sheet(isPresented: $showingMigrationSheet, onDismiss: refreshICloudStatus) {
+            SyncMigrationSheet()
+                .environmentObject(vaultSession)
+        }
+    }
+
+    private var isVaultUnlocked: Bool {
+        if case .unlocked = vaultSession.state { return true }
+        return false
     }
 
     private var sftpSection: some View {
@@ -231,18 +261,35 @@ struct SyncSettingsPane: View {
         }
     }
 
+    /// Reports the configured iCloud Drive folder, and self-heals a bookmark
+    /// that no longer resolves by clearing it and asking the user to re-pick.
+    /// Deliberately does NOT probe a ubiquity container: this build has no
+    /// container entitlement, so the old "sign in to iCloud" message was
+    /// always wrong about the cause.
     private func refreshICloudStatus() {
         guard selectedOption == .iCloud else { return }
-        do {
-            _ = try iCloudBackend(relativePath: "vault.kdbx")
-            iCloudContainerAvailable = true
-            iCloudContainerCheckMessage = nil
-        } catch iCloudBackendError.containerUnavailable {
-            iCloudContainerAvailable = false
-            iCloudContainerCheckMessage = "iCloud Drive is unavailable — sign in to iCloud and enable iCloud Drive in System Settings."
-        } catch {
-            iCloudContainerAvailable = false
-            iCloudContainerCheckMessage = "Could not verify iCloud container: \(error)"
+        guard let bookmarkData = syncICloudFolderBookmarkData, !bookmarkData.isEmpty else {
+            iCloudFolderDisplayPath = nil
+            iCloudStatusMessage = nil
+            return
         }
+
+        var isStale = false
+        guard let folderURL = try? URL(
+            resolvingBookmarkData: bookmarkData,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        ), !isStale else {
+            syncICloudFolderBookmarkData = nil
+            iCloudFolderDisplayPath = nil
+            iCloudStatusMessage = "The saved iCloud Drive folder is no longer available. Choose the folder again."
+            return
+        }
+
+        iCloudFolderDisplayPath = folderURL.path
+        iCloudStatusMessage = ICloudDriveLocation.isInsideICloudDrive(folderURL)
+            ? nil
+            : "This folder is not inside iCloud Drive, so iCloud will not sync it."
     }
 }
