@@ -142,6 +142,8 @@ struct SecuritySettingsPane: View {
                 .frame(maxWidth: 280)
                 .onSubmit(confirmEnrollment)
 
+            KeyboardLayoutIndicator()
+
             HStack {
                 Button("Cancel", action: cancelEnrollment)
                 Spacer()

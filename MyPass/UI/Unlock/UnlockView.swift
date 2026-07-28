@@ -73,6 +73,8 @@ struct UnlockView: View {
                 .frame(maxWidth: 320)
                 .onSubmit(attemptUnlock)
 
+            KeyboardLayoutIndicator()
+
             if let errorMessage {
                 Text(errorMessage)
                     .foregroundStyle(.red)

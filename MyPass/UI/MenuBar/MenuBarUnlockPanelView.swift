@@ -45,6 +45,8 @@ struct MenuBarUnlockPanelView: View {
                 .textFieldStyle(.roundedBorder)
                 .onSubmit(attemptUnlock)
 
+            KeyboardLayoutIndicator()
+
             if let errorMessage {
                 Text(errorMessage)
                     .font(.caption)
