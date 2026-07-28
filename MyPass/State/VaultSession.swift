@@ -213,7 +213,12 @@ final class VaultSession: ObservableObject {
             }
             DispatchQueue.main.async { [weak self] in
                 if case .success(let outcome) = result, let mergedDatabase = outcome.mergedDatabase {
-                    self?.state = .unlocked(mergedDatabase)
+                    // Only apply the merged database if the session is still unlocked.
+                    // If the user called lock() while the migration was running,
+                    // don't silently re-unlock the vault.
+                    if case .unlocked = self?.state {
+                        self?.state = .unlocked(mergedDatabase)
+                    }
                 }
                 completion(result)
             }

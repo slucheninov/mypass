@@ -463,4 +463,84 @@ final class VaultSessionTests: XCTestCase {
         }
         wait(for: [expectation], timeout: 30)
     }
+
+    func testPerformMigrationDoesNotReLockIfLockedDuringFlight() throws {
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "correct-horse")
+        session.mutate { database in
+            database.rootGroup.entries.append(self.makeMigrationEntry(title: "Local Only"))
+        }
+
+        // Use a blocking backend that can be held up until we call lock()
+        let blockingBackend = BlockingStorageBackend()
+
+        let expectation = expectation(description: "completion")
+        session.performMigration(to: blockingBackend, strategy: .seedRemote) { result in
+            if case .failure(let error) = result {
+                XCTFail("expected success, got \(error)")
+            }
+            expectation.fulfill()
+        }
+
+        // Wait for the backend write to block
+        blockingBackend.waitForBlockedWrite()
+
+        // Lock the vault while the migration is in flight
+        session.lock()
+        XCTAssertEqual(session.state, .locked)
+
+        // Unblock the backend to let the migration complete
+        blockingBackend.unblockWrite()
+
+        // Wait for the migration to complete
+        wait(for: [expectation], timeout: 30)
+
+        // Verify the vault is still locked, not silently re-unlocked
+        XCTAssertEqual(session.state, .locked)
+    }
+}
+
+// MARK: - Test Doubles
+
+/// A storage backend that blocks on write() until explicitly unblocked,
+/// used to reliably trigger the race condition between lock() and migration completion.
+private class BlockingStorageBackend: StorageBackend {
+    private let writeBlocker = DispatchSemaphore(value: 0)
+    private var blockedWrite = false
+
+    func read() throws -> Data? {
+        nil
+    }
+
+    func write(_ data: Data) throws {
+        // Signal that we're now blocked
+        DispatchQueue.global().async {
+            self.blockedWrite = true
+        }
+        // Wait for the unblock signal
+        _ = writeBlocker.wait(timeout: .now() + 10)
+    }
+
+    func modificationDate() throws -> Date? {
+        nil
+    }
+
+    func exists() throws -> Bool {
+        false
+    }
+
+    func waitForBlockedWrite() {
+        // Spin until the write is actually blocked (on the backend's thread)
+        for _ in 0..<500 {
+            if blockedWrite {
+                return
+            }
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+        XCTFail("write() never blocked within timeout")
+    }
+
+    func unblockWrite() {
+        writeBlocker.signal()
+    }
 }
