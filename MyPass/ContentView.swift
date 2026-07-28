@@ -77,8 +77,9 @@ private struct DetailColumnView: View {
         proposal: PendingSaveProposal? = nil
     ) -> some View {
         let targetGroupID = resolvedDefaultGroupID(existingID: existingID, defaultGroupID: defaultGroupID)
+        let existingEntry = resolvedEntry(existingID: existingID, proposal: proposal)
         EntryEditView(
-            existingEntry: resolvedEntry(existingID: existingID, proposal: proposal),
+            existingEntry: existingEntry,
             rootGroup: rootGroup,
             recycleBinGroupUUID: vaultSession.currentDatabase?.recycleBinGroupUUID,
             defaultGroupID: targetGroupID,
@@ -96,6 +97,19 @@ private struct DetailColumnView: View {
                     }
                 }
                 navigationState.selectedEntryID = saved.uuid
+                navigationState.presentBrowse()
+            },
+            onDelete: {
+                guard let existingEntry else { return }
+                vaultSession.mutate { database in
+                    GroupTreeOperations.softDeleteEntry(
+                        withID: existingEntry.uuid,
+                        in: database.rootGroup,
+                        deletedObjects: &database.deletedObjects,
+                        recycleBinGroupUUID: &database.recycleBinGroupUUID
+                    )
+                }
+                navigationState.selectedEntryID = nil
                 navigationState.presentBrowse()
             }
         )
