@@ -3,7 +3,7 @@ import Security
 import LocalAuthentication
 
 protocol BiometricKeyStoring {
-    func store(derivedKey: Data, account: String) throws
+    func store(derivedKey: Data, account: String, accessControl: DeviceUnlockAccessControl) throws
     func retrieve(account: String) throws -> Data?
     func remove(account: String) throws
     func hasStoredKey(account: String) throws -> Bool
@@ -22,11 +22,11 @@ final class BiometricKeyStore: BiometricKeyStoring {
         self.service = service
     }
 
-    func store(derivedKey: Data, account: String) throws {
-        guard let accessControl = SecAccessControlCreateWithFlags(
+    func store(derivedKey: Data, account: String, accessControl: DeviceUnlockAccessControl) throws {
+        guard let secAccessControl = SecAccessControlCreateWithFlags(
             nil,
             kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            .biometryCurrentSet,
+            accessControl.secAccessControlFlags,
             nil
         ) else {
             throw BiometricKeyStoreError.accessControlCreationFailed
@@ -41,7 +41,7 @@ final class BiometricKeyStore: BiometricKeyStoring {
 
         var attributes = query
         attributes[kSecValueData as String] = derivedKey
-        attributes[kSecAttrAccessControl as String] = accessControl
+        attributes[kSecAttrAccessControl as String] = secAccessControl
 
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -104,9 +104,11 @@ final class BiometricKeyStore: BiometricKeyStoring {
 
 final class FakeBiometricKeyStore: BiometricKeyStoring {
     private var storage: [String: Data] = [:]
+    var accessControls: [String: DeviceUnlockAccessControl] = [:]
 
-    func store(derivedKey: Data, account: String) throws {
+    func store(derivedKey: Data, account: String, accessControl: DeviceUnlockAccessControl) throws {
         storage[account] = derivedKey
+        accessControls[account] = accessControl
     }
 
     func retrieve(account: String) throws -> Data? {
@@ -115,6 +117,7 @@ final class FakeBiometricKeyStore: BiometricKeyStoring {
 
     func remove(account: String) throws {
         storage.removeValue(forKey: account)
+        accessControls.removeValue(forKey: account)
     }
 
     func hasStoredKey(account: String) throws -> Bool {

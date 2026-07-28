@@ -19,15 +19,26 @@ final class AutoLockController: ObservableObject {
     private var pendingTick: AutoLockCancelable?
     private var sleepSubscription: AutoLockCancelable?
 
-    var timeout: TimeInterval {
+    /// `nil` means "never auto-lock on inactivity".
+    var timeout: TimeInterval? {
         didSet { recordActivity() }
     }
 
-    init(vaultSession: VaultSession, clock: AutoLockClock, sleepObserver: AutoLockSleepObserving, timeout: TimeInterval) {
+    var lockOnSleepEnabled: Bool
+
+    init(
+        vaultSession: VaultSession,
+        clock: AutoLockClock,
+        sleepObserver: AutoLockSleepObserving,
+        timeout: TimeInterval?,
+        lockOnSleepEnabled: Bool = true
+    ) {
         self.vaultSession = vaultSession
         self.clock = clock
         self.timeout = timeout
+        self.lockOnSleepEnabled = lockOnSleepEnabled
         self.sleepSubscription = sleepObserver.onWillSleep { [weak self] in
+            guard self?.lockOnSleepEnabled == true else { return }
             self?.lockNow()
         }
         recordActivity()
@@ -35,6 +46,10 @@ final class AutoLockController: ObservableObject {
 
     func recordActivity() {
         pendingTick?.cancel()
+        guard let timeout else {
+            pendingTick = nil
+            return
+        }
         pendingTick = clock.scheduleTick(after: timeout) { [weak self] in
             self?.lockNow()
         }

@@ -2,15 +2,24 @@ import SwiftUI
 import MyPassKit
 
 struct SecuritySettingsPane: View {
-    @AppStorage("autoLockTimeoutMinutes") private var autoLockTimeoutMinutes: Double = 15
+    @AppStorage("unlockTouchIDEnabled") private var touchIDEnabled = false
+    @AppStorage("unlockMacPasswordEnabled") private var macPasswordEnabled = false
+    @AppStorage("unlockWithDeviceWindow") private var unlockWithDeviceWindow: UnlockDeviceWindow = .eightHours
+    @AppStorage("requireAccountPasswordWindow") private var requireAccountPasswordWindow: RequirePasswordWindow = .thirtyDays
+    @AppStorage("lockOnDeviceSleepEnabled") private var lockOnDeviceSleepEnabled = true
+    @AppStorage("autoLockIdleTimeout") private var autoLockIdleTimeout: AutoLockIdleTimeout = .thirtyMinutes
     @AppStorage("clipboardClearSeconds") private var clipboardClearSeconds: Int = 30
+    @AppStorage("lastDeviceUnlockTimestamp") private var lastDeviceUnlockTimestamp: Double = 0
+    @AppStorage("lastFullPasswordEntryTimestamp") private var lastFullPasswordEntryTimestamp: Double = 0
     @EnvironmentObject private var autoLockController: AutoLockController
     @EnvironmentObject private var vaultSession: VaultSession
 
-    @State private var touchIDEnabled = false
-    @State private var touchIDError: String?
+    @State private var unlockError: String?
     @State private var confirmPassword = ""
     @State private var showConfirmSheet = false
+    @State private var pendingAccessControl: DeviceUnlockAccessControl?
+    @State private var priorTouchIDEnabled = false
+    @State private var priorMacPasswordEnabled = false
 
     let biometricKeyStore: BiometricKeyStoring
 
@@ -22,11 +31,22 @@ struct SecuritySettingsPane: View {
         Binding(
             get: { touchIDEnabled },
             set: { newValue in
-                if newValue {
-                    enableTouchID()
-                } else {
-                    disableTouchID()
-                }
+                priorTouchIDEnabled = touchIDEnabled
+                priorMacPasswordEnabled = macPasswordEnabled
+                touchIDEnabled = newValue
+                updateDeviceUnlockEnrollment()
+            }
+        )
+    }
+
+    private var macPasswordBinding: Binding<Bool> {
+        Binding(
+            get: { macPasswordEnabled },
+            set: { newValue in
+                priorTouchIDEnabled = touchIDEnabled
+                priorMacPasswordEnabled = macPasswordEnabled
+                macPasswordEnabled = newValue
+                updateDeviceUnlockEnrollment()
             }
         )
     }
@@ -34,23 +54,42 @@ struct SecuritySettingsPane: View {
     var body: some View {
         Form {
             Section {
-                Stepper("Lock automatically after inactivity: \(Int(autoLockTimeoutMinutes)) min",
-                        value: $autoLockTimeoutMinutes, in: 1...120)
-                SettingsHelperText(text: "Lock the vault after inactivity so passwords stay protected when you step away.")
-            } header: {
-                Text("Auto-Lock")
-            }
+                Toggle("Unlock using Touch ID", isOn: touchIDBinding)
+                Toggle("Unlock app with Mac password", isOn: macPasswordBinding)
 
-            Section {
-                Toggle("Unlock with Touch ID", isOn: touchIDBinding)
-                SettingsHelperText(text: "Use Touch ID to unlock without typing your master password; after restart, master password is still required per security model.")
-                if let touchIDError {
-                    Text(touchIDError)
+                Picker("Unlock with device:", selection: $unlockWithDeviceWindow) {
+                    ForEach(UnlockDeviceWindow.allCases) { window in
+                        Text(window.pickerLabel).tag(window)
+                    }
+                }
+
+                Picker("Require account password:", selection: $requireAccountPasswordWindow) {
+                    ForEach(RequirePasswordWindow.allCases) { window in
+                        Text(window.pickerLabel).tag(window)
+                    }
+                }
+
+                SettingsHelperText(text: "Unlock without typing your master password using Touch ID or your Mac password. You'll still be asked for the master password on the schedule above.")
+
+                if let unlockError {
+                    Text(unlockError)
                         .foregroundStyle(.red)
                         .font(.caption)
                 }
             } header: {
-                Text("Touch ID")
+                Text("Unlock")
+            }
+
+            Section {
+                Toggle("Lock when device locks or sleeps", isOn: $lockOnDeviceSleepEnabled)
+                Picker("Lock after the device is idle for:", selection: $autoLockIdleTimeout) {
+                    ForEach(AutoLockIdleTimeout.allCases) { timeout in
+                        Text(timeout.pickerLabel).tag(timeout)
+                    }
+                }
+                SettingsHelperText(text: "Lock the vault after inactivity so passwords stay protected when you step away.")
+            } header: {
+                Text("Auto-lock")
             }
 
             Section {
@@ -64,23 +103,36 @@ struct SecuritySettingsPane: View {
         .formStyle(.grouped)
         .padding()
         .onAppear {
-            autoLockController.timeout = autoLockTimeoutMinutes * 60
-            refreshTouchIDState()
+            autoLockController.timeout = autoLockIdleTimeout.seconds
+            autoLockController.lockOnSleepEnabled = lockOnDeviceSleepEnabled
+            // Reconcile the toggle display against real Keychain state: if the item
+            // disappeared out from under the app (biometry invalidated, Keychain
+            // reset, migrated to a new Mac), don't keep claiming device unlock is on.
+            // `isEnrolled` uses `hasStoredKey`, which is attributes-only and does not
+            // trigger an auth prompt, so this is safe and cheap on every appear.
+            if !DeviceUnlockEnrollment.isEnrolled(biometricKeyStore: biometricKeyStore),
+               touchIDEnabled || macPasswordEnabled {
+                touchIDEnabled = false
+                macPasswordEnabled = false
+            }
         }
-        .onChange(of: autoLockTimeoutMinutes) { _, newValue in
-            autoLockController.timeout = newValue * 60
+        .onChange(of: autoLockIdleTimeout) { _, newValue in
+            autoLockController.timeout = newValue.seconds
+        }
+        .onChange(of: lockOnDeviceSleepEnabled) { _, newValue in
+            autoLockController.lockOnSleepEnabled = newValue
         }
         .sheet(isPresented: $showConfirmSheet) {
-            touchIDConfirmSheet
+            confirmSheet
         }
     }
 
-    private var touchIDConfirmSheet: some View {
+    private var confirmSheet: some View {
         VStack(spacing: 16) {
             Text("Confirm Master Password")
                 .font(.headline)
 
-            Text("Enter your master password to enroll Touch ID for this vault.")
+            Text("Enter your master password to enable device unlock for this vault.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -88,87 +140,114 @@ struct SecuritySettingsPane: View {
             SecureField("Master Password", text: $confirmPassword)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 280)
-                .onSubmit(confirmTouchIDEnrollment)
+                .onSubmit(confirmEnrollment)
 
             HStack {
-                Button("Cancel") {
-                    confirmPassword = ""
-                    showConfirmSheet = false
-                    touchIDEnabled = VaultBiometricEnrollment.isEnrolled(biometricKeyStore: biometricKeyStore)
-                }
+                Button("Cancel", action: cancelEnrollment)
                 Spacer()
-                Button("Enroll") {
-                    confirmTouchIDEnrollment()
-                }
-                .keyboardShortcut(.defaultAction)
-                .disabled(confirmPassword.isEmpty)
+                Button("Enable", action: confirmEnrollment)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(confirmPassword.isEmpty)
             }
         }
         .padding(24)
         .frame(width: 360)
     }
 
-    private func refreshTouchIDState() {
-        touchIDEnabled = VaultBiometricEnrollment.isEnrolled(biometricKeyStore: biometricKeyStore)
-    }
-
-    private func enableTouchID() {
-        touchIDError = nil
-        guard vaultSession.currentDatabase != nil else {
-            touchIDError = "Unlock the vault before enabling Touch ID."
-            touchIDEnabled = false
+    private func updateDeviceUnlockEnrollment() {
+        unlockError = nil
+        guard let accessControl = DeviceUnlockAccessControl.forToggles(
+            touchIDEnabled: touchIDEnabled,
+            macPasswordEnabled: macPasswordEnabled
+        ) else {
+            try? DeviceUnlockEnrollment.remove(biometricKeyStore: biometricKeyStore)
             return
         }
+
+        if let existingPassword = try? DeviceUnlockEnrollment.retrievePassword(biometricKeyStore: biometricKeyStore) {
+            do {
+                try DeviceUnlockEnrollment.enroll(
+                    password: existingPassword,
+                    accessControl: accessControl,
+                    biometricKeyStore: biometricKeyStore
+                )
+            } catch {
+                // `DeviceUnlockEnrollment.enroll` deletes the old Keychain item before
+                // storing the new one (see `BiometricKeyStore.store`), so if this throws,
+                // the old item may already be gone even though nothing has been restored
+                // yet. Restoring the toggle display to the pre-edit values and NOT calling
+                // `remove()` again is still the safest behavior here — there may be
+                // nothing left to remove.
+                unlockError = "Could not update device unlock settings."
+                touchIDEnabled = priorTouchIDEnabled
+                macPasswordEnabled = priorMacPasswordEnabled
+            }
+            return
+        }
+
+        guard vaultSession.currentDatabase != nil else {
+            unlockError = "Unlock the vault before enabling device unlock."
+            restoreToggles()
+            return
+        }
+        pendingAccessControl = accessControl
         showConfirmSheet = true
     }
 
-    private func disableTouchID() {
-        touchIDError = nil
-        do {
-            try VaultBiometricEnrollment.remove(biometricKeyStore: biometricKeyStore)
-            touchIDEnabled = false
-        } catch {
-            touchIDError = "Could not remove Touch ID enrollment."
-            touchIDEnabled = true
+    private func cancelEnrollment() {
+        confirmPassword = ""
+        showConfirmSheet = false
+        pendingAccessControl = nil
+        restoreToggles()
+    }
+
+    /// Restores the toggles to their values from before the in-progress edit, and —
+    /// only when the restored state is genuinely "both off" — ensures the Keychain
+    /// item is actually removed, so the Settings display never claims device unlock is
+    /// off while a working enrollment item is still reachable from UnlockView /
+    /// MenuBarUnlockPanelView.
+    private func restoreToggles() {
+        touchIDEnabled = priorTouchIDEnabled
+        macPasswordEnabled = priorMacPasswordEnabled
+        if !priorTouchIDEnabled && !priorMacPasswordEnabled {
+            try? DeviceUnlockEnrollment.remove(biometricKeyStore: biometricKeyStore)
         }
     }
 
-    private func confirmTouchIDEnrollment() {
-        touchIDError = nil
+    private func confirmEnrollment() {
+        unlockError = nil
+        guard let accessControl = pendingAccessControl else {
+            showConfirmSheet = false
+            return
+        }
         do {
-            guard vaultSession.currentDatabase != nil else {
-                throw VaultSessionError.notUnlocked
-            }
             guard let vaultData = try vaultSession.loadVaultData() else {
-                touchIDError = "No vault data found."
-                touchIDEnabled = false
-                confirmPassword = ""
-                showConfirmSheet = false
+                unlockError = "No vault data found."
+                cancelEnrollment()
                 return
             }
-            try VaultBiometricEnrollment.enroll(
+            _ = try KdbxDatabase.open(data: vaultData, password: confirmPassword)
+            try DeviceUnlockEnrollment.enroll(
                 password: confirmPassword,
-                vaultData: vaultData,
+                accessControl: accessControl,
                 biometricKeyStore: biometricKeyStore
             )
-            touchIDEnabled = true
+            // The KdbxDatabase.open(data:password:) verification above is a full,
+            // real password-entry event, semantically identical to UnlockView's
+            // manual unlock — record it so a device-unlock button is immediately
+            // available on the next lock instead of being hidden by a stale window.
+            let now = Date().timeIntervalSince1970
+            lastDeviceUnlockTimestamp = now
+            lastFullPasswordEntryTimestamp = now
             confirmPassword = ""
             showConfirmSheet = false
+            pendingAccessControl = nil
         } catch let error as KdbxDatabaseError where error == .wrongPassword {
-            touchIDError = "Incorrect master password."
-            touchIDEnabled = false
-            confirmPassword = ""
-            showConfirmSheet = false
-        } catch is VaultSessionError {
-            touchIDError = "Unlock the vault before enabling Touch ID."
-            touchIDEnabled = false
-            confirmPassword = ""
-            showConfirmSheet = false
+            unlockError = "Incorrect master password."
+            cancelEnrollment()
         } catch {
-            touchIDError = "Touch ID enrollment failed."
-            touchIDEnabled = false
-            confirmPassword = ""
-            showConfirmSheet = false
+            unlockError = "Could not enable device unlock."
+            cancelEnrollment()
         }
     }
 }

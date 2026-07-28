@@ -5,7 +5,7 @@ final class BiometricKeyStoreTests: XCTestCase {
     func testFakeStoreRetrieveRoundTrips() throws {
         let store = FakeBiometricKeyStore()
         let key = Data([0xAA, 0xBB, 0xCC])
-        try store.store(derivedKey: key, account: "default")
+        try store.store(derivedKey: key, account: "default", accessControl: .touchID)
         XCTAssertEqual(try store.retrieve(account: "default"), key)
     }
 
@@ -17,7 +17,7 @@ final class BiometricKeyStoreTests: XCTestCase {
     func testFakeRemoveClearsStoredKey() throws {
         let store = FakeBiometricKeyStore()
         let key = Data([0x01, 0x02, 0x03])
-        try store.store(derivedKey: key, account: "master")
+        try store.store(derivedKey: key, account: "master", accessControl: .touchID)
         XCTAssertTrue(try store.hasStoredKey(account: "master"))
 
         try store.remove(account: "master")
