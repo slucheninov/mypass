@@ -16,6 +16,20 @@ public struct KdbxField: Equatable {
     }
 }
 
+/// One KDBX `<StringArray>` element — a repeated-value field. MyPass currently
+/// only reads/writes this shape for the `KP2A_URL` additional-URLs convention
+/// (see `KdbxEntry+Convenience.urls` in the app target); unrecognized StringArray
+/// keys round-trip opaquely through this same storage.
+public struct KdbxStringArray: Equatable {
+    public var key: String
+    public var values: [String]
+
+    public init(key: String, values: [String]) {
+        self.key = key
+        self.values = values
+    }
+}
+
 /// A password entry: title/login/password/URL/notes/TOTP/custom fields are all
 /// represented uniformly as `KdbxField`s (matching the KDBX4 XML model), plus
 /// entry-level metadata and a `history` of past versions of itself.
@@ -27,6 +41,7 @@ public struct KdbxEntry: Equatable, Identifiable {
     public var uuid: UUID
     public var iconID: Int
     public var fields: [KdbxField]
+    public var stringArrays: [KdbxStringArray]
     public var creationTime: Date
     public var lastModificationTime: Date
     public var lastAccessTime: Date
@@ -37,6 +52,7 @@ public struct KdbxEntry: Equatable, Identifiable {
         uuid: UUID,
         iconID: Int,
         fields: [KdbxField],
+        stringArrays: [KdbxStringArray] = [],
         creationTime: Date,
         lastModificationTime: Date,
         lastAccessTime: Date,
@@ -46,6 +62,7 @@ public struct KdbxEntry: Equatable, Identifiable {
         self.uuid = uuid
         self.iconID = iconID
         self.fields = fields
+        self.stringArrays = stringArrays
         self.creationTime = creationTime
         self.lastModificationTime = lastModificationTime
         self.lastAccessTime = lastAccessTime
