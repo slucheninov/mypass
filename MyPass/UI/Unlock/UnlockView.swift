@@ -11,6 +11,7 @@ struct UnlockView: View {
 
     @State private var password: String = ""
     @State private var errorMessage: String?
+    @State private var isFirstRun = false
 
     let biometricKeyStore: BiometricKeyStoring
 
@@ -55,7 +56,19 @@ struct UnlockView: View {
                 .padding(.bottom, 4)
                 .accessibilityHidden(true)
 
-            SecureField("Master Password", text: $password)
+            if isFirstRun {
+                VStack(spacing: 4) {
+                    Text("Choose a master password for this vault.")
+                        .font(.system(size: 12, weight: .semibold))
+                    Text("Write it down or store it somewhere safe. There is no way to change or recover it later — not even if you forget it.")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
+                        .frame(maxWidth: 340)
+                }
+            }
+
+            SecureField(isFirstRun ? "Choose a Master Password" : "Master Password", text: $password)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 320)
                 .onSubmit(attemptUnlock)
@@ -78,7 +91,9 @@ struct UnlockView: View {
                     .frame(maxWidth: 320)
             }
 
-            Text("Vault is locked. Enter your master password or use Touch ID.")
+            Text(isFirstRun
+                 ? "This password protects your vault. Remember it — it cannot be changed or reset later."
+                 : "Vault is locked. Enter your master password or use Touch ID.")
                 .font(.system(size: 11))
                 .foregroundStyle(.secondary)
                 .multilineTextAlignment(.center)
@@ -87,6 +102,9 @@ struct UnlockView: View {
         }
         .padding(48)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onAppear {
+            isFirstRun = (try? vaultSession.loadVaultData()) == nil
+        }
     }
 
     private func attemptUnlock() {
