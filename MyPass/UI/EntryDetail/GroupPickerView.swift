@@ -16,12 +16,6 @@ struct GroupPickerView: View {
     }
 
     private var selectableGroups: [KdbxGroup] {
-        flatten(rootGroup).filter { group in
-            !GroupTreeOperations.isTheRecycleBin(group, recycleBinGroupUUID: recycleBinGroupUUID)
-        }
-    }
-
-    private func flatten(_ group: KdbxGroup) -> [KdbxGroup] {
-        [group] + group.subgroups.flatMap { flatten($0) }
+        GroupTreeOperations.selectableGroups(in: rootGroup, excludingRecycleBin: recycleBinGroupUUID)
     }
 }

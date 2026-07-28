@@ -341,4 +341,26 @@ final class GroupTreeOperationsTests: XCTestCase {
 
         XCTAssertEqual(clamped, root.uuid)
     }
+
+    func testSelectableGroupsExcludesRecycleBinButIncludesEverythingElse() {
+        let recycleBin = KdbxGroup(
+            uuid: UUID(), name: "Recycle Bin", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [], subgroups: []
+        )
+        let child = KdbxGroup(
+            uuid: UUID(), name: "Work", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [], subgroups: []
+        )
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [], subgroups: [child, recycleBin]
+        )
+
+        let selectable = GroupTreeOperations.selectableGroups(in: root, excludingRecycleBin: recycleBin.uuid)
+
+        XCTAssertEqual(Set(selectable.map(\.uuid)), [root.uuid, child.uuid])
+    }
 }

@@ -184,4 +184,12 @@ extension GroupTreeOperations {
     static func restoreEntry(withID entryID: UUID, to destinationGroupID: UUID, in root: KdbxGroup) -> Bool {
         moveEntry(withID: entryID, to: destinationGroupID, in: root)
     }
+
+    static func selectableGroups(in root: KdbxGroup, excludingRecycleBin recycleBinGroupUUID: UUID?) -> [KdbxGroup] {
+        flattenGroups(root).filter { !isTheRecycleBin($0, recycleBinGroupUUID: recycleBinGroupUUID) }
+    }
+
+    private static func flattenGroups(_ group: KdbxGroup) -> [KdbxGroup] {
+        [group] + group.subgroups.flatMap(flattenGroups)
+    }
 }
