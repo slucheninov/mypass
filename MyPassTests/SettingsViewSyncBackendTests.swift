@@ -136,4 +136,46 @@ final class SettingsViewSyncBackendTests: XCTestCase {
             XCTAssertEqual(error as? SFTPConnectionTesterError, .missingConfiguration)
         }
     }
+
+    func testResolveICloudBackendReturnsWorkingBackendForValidFolderBookmark() throws {
+        let bookmark = try iCloudBackend.createFolderBookmark(for: tempDir)
+        let resolved = try XCTUnwrap(SyncBackendResolver.resolveICloudBackend(bookmarkData: bookmark))
+
+        XCTAssertFalse(try resolved.exists())
+        try resolved.write(Data("icloud-resolver-round-trip".utf8))
+        XCTAssertEqual(try resolved.read(), Data("icloud-resolver-round-trip".utf8))
+    }
+
+    func testResolveICloudBackendReturnsNilForMissingBookmark() {
+        XCTAssertNil(SyncBackendResolver.resolveICloudBackend(bookmarkData: nil))
+        XCTAssertNil(SyncBackendResolver.resolveICloudBackend(bookmarkData: Data()))
+    }
+
+    func testResolveICloudBackendReturnsNilForInvalidBookmarkDataWithoutCrashing() {
+        let garbage = Data([0x00, 0x01, 0x02, 0x03, 0xFF, 0xFE])
+        XCTAssertNil(SyncBackendResolver.resolveICloudBackend(bookmarkData: garbage))
+    }
+
+    func testCheckpointKeyIsNamespacedPerBackend() {
+        XCTAssertEqual(SyncBackendResolver.checkpointKey(for: .iCloud), "com.mypass.sync.checkpoint.iCloud Drive")
+        XCTAssertEqual(SyncBackendResolver.checkpointKey(for: .local), "com.mypass.sync.checkpoint.Local File")
+        XCTAssertNotEqual(
+            SyncBackendResolver.checkpointKey(for: .iCloud),
+            SyncBackendResolver.checkpointKey(for: .sftp)
+        )
+    }
+
+    func testClearCheckpointRemovesOnlyThatBackendsCheckpoint() throws {
+        let suiteName = "com.mypass.tests.\(UUID().uuidString)"
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
+        defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
+
+        defaults.set(1.0, forKey: SyncBackendResolver.checkpointKey(for: .iCloud))
+        defaults.set(2.0, forKey: SyncBackendResolver.checkpointKey(for: .local))
+
+        SyncBackendResolver.clearCheckpoint(for: .iCloud, defaults: defaults)
+
+        XCTAssertNil(defaults.object(forKey: SyncBackendResolver.checkpointKey(for: .iCloud)))
+        XCTAssertNotNil(defaults.object(forKey: SyncBackendResolver.checkpointKey(for: .local)))
+    }
 }

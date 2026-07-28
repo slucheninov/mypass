@@ -47,7 +47,9 @@ struct MyPassApp: App {
                     if isStale { localFolderURLForWatcher = nil }
                 }
             case .iCloud:
-                backend = SyncBackendResolver.resolveICloudBackend()
+                backend = SyncBackendResolver.resolveICloudBackend(
+                    bookmarkData: defaults.data(forKey: "syncICloudFolderBookmark")
+                )
             case .sftp:
                 let host = defaults.string(forKey: "syncSFTPHost") ?? ""
                 let port = defaults.object(forKey: "syncSFTPPort") as? Int ?? 22
@@ -71,7 +73,7 @@ struct MyPassApp: App {
 
             guard let backend else { return nil }
             let checkpointStore = UserDefaultsSyncCheckpointStore(
-                key: "com.mypass.sync.checkpoint.\(syncBackendOption.rawValue)"
+                key: SyncBackendResolver.checkpointKey(for: syncBackendOption)
             )
             return SyncEngine(remote: backend, checkpointStore: checkpointStore)
         }()

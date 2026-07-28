@@ -19,12 +19,35 @@ enum SyncBackendResolver {
         return try? LocalFolderBackend(bookmarkData: bookmarkData)
     }
 
-    /// Resolves the iCloud backend. Returns `nil` (never throws) when the
-    /// container isn't available (iCloud Drive disabled/not signed in),
-    /// for the same "never crash app launch on bad/missing external state"
-    /// reason as above — `SettingsView` surfaces the warning inline instead.
-    static func resolveICloudBackend(relativePath: String = "vault.kdbx") -> iCloudBackend? {
-        try? iCloudBackend(relativePath: relativePath)
+    /// Resolves the iCloud backend from the folder bookmark stored under
+    /// `syncICloudFolderBookmark`. Returns `nil` (never throws) when no folder
+    /// has been chosen yet or the bookmark no longer resolves — the same
+    /// "never crash app launch on bad or missing external state" contract as
+    /// the local-folder resolver above. `MyPassApp` then attaches no
+    /// `SyncEngine` at all, which is the correct pre-setup state, and Settings
+    /// surfaces the warning inline.
+    ///
+    /// Note the deliberate absence of a ubiquity-container fallback: without
+    /// `com.apple.developer.icloud-container-identifiers` (a restricted
+    /// entitlement needing a paid Apple Developer account),
+    /// `url(forUbiquityContainerIdentifier:)` always returns nil, so falling
+    /// back would only ever produce a misleading failure.
+    static func resolveICloudBackend(bookmarkData: Data?, relativePath: String = "vault.kdbx") -> iCloudBackend? {
+        guard let bookmarkData, !bookmarkData.isEmpty else { return nil }
+        return try? iCloudBackend(root: .userFolder(bookmark: bookmarkData), relativePath: relativePath)
+    }
+
+    /// UserDefaults key holding `SyncEngine`'s last-known remote modification
+    /// date for `option`. Single definition shared by app launch wiring and by
+    /// the migration flow, which clears it so the first sync after a restart
+    /// performs a full merge instead of trusting a checkpoint taken against a
+    /// different remote.
+    static func checkpointKey(for option: SyncBackendOption) -> String {
+        "com.mypass.sync.checkpoint.\(option.rawValue)"
+    }
+
+    static func clearCheckpoint(for option: SyncBackendOption, defaults: UserDefaults = .standard) {
+        defaults.removeObject(forKey: checkpointKey(for: option))
     }
 
     /// Combines the non-secret SFTP form fields with Keychain-loaded
