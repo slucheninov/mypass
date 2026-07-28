@@ -26,6 +26,8 @@ struct MyPassApp: App {
     init() {
         let defaults = UserDefaults.standard
         let syncBackendOption = SyncBackendOption(rawValue: defaults.string(forKey: "syncBackend") ?? "") ?? .local
+        let autoLockIdleTimeout = AutoLockIdleTimeout(rawValue: defaults.string(forKey: "autoLockIdleTimeout") ?? "") ?? .thirtyMinutes
+        let lockOnDeviceSleepEnabled = defaults.object(forKey: "lockOnDeviceSleepEnabled") as? Bool ?? true
 
         var localFolderURLForWatcher: URL?
         let syncEngine: SyncEngine? = {
@@ -148,11 +150,17 @@ struct MyPassApp: App {
         // derived key under a fixed "master" account. Safe to call even if nothing is stored.
         try? BiometricKeyStore().remove(account: "master")
 
+        // Falls back to `defaultAutoLockTimeout` / `true` only on a true first-ever
+        // launch, i.e. when the "autoLockIdleTimeout" AppStorage key isn't set yet or
+        // fails to parse; `AutoLockIdleTimeout.thirtyMinutes` above already covers that
+        // case for the timeout itself, so this constant is now unused for that purpose
+        // and kept only as a documented fallback value.
         let controller = AutoLockController(
             vaultSession: session,
             clock: RealAutoLockClock(),
             sleepObserver: NSWorkspaceSleepObserver(),
-            timeout: Self.defaultAutoLockTimeout
+            timeout: autoLockIdleTimeout.seconds,
+            lockOnSleepEnabled: lockOnDeviceSleepEnabled
         )
         _autoLockController = StateObject(wrappedValue: controller)
 

@@ -2,6 +2,13 @@ import SwiftUI
 
 struct MenuBarUnlockPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
+    @AppStorage("unlockTouchIDEnabled") private var touchIDEnabled = false
+    @AppStorage("unlockMacPasswordEnabled") private var macPasswordEnabled = false
+    @AppStorage("unlockWithDeviceWindow") private var unlockWithDeviceWindow: UnlockDeviceWindow = .eightHours
+    @AppStorage("requireAccountPasswordWindow") private var requireAccountPasswordWindow: RequirePasswordWindow = .thirtyDays
+    @AppStorage("lastDeviceUnlockTimestamp") private var lastDeviceUnlockTimestamp: Double = 0
+    @AppStorage("lastFullPasswordEntryTimestamp") private var lastFullPasswordEntryTimestamp: Double = 0
+
     @State private var password = ""
     @State private var errorMessage: String?
 
@@ -11,8 +18,16 @@ struct MenuBarUnlockPanelView: View {
         self.biometricKeyStore = biometricKeyStore
     }
 
-    private var hasStoredBiometricKey: Bool {
-        (try? biometricKeyStore.retrieve(account: "master")) != nil
+    private var canShowDeviceUnlockButton: Bool {
+        guard touchIDEnabled || macPasswordEnabled else { return false }
+        guard DeviceUnlockEnrollment.isEnrolled(biometricKeyStore: biometricKeyStore) else { return false }
+        return UnlockWindowPolicy.deviceAuthAllowed(
+            now: Date(),
+            lastDeviceUnlock: lastDeviceUnlockTimestamp > 0 ? Date(timeIntervalSince1970: lastDeviceUnlockTimestamp) : nil,
+            lastFullPasswordEntry: lastFullPasswordEntryTimestamp > 0 ? Date(timeIntervalSince1970: lastFullPasswordEntryTimestamp) : nil,
+            deviceWindow: unlockWithDeviceWindow,
+            accountPasswordWindow: requireAccountPasswordWindow
+        )
     }
 
     var body: some View {
@@ -40,8 +55,8 @@ struct MenuBarUnlockPanelView: View {
             Button("Unlock", action: attemptUnlock)
                 .buttonStyle(.borderedProminent)
 
-            if hasStoredBiometricKey {
-                Button("Touch ID", systemImage: "touchid", action: attemptBiometricUnlock)
+            if canShowDeviceUnlockButton {
+                Button("Unlock with Device", systemImage: "touchid", action: attemptDeviceUnlock)
                     .buttonStyle(.bordered)
             }
 
@@ -59,18 +74,27 @@ struct MenuBarUnlockPanelView: View {
             try vaultSession.unlock(password: password)
             password = ""
             errorMessage = nil
+            let now = Date().timeIntervalSince1970
+            lastDeviceUnlockTimestamp = now
+            lastFullPasswordEntryTimestamp = now
         } catch {
             errorMessage = "Incorrect password or corrupted file."
         }
     }
 
-    private func attemptBiometricUnlock() {
-        // Same contract as UnlockView — retrieve succeeds after Touch ID;
-        // full derived-key unlock wiring follows existing UnlockView path.
-        if (try? biometricKeyStore.retrieve(account: "master")) == nil {
-            errorMessage = "Touch ID is unavailable."
-        } else {
+    private func attemptDeviceUnlock() {
+        guard canShowDeviceUnlockButton else {
+            errorMessage = "Device unlock is unavailable. Enter your master password."
+            return
+        }
+        do {
+            let storedPassword = try DeviceUnlockEnrollment.retrievePassword(biometricKeyStore: biometricKeyStore)
+            try vaultSession.unlock(password: storedPassword)
+            password = ""
             errorMessage = nil
+            lastDeviceUnlockTimestamp = Date().timeIntervalSince1970
+        } catch {
+            errorMessage = "Device unlock is unavailable. Enter your master password."
         }
     }
 }

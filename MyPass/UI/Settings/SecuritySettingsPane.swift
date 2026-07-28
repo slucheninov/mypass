@@ -9,6 +9,8 @@ struct SecuritySettingsPane: View {
     @AppStorage("lockOnDeviceSleepEnabled") private var lockOnDeviceSleepEnabled = true
     @AppStorage("autoLockIdleTimeout") private var autoLockIdleTimeout: AutoLockIdleTimeout = .thirtyMinutes
     @AppStorage("clipboardClearSeconds") private var clipboardClearSeconds: Int = 30
+    @AppStorage("lastDeviceUnlockTimestamp") private var lastDeviceUnlockTimestamp: Double = 0
+    @AppStorage("lastFullPasswordEntryTimestamp") private var lastFullPasswordEntryTimestamp: Double = 0
     @EnvironmentObject private var autoLockController: AutoLockController
     @EnvironmentObject private var vaultSession: VaultSession
 
@@ -16,6 +18,8 @@ struct SecuritySettingsPane: View {
     @State private var confirmPassword = ""
     @State private var showConfirmSheet = false
     @State private var pendingAccessControl: DeviceUnlockAccessControl?
+    @State private var priorTouchIDEnabled = false
+    @State private var priorMacPasswordEnabled = false
 
     let biometricKeyStore: BiometricKeyStoring
 
@@ -27,6 +31,8 @@ struct SecuritySettingsPane: View {
         Binding(
             get: { touchIDEnabled },
             set: { newValue in
+                priorTouchIDEnabled = touchIDEnabled
+                priorMacPasswordEnabled = macPasswordEnabled
                 touchIDEnabled = newValue
                 updateDeviceUnlockEnrollment()
             }
@@ -37,6 +43,8 @@ struct SecuritySettingsPane: View {
         Binding(
             get: { macPasswordEnabled },
             set: { newValue in
+                priorTouchIDEnabled = touchIDEnabled
+                priorMacPasswordEnabled = macPasswordEnabled
                 macPasswordEnabled = newValue
                 updateDeviceUnlockEnrollment()
             }
@@ -97,6 +105,16 @@ struct SecuritySettingsPane: View {
         .onAppear {
             autoLockController.timeout = autoLockIdleTimeout.seconds
             autoLockController.lockOnSleepEnabled = lockOnDeviceSleepEnabled
+            // Reconcile the toggle display against real Keychain state: if the item
+            // disappeared out from under the app (biometry invalidated, Keychain
+            // reset, migrated to a new Mac), don't keep claiming device unlock is on.
+            // `isEnrolled` uses `hasStoredKey`, which is attributes-only and does not
+            // trigger an auth prompt, so this is safe and cheap on every appear.
+            if !DeviceUnlockEnrollment.isEnrolled(biometricKeyStore: biometricKeyStore),
+               touchIDEnabled || macPasswordEnabled {
+                touchIDEnabled = false
+                macPasswordEnabled = false
+            }
         }
         .onChange(of: autoLockIdleTimeout) { _, newValue in
             autoLockController.timeout = newValue.seconds
@@ -154,17 +172,22 @@ struct SecuritySettingsPane: View {
                     biometricKeyStore: biometricKeyStore
                 )
             } catch {
+                // `DeviceUnlockEnrollment.enroll` deletes the old Keychain item before
+                // storing the new one (see `BiometricKeyStore.store`), so if this throws,
+                // the old item may already be gone even though nothing has been restored
+                // yet. Restoring the toggle display to the pre-edit values and NOT calling
+                // `remove()` again is still the safest behavior here — there may be
+                // nothing left to remove.
                 unlockError = "Could not update device unlock settings."
-                touchIDEnabled = false
-                macPasswordEnabled = false
+                touchIDEnabled = priorTouchIDEnabled
+                macPasswordEnabled = priorMacPasswordEnabled
             }
             return
         }
 
         guard vaultSession.currentDatabase != nil else {
             unlockError = "Unlock the vault before enabling device unlock."
-            touchIDEnabled = false
-            macPasswordEnabled = false
+            restoreToggles()
             return
         }
         pendingAccessControl = accessControl
@@ -175,8 +198,20 @@ struct SecuritySettingsPane: View {
         confirmPassword = ""
         showConfirmSheet = false
         pendingAccessControl = nil
-        touchIDEnabled = false
-        macPasswordEnabled = false
+        restoreToggles()
+    }
+
+    /// Restores the toggles to their values from before the in-progress edit, and —
+    /// only when the restored state is genuinely "both off" — ensures the Keychain
+    /// item is actually removed, so the Settings display never claims device unlock is
+    /// off while a working enrollment item is still reachable from UnlockView /
+    /// MenuBarUnlockPanelView.
+    private func restoreToggles() {
+        touchIDEnabled = priorTouchIDEnabled
+        macPasswordEnabled = priorMacPasswordEnabled
+        if !priorTouchIDEnabled && !priorMacPasswordEnabled {
+            try? DeviceUnlockEnrollment.remove(biometricKeyStore: biometricKeyStore)
+        }
     }
 
     private func confirmEnrollment() {
@@ -197,6 +232,13 @@ struct SecuritySettingsPane: View {
                 accessControl: accessControl,
                 biometricKeyStore: biometricKeyStore
             )
+            // The KdbxDatabase.open(data:password:) verification above is a full,
+            // real password-entry event, semantically identical to UnlockView's
+            // manual unlock — record it so a device-unlock button is immediately
+            // available on the next lock instead of being hidden by a stale window.
+            let now = Date().timeIntervalSince1970
+            lastDeviceUnlockTimestamp = now
+            lastFullPasswordEntryTimestamp = now
             confirmPassword = ""
             showConfirmSheet = false
             pendingAccessControl = nil

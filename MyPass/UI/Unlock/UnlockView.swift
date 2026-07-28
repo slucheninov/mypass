@@ -103,6 +103,10 @@ struct UnlockView: View {
     }
 
     private func attemptDeviceUnlock() {
+        guard canShowDeviceUnlockButton else {
+            errorMessage = "Device unlock is unavailable. Enter your master password."
+            return
+        }
         do {
             let storedPassword = try DeviceUnlockEnrollment.retrievePassword(biometricKeyStore: biometricKeyStore)
             try vaultSession.unlock(password: storedPassword)

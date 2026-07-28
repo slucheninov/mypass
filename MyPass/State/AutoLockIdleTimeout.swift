@@ -21,7 +21,11 @@ enum AutoLockIdleTimeout: String, CaseIterable, Identifiable {
     /// Idle duration in seconds before auto-lock fires, or `nil` for "never lock".
     var seconds: TimeInterval? {
         switch self {
-        case .immediately: return 0
+        // A literal 0 would combine with AutoLockController.recordActivity()'s
+        // reschedule-on-activity behavior to lock the vault before the unlock
+        // transition itself finishes. 2s keeps "shortest option" intact without
+        // that race.
+        case .immediately: return 2
         case .oneMinute: return 60
         case .fiveMinutes: return 5 * 60
         case .fifteenMinutes: return 15 * 60
