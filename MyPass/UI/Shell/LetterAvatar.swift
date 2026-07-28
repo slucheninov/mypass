@@ -22,13 +22,14 @@ struct LetterAvatarView: View {
     let title: String
     let size: CGFloat
     let cornerRadius: CGFloat
+    var letterScale: CGFloat = 0.42
 
     var body: some View {
         ZStack {
             RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
                 .fill(LetterAvatar.color(for: title))
             Text(LetterAvatar.letter(from: title))
-                .font(.system(size: size * 0.42, weight: .semibold, design: .rounded))
+                .font(.system(size: size * letterScale, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
         }
         .frame(width: size, height: size)

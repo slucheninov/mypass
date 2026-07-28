@@ -3,6 +3,7 @@ import SwiftUI
 enum UIShellMetrics {
     static let listIconSize: CGFloat = 36
     static let detailHeroIconSize: CGFloat = 72
+    static let detailHeroLetterScale: CGFloat = 0.58
     static let listIconCornerRadius: CGFloat = 8
     static let detailHeroIconCornerRadius: CGFloat = 16
     static let cardCornerRadius: CGFloat = 12
