@@ -1,15 +1,15 @@
-import Security
+import LocalAuthentication
 
 enum DeviceUnlockAccessControl: Equatable {
     case touchID
     case devicePassword
     case touchIDOrDevicePassword
 
-    var secAccessControlFlags: SecAccessControlCreateFlags {
+    var laPolicy: LAPolicy {
         switch self {
-        case .touchID: return .biometryCurrentSet
-        case .devicePassword: return .devicePasscode
-        case .touchIDOrDevicePassword: return .userPresence
+        case .touchID: return .deviceOwnerAuthenticationWithBiometrics
+        case .devicePassword: return .deviceOwnerAuthentication
+        case .touchIDOrDevicePassword: return .deviceOwnerAuthentication
         }
     }
 

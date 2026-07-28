@@ -1,6 +1,5 @@
 import Foundation
 import Security
-import LocalAuthentication
 
 protocol BiometricKeyStoring {
     func store(derivedKey: Data, account: String, accessControl: DeviceUnlockAccessControl) throws
@@ -10,7 +9,6 @@ protocol BiometricKeyStoring {
 }
 
 enum BiometricKeyStoreError: Error {
-    case accessControlCreationFailed
     case keychainWrite(OSStatus)
     case keychainRead(OSStatus)
 }
@@ -19,9 +17,11 @@ final class BiometricKeyStore: BiometricKeyStoring {
     private let service: String
     // App-only access group, declared in MyPass.entitlements. Sandboxed apps with a
     // keychain-access-groups entitlement must set kSecAttrAccessGroup explicitly on
-    // every query — omitting it produces errSecMissingEntitlement (-34018), which is
-    // exactly what happened here before this was added (see git history). Mirrors the
-    // established pattern in ExtensionPairingStore.swift.
+    // every query — omitting it produces errSecMissingEntitlement (-34018).
+    // Mirrors the file-based Keychain pattern in ExtensionPairingStore.swift.
+    // SecAccessControl / kSecUseDataProtectionKeychain require a real Development
+    // Team and fail on ad-hoc ("Sign to Run Locally") builds; device auth is gated
+    // via LAContext at unlock time instead.
     private let accessGroup = "com.mypass.app.biometric"
 
     init(service: String = "com.mypass.app.biometric") {
@@ -29,15 +29,9 @@ final class BiometricKeyStore: BiometricKeyStoring {
     }
 
     func store(derivedKey: Data, account: String, accessControl: DeviceUnlockAccessControl) throws {
-        guard let secAccessControl = SecAccessControlCreateWithFlags(
-            nil,
-            kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-            accessControl.secAccessControlFlags,
-            nil
-        ) else {
-            throw BiometricKeyStoreError.accessControlCreationFailed
-        }
-
+        // accessControl is recorded by FakeBiometricKeyStore and drives LAContext policy
+        // at unlock time; it is not applied to Keychain (SecAccessControl requires a
+        // signed app with a Development Team on macOS).
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
@@ -48,7 +42,7 @@ final class BiometricKeyStore: BiometricKeyStoring {
 
         var attributes = query
         attributes[kSecValueData as String] = derivedKey
-        attributes[kSecAttrAccessControl as String] = secAccessControl
+        attributes[kSecAttrAccessible as String] = kSecAttrAccessibleWhenUnlockedThisDeviceOnly
 
         let status = SecItemAdd(attributes as CFDictionary, nil)
         guard status == errSecSuccess else {
@@ -57,14 +51,12 @@ final class BiometricKeyStore: BiometricKeyStoring {
     }
 
     func retrieve(account: String) throws -> Data? {
-        let context = LAContext()
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrAccessGroup as String: accessGroup,
-            kSecReturnData as String: true,
-            kSecUseAuthenticationContext as String: context
+            kSecReturnData as String: true
         ]
 
         var result: AnyObject?

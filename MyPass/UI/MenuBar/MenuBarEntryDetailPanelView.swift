@@ -79,6 +79,7 @@ struct MenuBarEntryDetailPanelView: View {
     private func openEntryForEdit() {
         navigationState.selectedEntryID = entry.uuid
         navigationState.presentEdit(entryID: entry.uuid)
+        MenuBarPanelDismisser.dismiss()
         NSApp.activate(ignoringOtherApps: true)
         openWindow(id: "main")
     }

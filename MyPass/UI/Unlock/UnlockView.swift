@@ -12,6 +12,7 @@ struct UnlockView: View {
     @State private var password: String = ""
     @State private var errorMessage: String?
     @State private var isFirstRun = false
+    @State private var didAutoPromptDeviceUnlock = false
 
     let biometricKeyStore: BiometricKeyStoring
 
@@ -88,7 +89,9 @@ struct UnlockView: View {
                 .frame(maxWidth: 320)
 
             if canShowDeviceUnlockButton {
-                Button(deviceUnlockButtonLabel, systemImage: deviceUnlockButtonSymbol, action: attemptDeviceUnlock)
+                Button(deviceUnlockButtonLabel, systemImage: deviceUnlockButtonSymbol) {
+                    attemptDeviceUnlock()
+                }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: 320)
             }
@@ -106,6 +109,10 @@ struct UnlockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             isFirstRun = (try? vaultSession.loadVaultData()) == nil
+            if !isFirstRun, canShowDeviceUnlockButton, !didAutoPromptDeviceUnlock {
+                didAutoPromptDeviceUnlock = true
+                attemptDeviceUnlock(silentCancel: true)
+            }
         }
     }
 
@@ -122,19 +129,29 @@ struct UnlockView: View {
         }
     }
 
-    private func attemptDeviceUnlock() {
+    private func attemptDeviceUnlock(silentCancel _: Bool = false) {
         guard canShowDeviceUnlockButton else {
             errorMessage = "Device unlock is unavailable. Enter your master password."
             return
         }
-        do {
-            let storedPassword = try DeviceUnlockEnrollment.retrievePassword(biometricKeyStore: biometricKeyStore)
-            try vaultSession.unlock(password: storedPassword)
-            password = ""
-            errorMessage = nil
-            lastDeviceUnlockTimestamp = Date().timeIntervalSince1970
-        } catch {
+        guard let accessControl = DeviceUnlockAccessControl.forToggles(
+            touchIDEnabled: touchIDEnabled,
+            macPasswordEnabled: macPasswordEnabled
+        ) else {
             errorMessage = "Device unlock is unavailable. Enter your master password."
+            return
+        }
+        DeviceUnlockAuthenticator.authenticate(accessControl: accessControl) { success in
+            guard success else { return }
+            do {
+                let storedPassword = try DeviceUnlockEnrollment.retrievePassword(biometricKeyStore: biometricKeyStore)
+                try vaultSession.unlock(password: storedPassword)
+                password = ""
+                errorMessage = nil
+                lastDeviceUnlockTimestamp = Date().timeIntervalSince1970
+            } catch {
+                errorMessage = "Device unlock is unavailable. Enter your master password."
+            }
         }
     }
 }

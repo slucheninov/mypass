@@ -1,5 +1,5 @@
+import LocalAuthentication
 import XCTest
-import Security
 @testable import MyPass
 
 final class DeviceUnlockAccessControlTests: XCTestCase {
@@ -21,15 +21,18 @@ final class DeviceUnlockAccessControlTests: XCTestCase {
         )
     }
 
-    func testEachAccessControlProducesAValidSecAccessControl() {
-        for accessControl in [DeviceUnlockAccessControl.touchID, .devicePassword, .touchIDOrDevicePassword] {
-            let secAccessControl = SecAccessControlCreateWithFlags(
-                nil,
-                kSecAttrAccessibleWhenUnlockedThisDeviceOnly,
-                accessControl.secAccessControlFlags,
-                nil
-            )
-            XCTAssertNotNil(secAccessControl, "Expected a valid SecAccessControl for \(accessControl)")
-        }
+    func testEachAccessControlMapsToExpectedLAPolicy() {
+        XCTAssertEqual(
+            DeviceUnlockAccessControl.touchID.laPolicy,
+            .deviceOwnerAuthenticationWithBiometrics
+        )
+        XCTAssertEqual(
+            DeviceUnlockAccessControl.devicePassword.laPolicy,
+            .deviceOwnerAuthentication
+        )
+        XCTAssertEqual(
+            DeviceUnlockAccessControl.touchIDOrDevicePassword.laPolicy,
+            .deviceOwnerAuthentication
+        )
     }
 }

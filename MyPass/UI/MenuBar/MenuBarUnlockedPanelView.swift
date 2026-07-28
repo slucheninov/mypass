@@ -42,7 +42,10 @@ struct MenuBarUnlockedPanelView: View {
                 }
             }
 
-            menuRow("Open MyPass") { activateMainWindow() }
+            menuRow("Open MyPass") {
+                MenuBarPanelDismisser.dismiss()
+                activateMainWindow()
+            }
 
             HStack {
                 Text("Open Quick Access")
@@ -66,6 +69,7 @@ struct MenuBarUnlockedPanelView: View {
             }())
 
             menuRow("Settings…") {
+                MenuBarPanelDismisser.dismiss()
                 NSApp.activate(ignoringOtherApps: true)
                 openSettings()
             }
