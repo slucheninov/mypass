@@ -49,8 +49,6 @@ struct EntryDetailView: View {
         case extra(String)
     }
 
-    private static let standardFieldKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp"]
-
     private var currentEntry: KdbxEntry? {
         guard let database = vaultSession.currentDatabase, let id = navigationState.selectedEntryID else { return nil }
         return EntrySearch.allEntries(in: database.rootGroup).first { $0.uuid == id }
@@ -73,10 +71,6 @@ struct EntryDetailView: View {
         return location.group.name
     }
 
-    private func additionalFields(for entry: KdbxEntry) -> [KdbxField] {
-        entry.fields.filter { !Self.standardFieldKeys.contains($0.key) }
-    }
-
     var body: some View {
         if let entry = currentEntry {
             ScrollView {
@@ -85,7 +79,8 @@ struct EntryDetailView: View {
                         LetterAvatarView(
                             title: entry.title.isEmpty ? "(untitled)" : entry.title,
                             size: UIShellMetrics.detailHeroIconSize,
-                            cornerRadius: UIShellMetrics.detailHeroIconCornerRadius
+                            cornerRadius: UIShellMetrics.detailHeroIconCornerRadius,
+                            letterScale: UIShellMetrics.detailHeroLetterScale
                         )
                         Text(entry.title.isEmpty ? "(untitled)" : entry.title)
                             .font(.system(size: 22, weight: .bold))
@@ -105,19 +100,19 @@ struct EntryDetailView: View {
 
                         passwordRow(for: entry)
 
-                        if !entry.url.isEmpty {
+                        if let secret = entry.totpSecretBase32 {
                             DetailFieldDivider()
-                            DetailFieldRow(label: "Website", value: entry.url, isLink: true)
+                            totpRow(secret: secret)
+                        }
+
+                        if !entry.urls.isEmpty {
+                            DetailFieldDivider()
+                            websiteRow(for: entry)
                         }
 
                         if let groupName = groupName(for: entry) {
                             DetailFieldDivider()
                             DetailFieldRow(label: "Group", value: groupName)
-                        }
-
-                        ForEach(additionalFields(for: entry), id: \.key) { field in
-                            DetailFieldDivider()
-                            extraFieldRow(field)
                         }
 
                         DetailFieldDivider()
@@ -132,9 +127,9 @@ struct EntryDetailView: View {
                             DetailFieldRow(label: "Notes", value: entry.notes)
                         }
 
-                        if let secret = entry.totpSecretBase32 {
+                        ForEach(entry.additionalFields, id: \.key) { field in
                             DetailFieldDivider()
-                            totpRow(secret: secret)
+                            extraFieldRow(field)
                         }
                     }
 
@@ -142,10 +137,8 @@ struct EntryDetailView: View {
                         .buttonStyle(.plain)
                         .foregroundStyle(Color.accentColor)
 
-                    SecurityWarningStubView()
-
-                    HStack(spacing: 16) {
-                        if isInRecycleBin(entry) {
+                    if isInRecycleBin(entry) {
+                        HStack {
                             Button("Restore") {
                                 vaultSession.mutate { database in
                                     // The entry's original source group isn't tracked once soft-deleted,
@@ -154,16 +147,9 @@ struct EntryDetailView: View {
                                 }
                                 navigationState.selectedEntryID = nil
                             }
-                        } else {
-                            Button("Delete", role: .destructive) {
-                                vaultSession.mutate { database in
-                                    GroupTreeOperations.softDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects, recycleBinGroupUUID: &database.recycleBinGroupUUID)
-                                }
-                                navigationState.selectedEntryID = nil
-                            }
                         }
+                        .padding(.bottom, 24)
                     }
-                    .padding(.bottom, 24)
                 }
                 .frame(maxWidth: .infinity)
                 .padding(.horizontal, 24)
@@ -272,6 +258,23 @@ struct EntryDetailView: View {
         .padding(.vertical, 10)
     }
 
+    private func websiteRow(for entry: KdbxEntry) -> some View {
+        let domain = EntryURLDisplay.domain(from: entry.url) ?? entry.url
+
+        return HStack(alignment: .firstTextBaseline, spacing: 12) {
+            Text("Website")
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            Text(domain)
+                .foregroundStyle(Color.accentColor)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
     private func extraFieldRow(_ field: KdbxField) -> some View {
         let fieldCase = CopiedField.extra(field.key)
         let isRevealed = revealedExtraFields.contains(field.key)
@@ -318,7 +321,7 @@ struct EntryDetailView: View {
     }
 
     private func totpRow(secret: String) -> some View {
-        let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
+        let code = currentTOTPCode(secret: secret)
         let displayValue = copiedField == .totp ? "Copied" : code
 
         return HStack(alignment: .center, spacing: 12) {
@@ -333,7 +336,7 @@ struct EntryDetailView: View {
                     Text(displayValue)
                         .font(.system(.body, design: .monospaced))
                     if copiedField != .totp {
-                        TOTPRingChrome()
+                        TOTPCountdownRingView(period: 30, now: now)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -345,6 +348,10 @@ struct EntryDetailView: View {
         .font(.body)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
+    }
+
+    private func currentTOTPCode(secret: String) -> String {
+        TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
     }
 
     private func flashCopied(_ field: CopiedField) {
@@ -406,22 +413,15 @@ private struct DetailFieldDivider: View {
 private struct DetailFieldRow: View {
     let label: String
     let value: String
-    var isLink: Bool = false
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(label)
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            if isLink, let url = URL(string: value), !value.isEmpty {
-                Link(value, destination: url)
-                    .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            } else {
-                Text(value)
-                    .multilineTextAlignment(.trailing)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
-            }
+            Text(value)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .font(.body)
         .padding(.horizontal, 16)
@@ -449,33 +449,3 @@ private struct DetailFieldsCard<Content: View>: View {
     }
 }
 
-private struct TOTPRingChrome: View {
-    var body: some View {
-        Circle()
-            .stroke(Color.secondary.opacity(0.35), lineWidth: 2)
-            .frame(width: 22, height: 22)
-            .accessibilityHidden(true)
-    }
-}
-
-private struct SecurityWarningStubView: View {
-    var body: some View {
-        Text("Security warning (coming later)")
-            .font(.body.italic())
-            .foregroundStyle(.secondary)
-            .multilineTextAlignment(.center)
-            .padding(.vertical, 20)
-            .padding(.horizontal, 16)
-            .frame(maxWidth: UIShellMetrics.cardMaxWidth)
-            .background(
-                RoundedRectangle(cornerRadius: UIShellMetrics.cardCornerRadius, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor).opacity(0.6))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: UIShellMetrics.cardCornerRadius, style: .continuous)
-                    .stroke(style: StrokeStyle(lineWidth: 1, dash: [6, 4]))
-                    .foregroundStyle(Color.secondary.opacity(0.5))
-            )
-            .accessibilityLabel(Text("Security warning placeholder"))
-    }
-}
