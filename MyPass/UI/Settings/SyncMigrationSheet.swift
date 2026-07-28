@@ -314,7 +314,7 @@ struct SyncMigrationSheet: View {
             case .serializedVaultInvalid:
                 return "MyPass could not prepare the vault for upload. Nothing was written to the folder."
             case .localWriteFailed(let underlying):
-                return "The copy in iCloud Drive is now ahead of the vault on this Mac: writing the result to disk failed (\(underlying)). Run setup again and choose \"Use the vault from the folder\" to catch up."
+                return "The copy in iCloud Drive is now ahead of the vault on this Mac: writing the result to disk failed (\(underlying)). Run setup again and choose \u{201C}Use the vault from the folder\u{201D} to catch up."
             }
         }
         return "\(error)"
