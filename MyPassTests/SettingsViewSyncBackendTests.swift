@@ -165,6 +165,13 @@ final class SettingsViewSyncBackendTests: XCTestCase {
         )
     }
 
+    func testICloudFolderBookmarkKeyIsPinned() {
+        // Pins the literal value: the Sync pane, the migration sheet, and app
+        // launch wiring all read/write this key, so an accidental rename here
+        // would silently reset every user's configured iCloud folder.
+        XCTAssertEqual(SyncBackendResolver.iCloudFolderBookmarkKey, "syncICloudFolderBookmark")
+    }
+
     func testClearCheckpointRemovesOnlyThatBackendsCheckpoint() throws {
         let suiteName = "com.mypass.tests.\(UUID().uuidString)"
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))

@@ -6,6 +6,12 @@ import SyncKit
 /// it's unit-testable without instantiating SwiftUI views or a full app
 /// (`MyPassTests/SettingsViewSyncBackendTests.swift`).
 enum SyncBackendResolver {
+    /// UserDefaults key holding the security-scoped bookmark for the
+    /// user-picked iCloud Drive folder. Single definition shared by the Sync
+    /// pane, the migration sheet, and app launch wiring, so a typo can't
+    /// silently split configuration across three different keys.
+    static let iCloudFolderBookmarkKey = "syncICloudFolderBookmark"
+
     /// Resolves the Local-folder backend from previously-persisted
     /// security-scoped bookmark data (Task 2's `LocalFolderBackend`).
     /// Returns `nil` (never throws) when no folder has been chosen yet — a

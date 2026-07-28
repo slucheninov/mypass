@@ -5,7 +5,7 @@ import SyncKit
 struct SyncSettingsPane: View {
     @AppStorage("syncBackend") private var syncBackendRawValue: String = SyncBackendOption.local.rawValue
     @AppStorage("syncLocalFolderBookmark") private var syncLocalFolderBookmarkData: Data?
-    @AppStorage("syncICloudFolderBookmark") private var syncICloudFolderBookmarkData: Data?
+    @AppStorage(SyncBackendResolver.iCloudFolderBookmarkKey) private var syncICloudFolderBookmarkData: Data?
 
     // SFTP non-secret fields — host/port/username/remotePath/paths only.
     // The private key PEM and its passphrase NEVER go through @AppStorage/

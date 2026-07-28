@@ -70,4 +70,59 @@ final class SyncMigrationSheetMessageTests: XCTestCase {
         let probe = VaultMigrationTargetProbe(exists: true, modificationDate: nil, byteCount: nil)
         XCTAssertEqual(SyncMigrationSheet.describe(probe), "")
     }
+
+    // MARK: - Download timeout unwrapping (wrapped by VaultMigrationService)
+
+    func testRemoteWriteFailureFromDownloadTimeoutSaysStillDownloading() {
+        let message = SyncMigrationSheet.message(
+            for: VaultMigrationError.remoteWriteFailed(underlying: iCloudBackendError.downloadTimedOut)
+        )
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("still downloading"), message)
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("could not write"), message)
+    }
+
+    func testRemoteUnreadableFromDownloadTimeoutSaysStillDownloading() {
+        let message = SyncMigrationSheet.message(
+            for: VaultMigrationError.remoteUnreadable(underlying: iCloudBackendError.downloadTimedOut)
+        )
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("still downloading"), message)
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("could not read"), message)
+    }
+
+    func testRemoteWriteFailureFromNonBackendErrorKeepsGenericMessage() {
+        struct Boom: Error {}
+        let message = SyncMigrationSheet.message(for: VaultMigrationError.remoteWriteFailed(underlying: Boom()))
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("local vault was not changed"), message)
+    }
+
+    // MARK: - shouldClearPersistedBookmark
+
+    func testShouldClearPersistedBookmarkWhenFailingBookmarkMatchesPersisted() {
+        let bookmark = Data("same-folder".utf8)
+        XCTAssertTrue(SyncMigrationSheet.shouldClearPersistedBookmark(
+            failingBookmark: bookmark,
+            persistedBookmark: bookmark
+        ))
+    }
+
+    func testShouldNotClearPersistedBookmarkWhenFailingBookmarkDiffersFromPersisted() {
+        XCTAssertFalse(SyncMigrationSheet.shouldClearPersistedBookmark(
+            failingBookmark: Data("candidate-folder".utf8),
+            persistedBookmark: Data("working-folder".utf8)
+        ))
+    }
+
+    func testShouldNotClearPersistedBookmarkWhenNoPersistedBookmarkExists() {
+        XCTAssertFalse(SyncMigrationSheet.shouldClearPersistedBookmark(
+            failingBookmark: Data("candidate-folder".utf8),
+            persistedBookmark: nil
+        ))
+    }
+
+    func testShouldNotClearPersistedBookmarkWhenFailingBookmarkIsNil() {
+        XCTAssertFalse(SyncMigrationSheet.shouldClearPersistedBookmark(
+            failingBookmark: nil,
+            persistedBookmark: Data("working-folder".utf8)
+        ))
+    }
 }

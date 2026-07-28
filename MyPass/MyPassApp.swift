@@ -48,7 +48,7 @@ struct MyPassApp: App {
                 }
             case .iCloud:
                 backend = SyncBackendResolver.resolveICloudBackend(
-                    bookmarkData: defaults.data(forKey: "syncICloudFolderBookmark")
+                    bookmarkData: defaults.data(forKey: SyncBackendResolver.iCloudFolderBookmarkKey)
                 )
             case .sftp:
                 let host = defaults.string(forKey: "syncSFTPHost") ?? ""

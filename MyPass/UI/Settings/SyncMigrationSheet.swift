@@ -10,7 +10,7 @@ import SyncKit
 struct SyncMigrationSheet: View {
     @EnvironmentObject private var vaultSession: VaultSession
     @Environment(\.dismiss) private var dismiss
-    @AppStorage("syncICloudFolderBookmark") private var syncICloudFolderBookmarkData: Data?
+    @AppStorage(SyncBackendResolver.iCloudFolderBookmarkKey) private var syncICloudFolderBookmarkData: Data?
 
     @State private var step: Step = .chooseFolder
     @State private var chosenFolderURL: URL?
@@ -232,7 +232,16 @@ struct SyncMigrationSheet: View {
     private func handle(_ error: Error) {
         if let backendError = error as? iCloudBackendError,
            backendError == .folderBookmarkUnresolvable || backendError == .folderUnavailable {
-            syncICloudFolderBookmarkData = nil
+            // The candidate the user just tried didn't work, so forget it —
+            // but only wipe the persisted, already-configured bookmark when
+            // the failure actually invalidates it. A failing candidate must
+            // never take down a different, working configuration.
+            if Self.shouldClearPersistedBookmark(
+                failingBookmark: chosenFolderBookmark,
+                persistedBookmark: syncICloudFolderBookmarkData
+            ) {
+                syncICloudFolderBookmarkData = nil
+            }
             chosenFolderBookmark = nil
             chosenFolderURL = nil
         }
@@ -241,6 +250,14 @@ struct SyncMigrationSheet: View {
     }
 
     // MARK: - Copy
+
+    /// `true` when the bookmark that just failed to resolve is the one persisted
+    /// as the app's configured iCloud folder — i.e. the failure invalidates the
+    /// active configuration, not just a candidate folder the user was trying out.
+    static func shouldClearPersistedBookmark(failingBookmark: Data?, persistedBookmark: Data?) -> Bool {
+        guard let failingBookmark, let persistedBookmark, !failingBookmark.isEmpty else { return false }
+        return failingBookmark == persistedBookmark
+    }
 
     static func describe(_ probe: VaultMigrationTargetProbe) -> String {
         var parts: [String] = []
@@ -290,14 +307,7 @@ struct SyncMigrationSheet: View {
 
     static func message(for error: Error) -> String {
         if let backendError = error as? iCloudBackendError {
-            switch backendError {
-            case .folderBookmarkUnresolvable, .folderUnavailable:
-                return "That folder is no longer reachable. Choose the iCloud Drive folder again."
-            case .downloadTimedOut:
-                return "The vault in that folder is still downloading from iCloud. Wait until it finishes, then try again."
-            case .containerUnavailable:
-                return "MyPass syncs through a folder in iCloud Drive, not a private iCloud container. Choose a folder to continue."
-            }
+            return message(forICloudBackendError: backendError)
         }
         if let migrationError = error as? VaultMigrationError {
             switch migrationError {
@@ -308,8 +318,18 @@ struct SyncMigrationSheet: View {
             case .remotePasswordMismatch:
                 return "The vault in that folder uses a different password. Nothing was changed on either side."
             case .remoteUnreadable(let underlying):
+                // `VaultMigrationService` wraps every thrown error uniformly,
+                // including a real iCloud download timeout. Unwrap it so the
+                // dedicated "still downloading" copy below is reachable and
+                // the message matches what actually failed.
+                if let backendError = underlying as? iCloudBackendError {
+                    return message(forICloudBackendError: backendError)
+                }
                 return "MyPass could not read that folder: \(underlying)"
             case .remoteWriteFailed(let underlying):
+                if let backendError = underlying as? iCloudBackendError {
+                    return message(forICloudBackendError: backendError)
+                }
                 return "MyPass could not write to that folder: \(underlying). Your local vault was not changed."
             case .serializedVaultInvalid:
                 return "MyPass could not prepare the vault for upload. Nothing was written to the folder."
@@ -318,5 +338,16 @@ struct SyncMigrationSheet: View {
             }
         }
         return "\(error)"
+    }
+
+    private static func message(forICloudBackendError backendError: iCloudBackendError) -> String {
+        switch backendError {
+        case .folderBookmarkUnresolvable, .folderUnavailable:
+            return "That folder is no longer reachable. Choose the iCloud Drive folder again."
+        case .downloadTimedOut:
+            return "The vault in that folder is still downloading from iCloud. Wait until it finishes, then try again."
+        case .containerUnavailable:
+            return "MyPass syncs through a folder in iCloud Drive, not a private iCloud container. Choose a folder to continue."
+        }
     }
 }
