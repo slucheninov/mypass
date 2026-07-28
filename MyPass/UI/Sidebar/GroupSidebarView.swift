@@ -118,6 +118,10 @@ struct GroupSidebarView: View {
                     .foregroundStyle(.secondary)
             }
             Text(group.name)
+            Spacer(minLength: 0)
+            Text("\(group.entries.count)")
+                .font(.caption)
+                .foregroundStyle(.secondary)
         }
         .tag(group.uuid)
         .onDrop(of: [.text], isTargeted: nil) { providers in
