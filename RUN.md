@@ -92,9 +92,23 @@
 
 Повний чеклист і деталі налаштування: [план Фази 4](docs/superpowers/plans/2026-07-25-mypass-phase4-chrome-extension.md).
 
+## Синхронізація через iCloud Drive
+
+1. Розблокуйте сховище (потрібен пароль сховища, щоб прочитати сховище, яке вже може лежати в теці).
+2. Відкрийте **Settings → Sync**, виберіть бекенд **iCloud Drive** і натисніть **Set Up iCloud Sync…**.
+3. Виберіть теку в iCloud Drive (панель відкривається на `~/Library/Mobile Documents/com~apple~CloudDocs`). Можна створити нову теку, наприклад `MyPass`.
+4. Якщо тека порожня — MyPass завантажить туди сховище з цього Mac. Якщо в теці вже є `vault.kdbx`, виберіть один з варіантів:
+   - **Merge** (за замовчуванням) — залишає записи з обох боків;
+   - **Use the vault from the folder** — замінює локальне сховище тим, що в теці (попереднє локальне потрапляє в `backups/`);
+   - **Replace the vault in the folder** — замінює сховище в теці локальним.
+5. **Перезапустіть MyPass** — бекенд синхронізації створюється під час запуску застосунку.
+6. Після перезапуску в вибраній теці має з'явитися `vault.kdbx`, а кнопка **Sync Now** у Settings → Sync запускає синхронізацію вручну.
+
+Якщо тека стала недоступною (перейменована, видалена, знята з iCloud Drive), MyPass очистить збережену закладку і попросить вибрати теку знову.
+
 ## Обмеження
 
 - **`MyPass.xcodeproj` у `.gitignore`** — перед збіркою завжди потрібен `./scripts/generate.sh` (викликається автоматично з `build*.sh` і `test.sh`).
 - **Keychain sharing** — у `MyPass` і `ChromeHost` має бути однаковий Team ID під час підпису, інакше host не зчитає токен/порт з Keychain.
 - **Шлях ChromeHost** — скрипт `scripts/setup-chrome-extension.sh` копіює зібраний бінарник у `~/Library/Application Support/MyPass/ChromeHost`; після перезбірки ChromeHost перезапустіть скрипт, щоб оновити копію.
-- **iCloud entitlements** — у репозиторії можуть бути неповними; інтеграційні iCloud-тести потребують налаштованого середовища розробника.
+- **iCloud** — синхронізація працює через **теку в iCloud Drive** і не потребує платного акаунта Apple Developer. Шлях через приватний iCloud-контейнер (ubiquity container) вимагає платного акаунта Apple Developer і в цій збірці не задіяний. Інтеграційні iCloud-тести (`MYPASS_ICLOUD_INTEGRATION_TESTS=1`) потребують Mac з увімкненим iCloud Drive.
