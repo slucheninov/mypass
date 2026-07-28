@@ -63,4 +63,48 @@ final class KdbxEntryConvenienceTests: XCTestCase {
         entry.totpSecretBase32 = nil
         XCTAssertNil(entry.totpSecretBase32)
     }
+
+    func testUrlsGetterMergesPrimaryAndExtrasDeduped() {
+        var entry = makeEmptyEntry()
+        entry.url = "https://primary.example.com"
+        entry.stringArrays = [KdbxStringArray(key: KdbxEntry.additionalURLsStringArrayKey, values: ["https://extra.example.com", "https://primary.example.com"])]
+
+        XCTAssertEqual(entry.urls, ["https://primary.example.com", "https://extra.example.com"])
+    }
+
+    func testUrlsGetterWithNoPrimaryUsesFirstExtraAsFirstResult() {
+        var entry = makeEmptyEntry()
+        entry.stringArrays = [KdbxStringArray(key: KdbxEntry.additionalURLsStringArrayKey, values: ["https://only-extra.example.com"])]
+
+        XCTAssertEqual(entry.urls, ["https://only-extra.example.com"])
+    }
+
+    func testUrlsSetterSplitsPrimaryAndExtras() {
+        var entry = makeEmptyEntry()
+        entry.urls = ["https://primary.example.com", "https://extra1.example.com", "https://extra2.example.com"]
+
+        XCTAssertEqual(entry.url, "https://primary.example.com")
+        XCTAssertEqual(entry.stringArrays.first?.key, KdbxEntry.additionalURLsStringArrayKey)
+        XCTAssertEqual(entry.stringArrays.first?.values, ["https://extra1.example.com", "https://extra2.example.com"])
+    }
+
+    func testUrlsSetterWithEmptyArrayClearsBothPrimaryAndStringArray() {
+        var entry = makeEmptyEntry()
+        entry.urls = ["https://primary.example.com", "https://extra.example.com"]
+
+        entry.urls = []
+
+        XCTAssertEqual(entry.url, "")
+        XCTAssertTrue(entry.stringArrays.isEmpty)
+    }
+
+    func testAdditionalFieldsExcludesStandardKeys() {
+        var entry = makeEmptyEntry()
+        entry.fields.append(KdbxField(key: "Custom Field", value: "custom value", isProtected: false))
+
+        let keys = Set(entry.additionalFields.map(\.key))
+        XCTAssertEqual(keys, ["Custom Field"])
+        XCTAssertFalse(keys.contains("Title"))
+        XCTAssertFalse(keys.contains("URL"))
+    }
 }

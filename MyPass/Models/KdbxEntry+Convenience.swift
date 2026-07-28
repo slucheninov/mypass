@@ -52,3 +52,40 @@ extension KdbxEntry {
         }
     }
 }
+
+public extension KdbxEntry {
+    static let standardFieldKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp"]
+    static let additionalURLsStringArrayKey = "KP2A_URL"
+
+    /// Primary URL (if non-empty) followed by `KP2A_URL` StringArray extras, deduplicated,
+    /// order preserved. Setting the first element becomes the primary `URL` field; the
+    /// remainder is stored as the `KP2A_URL` StringArray. An empty array clears both.
+    var urls: [String] {
+        get {
+            var result: [String] = []
+            if !url.isEmpty {
+                result.append(url)
+            }
+            if let array = stringArrays.first(where: { $0.key == Self.additionalURLsStringArrayKey }) {
+                for value in array.values where !result.contains(value) {
+                    result.append(value)
+                }
+            }
+            return result
+        }
+        set {
+            var remaining = newValue
+            url = remaining.isEmpty ? "" : remaining.removeFirst()
+            stringArrays.removeAll { $0.key == Self.additionalURLsStringArrayKey }
+            if !remaining.isEmpty {
+                stringArrays.append(KdbxStringArray(key: Self.additionalURLsStringArrayKey, values: remaining))
+            }
+        }
+    }
+
+    /// Non-standard fields to render as browse/edit custom-field rows. `KP2A_URL` is never
+    /// present here — it lives in `stringArrays`, a separate collection from `fields`.
+    var additionalFields: [KdbxField] {
+        fields.filter { !Self.standardFieldKeys.contains($0.key) }
+    }
+}
