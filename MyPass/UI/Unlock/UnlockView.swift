@@ -2,6 +2,13 @@ import SwiftUI
 
 struct UnlockView: View {
     @EnvironmentObject var vaultSession: VaultSession
+    @AppStorage("unlockTouchIDEnabled") private var touchIDEnabled = false
+    @AppStorage("unlockMacPasswordEnabled") private var macPasswordEnabled = false
+    @AppStorage("unlockWithDeviceWindow") private var unlockWithDeviceWindow: UnlockDeviceWindow = .eightHours
+    @AppStorage("requireAccountPasswordWindow") private var requireAccountPasswordWindow: RequirePasswordWindow = .thirtyDays
+    @AppStorage("lastDeviceUnlockTimestamp") private var lastDeviceUnlockTimestamp: Double = 0
+    @AppStorage("lastFullPasswordEntryTimestamp") private var lastFullPasswordEntryTimestamp: Double = 0
+
     @State private var password: String = ""
     @State private var errorMessage: String?
 
@@ -11,8 +18,29 @@ struct UnlockView: View {
         self.biometricKeyStore = biometricKeyStore
     }
 
-    private var hasStoredBiometricKey: Bool {
-        (try? biometricKeyStore.retrieve(account: "master")) != nil
+    private var deviceUnlockButtonLabel: String {
+        switch (touchIDEnabled, macPasswordEnabled) {
+        case (true, true): return "Unlock with Touch ID or Password"
+        case (true, false): return "Touch ID"
+        case (false, true): return "Unlock with Mac Password"
+        case (false, false): return ""
+        }
+    }
+
+    private var deviceUnlockButtonSymbol: String {
+        macPasswordEnabled && !touchIDEnabled ? "key.fill" : "touchid"
+    }
+
+    private var canShowDeviceUnlockButton: Bool {
+        guard touchIDEnabled || macPasswordEnabled else { return false }
+        guard DeviceUnlockEnrollment.isEnrolled(biometricKeyStore: biometricKeyStore) else { return false }
+        return UnlockWindowPolicy.deviceAuthAllowed(
+            now: Date(),
+            lastDeviceUnlock: lastDeviceUnlockTimestamp > 0 ? Date(timeIntervalSince1970: lastDeviceUnlockTimestamp) : nil,
+            lastFullPasswordEntry: lastFullPasswordEntryTimestamp > 0 ? Date(timeIntervalSince1970: lastFullPasswordEntryTimestamp) : nil,
+            deviceWindow: unlockWithDeviceWindow,
+            accountPasswordWindow: requireAccountPasswordWindow
+        )
     }
 
     var body: some View {
@@ -44,8 +72,8 @@ struct UnlockView: View {
                 .buttonStyle(.borderedProminent)
                 .frame(maxWidth: 320)
 
-            if hasStoredBiometricKey {
-                Button("Touch ID", systemImage: "touchid", action: attemptBiometricUnlock)
+            if canShowDeviceUnlockButton {
+                Button(deviceUnlockButtonLabel, systemImage: deviceUnlockButtonSymbol, action: attemptDeviceUnlock)
                     .buttonStyle(.bordered)
                     .frame(maxWidth: 320)
             }
@@ -66,18 +94,23 @@ struct UnlockView: View {
             try vaultSession.unlock(password: password)
             password = ""
             errorMessage = nil
+            let now = Date().timeIntervalSince1970
+            lastDeviceUnlockTimestamp = now
+            lastFullPasswordEntryTimestamp = now
         } catch {
             errorMessage = "Incorrect password or corrupted file."
         }
     }
 
-    private func attemptBiometricUnlock() {
-        // Placeholder wiring for this task: retrieving the stored derived key succeeds
-        // only after Touch ID biometric confirmation (enforced by SecAccessControl on the
-        // Keychain item itself, not by this view). Mapping the derived key back into an
-        // unlock call is deferred — this button demonstrates the store/retrieve contract end to end.
-        errorMessage = (try? biometricKeyStore.retrieve(account: "master")) == nil
-            ? "Touch ID is unavailable."
-            : nil
+    private func attemptDeviceUnlock() {
+        do {
+            let storedPassword = try DeviceUnlockEnrollment.retrievePassword(biometricKeyStore: biometricKeyStore)
+            try vaultSession.unlock(password: storedPassword)
+            password = ""
+            errorMessage = nil
+            lastDeviceUnlockTimestamp = Date().timeIntervalSince1970
+        } catch {
+            errorMessage = "Device unlock is unavailable. Enter your master password."
+        }
     }
 }
