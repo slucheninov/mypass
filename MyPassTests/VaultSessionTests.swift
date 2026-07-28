@@ -465,82 +465,99 @@ final class VaultSessionTests: XCTestCase {
     }
 
     func testPerformMigrationDoesNotReLockIfLockedDuringFlight() throws {
+        // Create a remote database that adoptRemote will read
+        let remoteEntry = makeMigrationEntry(title: "From Remote")
+        let remoteRoot = KdbxGroup(
+            uuid: UUID(),
+            name: "MyPass",
+            iconID: 0,
+            creationTime: Date(),
+            lastModificationTime: Date(),
+            locationChanged: Date(),
+            entries: [remoteEntry],
+            subgroups: []
+        )
+        let remoteDatabase = KdbxDatabase(rootGroup: remoteRoot, deletedObjects: [])
+        let remoteData = try remoteDatabase.save(password: "correct-horse", cipher: .aes256, compression: .gzip)
+
         let session = VaultSession(fileStore: fileStore)
         try session.unlock(password: "correct-horse")
         session.mutate { database in
             database.rootGroup.entries.append(self.makeMigrationEntry(title: "Local Only"))
         }
 
-        // Use a blocking backend that can be held up until we call lock()
-        let blockingBackend = BlockingStorageBackend()
+        // Use a blocking backend that blocks on read() with valid KDBX data
+        let blockingBackend = BlockingStorageBackend(data: remoteData)
 
         let expectation = expectation(description: "completion")
-        session.performMigration(to: blockingBackend, strategy: .seedRemote) { result in
+        session.performMigration(to: blockingBackend, strategy: .adoptRemote) { result in
             if case .failure(let error) = result {
                 XCTFail("expected success, got \(error)")
             }
             expectation.fulfill()
         }
 
-        // Wait for the backend write to block
-        blockingBackend.waitForBlockedWrite()
+        // Wait until the backend's read() is blocked
+        blockingBackend.waitForBlockedRead()
 
         // Lock the vault while the migration is in flight
         session.lock()
         XCTAssertEqual(session.state, .locked)
 
         // Unblock the backend to let the migration complete
-        blockingBackend.unblockWrite()
+        blockingBackend.unblockRead()
 
         // Wait for the migration to complete
         wait(for: [expectation], timeout: 30)
 
-        // Verify the vault is still locked, not silently re-unlocked
+        // Verify the vault is still locked, not silently re-unlocked by the guarded code
         XCTAssertEqual(session.state, .locked)
     }
 }
 
 // MARK: - Test Doubles
 
-/// A storage backend that blocks on write() until explicitly unblocked,
+/// A storage backend that blocks on read() until explicitly unblocked,
 /// used to reliably trigger the race condition between lock() and migration completion.
+/// Returns valid KDBX bytes so adoptRemote can parse and open the remote database.
 private class BlockingStorageBackend: StorageBackend {
-    private let writeBlocker = DispatchSemaphore(value: 0)
-    private var blockedWrite = false
+    private let data: Data
+    private let readBlocker = DispatchSemaphore(value: 0)
+    private let readBlocked = DispatchSemaphore(value: 0)
+
+    init(data: Data) {
+        self.data = data
+    }
 
     func read() throws -> Data? {
-        nil
+        // Signal that we're now blocked
+        readBlocked.signal()
+        // Wait for the unblock signal
+        _ = readBlocker.wait(timeout: .now() + 10)
+        return data
     }
 
     func write(_ data: Data) throws {
-        // Signal that we're now blocked
-        DispatchQueue.global().async {
-            self.blockedWrite = true
-        }
-        // Wait for the unblock signal
-        _ = writeBlocker.wait(timeout: .now() + 10)
+        // No-op for this test
     }
 
     func modificationDate() throws -> Date? {
-        nil
+        Date()
     }
 
     func exists() throws -> Bool {
-        false
+        true
     }
 
-    func waitForBlockedWrite() {
-        // Spin until the write is actually blocked (on the backend's thread)
-        for _ in 0..<500 {
-            if blockedWrite {
-                return
-            }
-            Thread.sleep(forTimeInterval: 0.01)
+    func waitForBlockedRead() {
+        // Wait for read() to signal that it's blocked
+        let result = readBlocked.wait(timeout: .now() + 10)
+        if result == .timedOut {
+            XCTFail("read() never blocked within timeout")
         }
-        XCTFail("write() never blocked within timeout")
     }
 
-    func unblockWrite() {
-        writeBlocker.signal()
+    func unblockRead() {
+        readBlocker.signal()
     }
 }
