@@ -298,6 +298,9 @@ enum KdbxXmlCoder {
         for field in entry.fields {
             el.addChild(stringFieldElement(field, obfuscate: obfuscate))
         }
+        for stringArray in entry.stringArrays {
+            el.addChild(stringArrayElement(stringArray))
+        }
         if !entry.history.isEmpty {
             let historyElement = XMLElement(name: "History")
             for historicalEntry in entry.history {
@@ -328,6 +331,15 @@ enum KdbxXmlCoder {
         }
         el.addChild(valueElement)
         return el
+    }
+
+    private static func stringArrayElement(_ array: KdbxStringArray) -> XMLElement {
+        let element = XMLElement(name: "StringArray")
+        element.addChild(textElement("Key", array.key))
+        for value in array.values {
+            element.addChild(textElement("Value", value))
+        }
+        return element
     }
 
     private static func timesElement(
@@ -426,6 +438,16 @@ enum KdbxXmlCoder {
             fields.append(KdbxField(key: key, value: value, isProtected: isProtected))
         }
 
+        var stringArrays: [KdbxStringArray] = []
+        for arrayElement in element.elements(forName: "StringArray") {
+            guard let keyElement = arrayElement.elements(forName: "Key").first,
+                  let key = keyElement.stringValue else {
+                throw KdbxXmlCoderError.malformedXml
+            }
+            let values = arrayElement.elements(forName: "Value").map { $0.stringValue ?? "" }
+            stringArrays.append(KdbxStringArray(key: key, values: values))
+        }
+
         var history: [KdbxEntry] = []
         if let historyElement = element.elements(forName: "History").first {
             for historicalEl in historyElement.elements(forName: "Entry") {
@@ -434,7 +456,7 @@ enum KdbxXmlCoder {
         }
 
         return KdbxEntry(
-            uuid: uuid, iconID: iconID, fields: fields,
+            uuid: uuid, iconID: iconID, fields: fields, stringArrays: stringArrays,
             creationTime: creationTime, lastModificationTime: lastModificationTime,
             lastAccessTime: lastAccessTime, locationChanged: locationChanged, history: history
         )

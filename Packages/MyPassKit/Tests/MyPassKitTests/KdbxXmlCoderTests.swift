@@ -693,4 +693,78 @@ final class KdbxXmlCoderTests: XCTestCase {
             }
         }
     }
+
+    func testStringArrayRoundTrips() throws {
+        let entry = KdbxEntry(
+            uuid: UUID(),
+            iconID: 0,
+            fields: [KdbxField(key: "Title", value: "GitHub", isProtected: false)],
+            stringArrays: [KdbxStringArray(key: "KP2A_URL", values: ["https://a.example.com", "https://b.example.com"])],
+            creationTime: Date(timeIntervalSince1970: 1_700_000_000),
+            lastModificationTime: Date(timeIntervalSince1970: 1_700_000_100),
+            lastAccessTime: Date(timeIntervalSince1970: 1_700_000_100),
+            locationChanged: Date(timeIntervalSince1970: 1_700_000_000),
+            history: []
+        )
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(timeIntervalSince1970: 1_700_000_000),
+            lastModificationTime: Date(timeIntervalSince1970: 1_700_000_000),
+            locationChanged: Date(timeIntervalSince1970: 1_700_000_000),
+            entries: [entry], subgroups: []
+        )
+        let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [])
+        let (obfuscate, deobfuscate) = passthroughStream()
+
+        let xml = KdbxXmlCoder.encode(payload, obfuscate: obfuscate)
+        let xmlString = String(data: xml, encoding: .utf8)!
+        XCTAssertTrue(xmlString.contains("<StringArray>"))
+        XCTAssertTrue(xmlString.contains("<Key>KP2A_URL</Key>"))
+        XCTAssertTrue(xmlString.contains("https://a.example.com"))
+        XCTAssertTrue(xmlString.contains("https://b.example.com"))
+
+        let decoded = try KdbxXmlCoder.decode(xml, deobfuscate: deobfuscate)
+        XCTAssertEqual(decoded.rootGroup.entries[0].stringArrays, entry.stringArrays)
+    }
+
+    func testEntryWithOnlyPrimaryUrlEmitsNoStringArrayElement() throws {
+        let entry = KdbxEntry(
+            uuid: UUID(), iconID: 0,
+            fields: [KdbxField(key: "URL", value: "https://example.com", isProtected: false)],
+            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(),
+            locationChanged: Date(), history: []
+        )
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [entry], subgroups: []
+        )
+        let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [])
+        let (obfuscate, _) = passthroughStream()
+
+        let xml = KdbxXmlCoder.encode(payload, obfuscate: obfuscate)
+        let xmlString = String(data: xml, encoding: .utf8)!
+        XCTAssertFalse(xmlString.contains("<StringArray>"))
+    }
+
+    func testStringArrayValuesAreNotObfuscated() throws {
+        let entry = KdbxEntry(
+            uuid: UUID(), iconID: 0,
+            fields: [],
+            stringArrays: [KdbxStringArray(key: "KP2A_URL", values: ["https://plain.example.com"])],
+            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(),
+            locationChanged: Date(), history: []
+        )
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+            entries: [entry], subgroups: []
+        )
+        let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [])
+        let (obfuscate, _) = passthroughStream()
+
+        let xml = KdbxXmlCoder.encode(payload, obfuscate: obfuscate)
+        let xmlString = String(data: xml, encoding: .utf8)!
+        XCTAssertTrue(xmlString.contains("https://plain.example.com"), "StringArray values must appear as plaintext, never base64-obfuscated")
+    }
 }
