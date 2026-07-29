@@ -36,7 +36,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
         if let action = wrapAction {
             context.coordinator.apply(action, to: textView)
-            DispatchQueue.main.async { wrapAction = nil }
+            // Reset synchronously, before returning from this update pass. Deferring
+            // this via DispatchQueue.main.async left a window where a SwiftUI-triggered
+            // re-entrant updateNSView (from the `text` mutation inside apply()) could
+            // observe a still-non-nil wrapAction and re-apply the same action a second
+            // time against the already-wrapped selection. A synchronous reset closes
+            // that race at the cost of a possible one-time "modifying state during
+            // view update" console warning, which is an acceptable trade-off here.
+            wrapAction = nil
         }
     }
 
