@@ -8,7 +8,7 @@ enum EntryCategoryFilter {
         case .all:
             return all.filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         case .favorites:
-            return [] // stub until KDBX favorite field exists
+            return all.filter { $0.isFavorite && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         case .codes:
             return all.filter {
                 guard let secret = $0.totpSecretBase32 else { return false }

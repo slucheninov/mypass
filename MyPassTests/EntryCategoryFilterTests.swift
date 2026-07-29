@@ -47,9 +47,16 @@ final class EntryCategoryFilterTests: XCTestCase {
         XCTAssertEqual(EntryCategoryFilter.entries(for: .deleted, in: db).map(\.title), ["Bin"])
     }
 
-    func testFavoritesFilterEmptyUntilFieldExists() {
-        let db = makeDatabase(rootEntries: [makeEntry(title: "A"), makeEntry(title: "B")])
-        XCTAssertTrue(EntryCategoryFilter.entries(for: .favorites, in: db).isEmpty)
+    func testFavoritesFilterIncludesOnlyFavoritedLiveEntries() {
+        var favorite = makeEntry(title: "Favorite")
+        favorite.isFavorite = true
+        let plain = makeEntry(title: "Plain")
+        var favoriteInBin = makeEntry(title: "FavoriteDeleted")
+        favoriteInBin.isFavorite = true
+
+        let db = makeDatabase(rootEntries: [favorite, plain], binEntries: [favoriteInBin])
+
+        XCTAssertEqual(EntryCategoryFilter.entries(for: .favorites, in: db).map(\.title), ["Favorite"])
     }
 
     func testSearchIntersectionViaEntrySearch() {
