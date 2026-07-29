@@ -11,11 +11,12 @@ struct NotesDetailView: View {
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
 
-    // Known limitation (accepted per spec): AttributedString(markdown:) renders
-    // inline styles (bold/italic/inline code) but not block-level constructs —
-    // headers/HR/code-fences remain visible as literal markdown characters.
+    // Known limitation (accepted per spec): renders inline styles (bold/italic/inline
+    // code) but not block-level constructs — headers/HR/code-fences remain visible as
+    // literal markdown characters. See NotesBodyRenderer for why this uses
+    // .inlineOnlyPreservingWhitespace rather than default markdown parsing.
     private var renderedBody: AttributedString {
-        (try? AttributedString(markdown: entry.notesBody)) ?? AttributedString(entry.notesBody)
+        NotesBodyRenderer.render(entry.notesBody)
     }
 
     var body: some View {
