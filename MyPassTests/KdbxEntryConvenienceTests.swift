@@ -140,4 +140,75 @@ final class KdbxEntryConvenienceTests: XCTestCase {
         XCTAssertEqual(keys, ["Custom Field"])
         XCTAssertFalse(keys.contains("Favorite"))
     }
+
+    func testEntryTypeDefaultsToLoginWhenFieldAbsent() {
+        let entry = makeEmptyEntry()
+        XCTAssertEqual(entry.entryType, .login)
+    }
+
+    func testEntryTypeRoundTripsForCardAndNotes() {
+        var entry = makeEmptyEntry()
+        entry.entryType = .card
+        XCTAssertEqual(entry.entryType, .card)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "MyPass.EntryType" })?.value, "Card")
+
+        entry.entryType = .notes
+        XCTAssertEqual(entry.entryType, .notes)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "MyPass.EntryType" })?.value, "Notes")
+    }
+
+    func testEntryTypeSetterToLoginRemovesField() {
+        var entry = makeEmptyEntry()
+        entry.entryType = .card
+        entry.entryType = .login
+        XCTAssertEqual(entry.entryType, .login)
+        XCTAssertNil(entry.fields.first(where: { $0.key == "MyPass.EntryType" }))
+    }
+
+    func testEntryTypeFieldExcludedFromAdditionalFields() {
+        var entry = makeEmptyEntry()
+        entry.entryType = .card
+        entry.fields.append(KdbxField(key: "Custom Field", value: "custom value", isProtected: false))
+
+        let keys = Set(entry.additionalFields.map(\.key))
+        XCTAssertEqual(keys, ["Custom Field"])
+        XCTAssertFalse(keys.contains("MyPass.EntryType"))
+    }
+
+    func testCardFieldsRoundTripAndAreProtectedWhereExpected() {
+        var entry = makeEmptyEntry()
+        entry.cardNumber = "4111111111111111"
+        entry.cardholderName = "Jane Doe"
+        entry.expiryDate = "09/28"
+        entry.cvv = "123"
+
+        XCTAssertEqual(entry.cardNumber, "4111111111111111")
+        XCTAssertEqual(entry.cardholderName, "Jane Doe")
+        XCTAssertEqual(entry.expiryDate, "09/28")
+        XCTAssertEqual(entry.cvv, "123")
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "CardNumber" })?.isProtected, true)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "CVV" })?.isProtected, true)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "CardholderName" })?.isProtected, false)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "ExpiryDate" })?.isProtected, false)
+    }
+
+    func testNotesBodyRoundTrips() {
+        var entry = makeEmptyEntry()
+        entry.notesBody = "# Heading\n\nSome **bold** text."
+        XCTAssertEqual(entry.notesBody, "# Heading\n\nSome **bold** text.")
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "NotesBody" })?.isProtected, false)
+    }
+
+    func testTemplateFieldKeysExcludedFromAdditionalFields() {
+        var entry = makeEmptyEntry()
+        entry.cardNumber = "4111111111111111"
+        entry.cardholderName = "Jane Doe"
+        entry.expiryDate = "09/28"
+        entry.cvv = "123"
+        entry.notesBody = "note body"
+        entry.fields.append(KdbxField(key: "Custom Field", value: "custom value", isProtected: false))
+
+        let keys = Set(entry.additionalFields.map(\.key))
+        XCTAssertEqual(keys, ["Custom Field"])
+    }
 }

@@ -64,6 +64,48 @@ final class KdbxXmlCoderTests: XCTestCase {
         XCTAssertEqual(decoded.deletedObjects, payload.deletedObjects)
     }
 
+    func testCustomEntryTypeFieldRoundTripsThroughEncodeDecode() throws {
+        let entry = KdbxEntry(
+            uuid: UUID(),
+            iconID: 0,
+            fields: [
+                KdbxField(key: "Title", value: "Visa Card", isProtected: false),
+                KdbxField(key: "MyPass.EntryType", value: "Card", isProtected: false)
+            ],
+            creationTime: Date(timeIntervalSince1970: 1_700_000_000),
+            lastModificationTime: Date(timeIntervalSince1970: 1_700_000_100),
+            lastAccessTime: Date(timeIntervalSince1970: 1_700_000_100),
+            locationChanged: Date(timeIntervalSince1970: 1_700_000_000),
+            history: []
+        )
+        let root = KdbxGroup(
+            uuid: UUID(), name: "Root", iconID: 0,
+            creationTime: Date(timeIntervalSince1970: 1_700_000_000),
+            lastModificationTime: Date(timeIntervalSince1970: 1_700_000_000),
+            locationChanged: Date(timeIntervalSince1970: 1_700_000_000),
+            entries: [entry], subgroups: []
+        )
+        let payload = KdbxXmlPayload(rootGroup: root, deletedObjects: [])
+
+        var keystreamCounter: UInt8 = 0
+        func obfuscate(_ data: Data) -> Data {
+            Data(data.map { byte -> UInt8 in
+                keystreamCounter = keystreamCounter &+ 1
+                return byte ^ keystreamCounter
+            })
+        }
+
+        let xml = KdbxXmlCoder.encode(payload) { plaintext in obfuscate(plaintext) }
+
+        keystreamCounter = 0
+        let decoded = try KdbxXmlCoder.decode(xml) { ciphertext in obfuscate(ciphertext) }
+
+        XCTAssertEqual(
+            decoded.rootGroup.entries[0].fields.first(where: { $0.key == "MyPass.EntryType" })?.value,
+            "Card"
+        )
+    }
+
     func testProtectedFieldValueIsMarkedProtectedInXmlAndNotPlaintext() throws {
         let entry = KdbxEntry(
             uuid: UUID(), iconID: 0,

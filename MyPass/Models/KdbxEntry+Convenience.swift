@@ -62,10 +62,49 @@ extension KdbxEntry {
             }
         }
     }
+
+    var entryType: EntryType {
+        get { EntryType(rawValue: fieldValue(forKey: "MyPass.EntryType")) ?? .login }
+        set {
+            if newValue == .login {
+                fields.removeAll { $0.key == "MyPass.EntryType" }
+            } else {
+                setFieldValue(newValue.rawValue, forKey: "MyPass.EntryType", isProtected: false)
+            }
+        }
+    }
+
+    var cardNumber: String {
+        get { fieldValue(forKey: "CardNumber") }
+        set { setFieldValue(newValue, forKey: "CardNumber", isProtected: true) }
+    }
+
+    var cardholderName: String {
+        get { fieldValue(forKey: "CardholderName") }
+        set { setFieldValue(newValue, forKey: "CardholderName", isProtected: false) }
+    }
+
+    var expiryDate: String {
+        get { fieldValue(forKey: "ExpiryDate") }
+        set { setFieldValue(newValue, forKey: "ExpiryDate", isProtected: false) }
+    }
+
+    var cvv: String {
+        get { fieldValue(forKey: "CVV") }
+        set { setFieldValue(newValue, forKey: "CVV", isProtected: true) }
+    }
+
+    var notesBody: String {
+        get { fieldValue(forKey: "NotesBody") }
+        set { setFieldValue(newValue, forKey: "NotesBody", isProtected: false) }
+    }
 }
 
 public extension KdbxEntry {
-    static let standardFieldKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp", "Favorite"]
+    static let standardFieldKeys: Set<String> = [
+        "Title", "UserName", "Password", "URL", "Notes", "otp", "Favorite",
+        "MyPass.EntryType", "CardNumber", "CardholderName", "ExpiryDate", "CVV", "NotesBody"
+    ]
     static let additionalURLsStringArrayKey = "KP2A_URL"
 
     /// Primary URL (if non-empty) followed by `KP2A_URL` StringArray extras, deduplicated,
