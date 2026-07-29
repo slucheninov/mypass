@@ -46,6 +46,7 @@ struct EntryListView: View {
         vaultSession.mutate { database in
             var updated = entry
             updated.isFavorite.toggle()
+            updated.lastModificationTime = Date()
             EntryPersistence.replaceEntry(updated, in: database.rootGroup)
         }
     }
