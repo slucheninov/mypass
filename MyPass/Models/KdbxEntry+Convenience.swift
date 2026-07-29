@@ -51,10 +51,21 @@ extension KdbxEntry {
             setFieldValue(newValue, forKey: "otp", isProtected: true)
         }
     }
+
+    var isFavorite: Bool {
+        get { fields.contains { $0.key == "Favorite" } }
+        set {
+            if newValue {
+                setFieldValue("1", forKey: "Favorite", isProtected: false)
+            } else {
+                fields.removeAll { $0.key == "Favorite" }
+            }
+        }
+    }
 }
 
 public extension KdbxEntry {
-    static let standardFieldKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp"]
+    static let standardFieldKeys: Set<String> = ["Title", "UserName", "Password", "URL", "Notes", "otp", "Favorite"]
     static let additionalURLsStringArrayKey = "KP2A_URL"
 
     /// Primary URL (if non-empty) followed by `KP2A_URL` StringArray extras, deduplicated,

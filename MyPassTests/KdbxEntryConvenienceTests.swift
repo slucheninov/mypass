@@ -107,4 +107,37 @@ final class KdbxEntryConvenienceTests: XCTestCase {
         XCTAssertFalse(keys.contains("Title"))
         XCTAssertFalse(keys.contains("URL"))
     }
+
+    func testIsFavoriteDefaultsToFalse() {
+        let entry = makeEmptyEntry()
+        XCTAssertFalse(entry.isFavorite)
+    }
+
+    func testIsFavoriteSetterAddsAndRemovesField() {
+        var entry = makeEmptyEntry()
+        entry.isFavorite = true
+        XCTAssertTrue(entry.isFavorite)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "Favorite" })?.value, "1")
+
+        entry.isFavorite = false
+        XCTAssertFalse(entry.isFavorite)
+        XCTAssertNil(entry.fields.first(where: { $0.key == "Favorite" }))
+    }
+
+    func testIsFavoriteSetterFalseWhenAlreadyAbsentIsNoOp() {
+        var entry = makeEmptyEntry()
+        entry.isFavorite = false
+        XCTAssertFalse(entry.isFavorite)
+        XCTAssertTrue(entry.fields.isEmpty)
+    }
+
+    func testFavoriteFieldExcludedFromAdditionalFields() {
+        var entry = makeEmptyEntry()
+        entry.isFavorite = true
+        entry.fields.append(KdbxField(key: "Custom Field", value: "custom value", isProtected: false))
+
+        let keys = Set(entry.additionalFields.map(\.key))
+        XCTAssertEqual(keys, ["Custom Field"])
+        XCTAssertFalse(keys.contains("Favorite"))
+    }
 }
