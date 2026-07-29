@@ -22,6 +22,7 @@ struct EntryEditView: View {
     @State private var showPasswordGenerator = false
     @State private var isPasswordRevealed = false
     @State private var showWebsitesSheet = false
+    @State private var isFavorite: Bool
 
     init(
         existingEntry: KdbxEntry?,
@@ -48,6 +49,7 @@ struct EntryEditView: View {
         _notes = State(initialValue: existingEntry?.notes ?? "")
         _extraFields = State(initialValue: (existingEntry?.additionalFields ?? [])
             .map { (key: $0.key, value: $0.value) })
+        _isFavorite = State(initialValue: existingEntry?.isFavorite ?? false)
     }
 
     var body: some View {
@@ -151,6 +153,14 @@ struct EntryEditView: View {
             ToolbarItem(placement: .cancellationAction) {
                 Button("Cancel", action: onCancel)
             }
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    isFavorite.toggle()
+                } label: {
+                    Image(systemName: isFavorite ? "star.fill" : "star")
+                }
+                .accessibilityLabel(isFavorite ? "Remove from Favorites" : "Add to Favorites")
+            }
             ToolbarItem(placement: .confirmationAction) {
                 Button("Save", action: save)
                     .keyboardShortcut(.return, modifiers: .command)
@@ -195,6 +205,7 @@ struct EntryEditView: View {
         entry.password = password
         entry.url = url
         entry.notes = notes
+        entry.isFavorite = isFavorite
         entry.lastModificationTime = now
         entry.lastAccessTime = now
         EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: otpauthInput)
