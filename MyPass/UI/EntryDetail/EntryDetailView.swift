@@ -499,13 +499,13 @@ private struct DetailEmptyStateView: View {
     }
 }
 
-private struct DetailFieldDivider: View {
+struct DetailFieldDivider: View {
     var body: some View {
         Divider().overlay(Color.primary.opacity(0.08))
     }
 }
 
-private struct DetailFieldRow: View {
+struct DetailFieldRow: View {
     let label: String
     let value: String
 
@@ -524,7 +524,7 @@ private struct DetailFieldRow: View {
     }
 }
 
-private struct DetailFieldsCard<Content: View>: View {
+struct DetailFieldsCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {

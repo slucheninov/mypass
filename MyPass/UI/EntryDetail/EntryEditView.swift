@@ -150,21 +150,8 @@ struct EntryEditView: View {
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Entry" : "Edit Entry")
         .toolbar {
-            ToolbarItem(placement: .cancellationAction) {
-                Button("Cancel", action: onCancel)
-            }
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    isFavorite.toggle()
-                } label: {
-                    Image(systemName: isFavorite ? "star.fill" : "star")
-                }
-                .accessibilityLabel(isFavorite ? "Remove from Favorites" : "Add to Favorites")
-            }
-            ToolbarItem(placement: .confirmationAction) {
-                Button("Save", action: save)
-                    .keyboardShortcut(.return, modifiers: .command)
-            }
+            EditActionsToolbarContent(onCancel: onCancel, onSave: save)
+            FavoriteToggleToolbarItem(isFavorite: $isFavorite)
         }
         .sheet(isPresented: $showPasswordGenerator) {
             PasswordGeneratorView { generated in
@@ -219,7 +206,7 @@ struct EntryEditView: View {
     }
 }
 
-private struct EntryEditFieldsCard<Content: View>: View {
+struct EntryEditFieldsCard<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
     var body: some View {
