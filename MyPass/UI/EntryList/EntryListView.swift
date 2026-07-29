@@ -42,6 +42,14 @@ struct EntryListView: View {
         entry.title.isEmpty ? "(untitled)" : entry.title
     }
 
+    private func toggleFavorite(_ entry: KdbxEntry) {
+        vaultSession.mutate { database in
+            var updated = entry
+            updated.isFavorite.toggle()
+            EntryPersistence.replaceEntry(updated, in: database.rootGroup)
+        }
+    }
+
     var body: some View {
         List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
             let isSelected = navigationState.selectedEntryID == entry.uuid
@@ -52,6 +60,11 @@ struct EntryListView: View {
             .tag(entry.uuid)
             .listRowBackground(EntryListRowBackground(isSelected: isSelected))
             .draggable(entry.uuid.uuidString) // full drag-and-drop wiring completed in Task 15
+            .contextMenu {
+                Button(entry.isFavorite ? "Remove from Favorites" : "Add to Favorites") {
+                    toggleFavorite(entry)
+                }
+            }
         }
         .navigationTitle(headerTitle)
         .frame(minWidth: UIShellMetrics.listColumnMinWidth)
