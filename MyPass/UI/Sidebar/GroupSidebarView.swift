@@ -12,13 +12,13 @@ struct GroupSidebarView: View {
     @State private var groupPendingDeletion: KdbxGroup?
 
     var body: some View {
-        List(selection: $navigationState.selectedGroupID) {
+        List(selection: $navigationState.sidebarSelectedGroupID) {
             Section {
                 ForEach(SmartCategory.allCases) { category in
                     SmartCategorySidebarRow(
                         category: category,
                         countText: countText(for: category),
-                        isSelected: navigationState.selectedSmartCategory == category
+                        isSelected: navigationState.isSmartCategorySelected(category)
                     ) {
                         navigationState.selectSmartCategory(category)
                     }

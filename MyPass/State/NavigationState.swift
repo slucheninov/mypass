@@ -65,6 +65,20 @@ final class NavigationState: ObservableObject {
         securityUsesGroupScope = false
     }
 
+    /// The group to highlight in the sidebar's Groups `List` selection. `nil` while a
+    /// smart category is active, so a group never appears selected at the same time as
+    /// a category. The underlying `selectedGroupID` is preserved (not cleared) so
+    /// group-scoped features like `securityUsesGroupScope` and the "Add" button's
+    /// default group keep working once category mode exits.
+    var sidebarSelectedGroupID: UUID? {
+        get { isCategoryMode ? nil : selectedGroupID }
+        set { selectedGroupID = newValue }
+    }
+
+    func isSmartCategorySelected(_ category: SmartCategory) -> Bool {
+        isCategoryMode && selectedSmartCategory == category
+    }
+
     func presentBrowse() {
         detailPresentation = .browse
     }

@@ -38,4 +38,25 @@ final class NavigationStateCategoryModeTests: XCTestCase {
         XCTAssertEqual(state.activeCategoryFilter, .all)
         XCTAssertEqual(state.selectedSmartCategory, .security)
     }
+
+    func testSidebarGroupSelectionClearsWhileCategoryModeActive() {
+        let state = NavigationState()
+        let groupID = UUID()
+        state.selectedGroupID = groupID
+        XCTAssertEqual(state.sidebarSelectedGroupID, groupID)
+
+        state.selectSmartCategory(.codes)
+        XCTAssertNil(state.sidebarSelectedGroupID, "Group must not appear selected once a category is active")
+        XCTAssertEqual(state.selectedGroupID, groupID, "Underlying group selection is preserved for group-scoped features")
+    }
+
+    func testNoSmartCategoryAppearsSelectedWhileGroupModeActive() {
+        let state = NavigationState()
+        state.selectSmartCategory(.codes)
+        XCTAssertTrue(state.isSmartCategorySelected(.codes))
+
+        state.exitCategoryModeForGroupSelection()
+        XCTAssertFalse(state.isSmartCategorySelected(.codes))
+        XCTAssertFalse(state.isSmartCategorySelected(.all), "No category should read as selected once a specific group is active")
+    }
 }
