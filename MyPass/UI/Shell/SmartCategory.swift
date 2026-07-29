@@ -5,6 +5,8 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
     case all
     case favorites
     case codes
+    case cards
+    case notes
     case security
     case deleted
 
@@ -15,6 +17,8 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
         case .all: return "All"
         case .favorites: return "Favorites"
         case .codes: return "Codes"
+        case .cards: return "Cards"
+        case .notes: return "Notes"
         case .security: return "Security"
         case .deleted: return "Deleted"
         }
@@ -30,6 +34,8 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
         case .all: return Color.accentColor
         case .favorites: return Color(red: 1.0, green: 0.8, blue: 0.0)
         case .codes: return Color.orange
+        case .cards: return Color.blue
+        case .notes: return Color.green
         case .security: return Color.red
         case .deleted: return Color.secondary
         }

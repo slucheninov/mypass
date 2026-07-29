@@ -66,7 +66,8 @@ struct EntryListView: View {
             let isSelected = navigationState.selectedEntryID == entry.uuid
             EntryListRow(
                 title: displayTitle(for: entry),
-                subtitle: entry.login
+                subtitle: entry.login,
+                entryType: entry.entryType
             )
             .tag(entry.uuid)
             .listRowBackground(EntryListRowBackground(isSelected: isSelected))
@@ -150,14 +151,11 @@ struct EntryListView: View {
 private struct EntryListRow: View {
     let title: String
     let subtitle: String
+    let entryType: EntryType
 
     var body: some View {
         HStack(spacing: 12) {
-            LetterAvatarView(
-                title: title,
-                size: UIShellMetrics.listIconSize,
-                cornerRadius: UIShellMetrics.listIconCornerRadius
-            )
+            leadingIcon
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body.weight(.semibold))
@@ -171,6 +169,32 @@ private struct EntryListRow: View {
             Spacer(minLength: 0)
         }
         .padding(.vertical, 4)
+    }
+
+    @ViewBuilder
+    private var leadingIcon: some View {
+        switch entryType {
+        case .card:
+            templateIconTile(systemName: "creditcard")
+        case .notes:
+            templateIconTile(systemName: "note.text")
+        case .login:
+            LetterAvatarView(
+                title: title,
+                size: UIShellMetrics.listIconSize,
+                cornerRadius: UIShellMetrics.listIconCornerRadius
+            )
+        }
+    }
+
+    private func templateIconTile(systemName: String) -> some View {
+        RoundedRectangle(cornerRadius: UIShellMetrics.listIconCornerRadius, style: .continuous)
+            .fill(Color.secondary.opacity(0.15))
+            .frame(width: UIShellMetrics.listIconSize, height: UIShellMetrics.listIconSize)
+            .overlay(
+                Image(systemName: systemName)
+                    .foregroundStyle(.secondary)
+            )
     }
 }
 

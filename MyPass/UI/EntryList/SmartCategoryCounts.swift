@@ -12,6 +12,10 @@ enum SmartCategoryCounts {
             return String(allCount(in: database))
         case .codes:
             return String(codesCount(in: database))
+        case .cards:
+            return String(cardsCount(in: database))
+        case .notes:
+            return String(notesCount(in: database))
         case .deleted:
             return String(deletedCount(in: database))
         }
@@ -29,6 +33,18 @@ enum SmartCategoryCounts {
         allEntries(in: database).filter {
             guard let secret = $0.totpSecretBase32 else { return false }
             return !secret.isEmpty
+        }.count
+    }
+
+    private static func cardsCount(in database: KdbxDatabase) -> Int {
+        allEntries(in: database).filter {
+            $0.entryType == .card && !RecycleBinEntryFilter.isInRecycleBin($0, database: database)
+        }.count
+    }
+
+    private static func notesCount(in database: KdbxDatabase) -> Int {
+        allEntries(in: database).filter {
+            $0.entryType == .notes && !RecycleBinEntryFilter.isInRecycleBin($0, database: database)
         }.count
     }
 

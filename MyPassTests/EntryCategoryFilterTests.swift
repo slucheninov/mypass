@@ -14,6 +14,12 @@ final class EntryCategoryFilterTests: XCTestCase {
         return entry
     }
 
+    private func makeEntry(title: String, entryType: EntryType) -> KdbxEntry {
+        var entry = makeEntry(title: title)
+        entry.entryType = entryType
+        return entry
+    }
+
     private func makeDatabase(rootEntries: [KdbxEntry] = [], binEntries: [KdbxEntry] = []) -> KdbxDatabase {
         let now = Date()
         let root = KdbxGroup(
@@ -67,5 +73,25 @@ final class EntryCategoryFilterTests: XCTestCase {
         let filtered = EntryCategoryFilter.entries(for: .all, in: db)
             .filter { EntrySearch.matches(entry: $0, query: "hub") }
         XCTAssertEqual(filtered.map(\.title), ["GitHub"])
+    }
+
+    func testCardsFilterIncludesOnlyCardEntries() {
+        let card = makeEntry(title: "Visa", entryType: .card)
+        let login = makeEntry(title: "GitHub")
+        let db = makeDatabase(rootEntries: [card, login])
+        XCTAssertEqual(EntryCategoryFilter.entries(for: .cards, in: db).map(\.title), ["Visa"])
+    }
+
+    func testNotesFilterIncludesOnlyNotesEntries() {
+        let note = makeEntry(title: "Wifi Password", entryType: .notes)
+        let login = makeEntry(title: "GitHub")
+        let db = makeDatabase(rootEntries: [note, login])
+        XCTAssertEqual(EntryCategoryFilter.entries(for: .notes, in: db).map(\.title), ["Wifi Password"])
+    }
+
+    func testCardsAndNotesFiltersExcludeBin() {
+        let deletedCard = makeEntry(title: "DeletedCard", entryType: .card)
+        let db = makeDatabase(rootEntries: [], binEntries: [deletedCard])
+        XCTAssertEqual(EntryCategoryFilter.entries(for: .cards, in: db), [])
     }
 }
