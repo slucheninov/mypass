@@ -4,7 +4,7 @@ import MyPassKit
 enum EntrySearch {
     static func matches(entry: KdbxEntry, query: String) -> Bool {
         guard !query.isEmpty else { return true }
-        let haystacks = [entry.title, entry.login, entry.url, entry.notes]
+        let haystacks = [entry.title, entry.login, entry.url, entry.notes, entry.notesBody]
         return haystacks.contains { $0.range(of: query, options: .caseInsensitive) != nil }
     }
 

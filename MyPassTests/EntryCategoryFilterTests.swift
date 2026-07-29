@@ -75,6 +75,18 @@ final class EntryCategoryFilterTests: XCTestCase {
         XCTAssertEqual(filtered.map(\.title), ["GitHub"])
     }
 
+    func testSearchMatchesNotesBodyContent() {
+        var note = makeEntry(title: "Wifi Password", entryType: .notes)
+        note.notesBody = "network passphrase is zebra-moonlight-42"
+        let sibling = makeEntry(title: "Router Login", entryType: .notes)
+        let db = makeDatabase(rootEntries: [note, sibling])
+
+        let filtered = EntryCategoryFilter.entries(for: .all, in: db)
+            .filter { EntrySearch.matches(entry: $0, query: "zebra-moonlight") }
+
+        XCTAssertEqual(filtered.map(\.title), ["Wifi Password"])
+    }
+
     func testCardsFilterIncludesOnlyCardEntries() {
         let card = makeEntry(title: "Visa", entryType: .card)
         let login = makeEntry(title: "GitHub")

@@ -15,6 +15,16 @@ struct FavoriteToggleToolbarItem: ToolbarContent {
     }
 }
 
+struct DetailActionsToolbarContent: ToolbarContent {
+    let onEdit: () -> Void
+
+    var body: some ToolbarContent {
+        ToolbarItemGroup(placement: .primaryAction) {
+            Button("Edit", systemImage: "square.and.pencil", action: onEdit)
+        }
+    }
+}
+
 struct EditActionsToolbarContent: ToolbarContent {
     let onCancel: () -> Void
     let onSave: () -> Void

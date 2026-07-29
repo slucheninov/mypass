@@ -75,35 +75,35 @@ extension KdbxEntry {
     }
 
     var cardNumber: String {
-        get { fieldValue(forKey: "CardNumber") }
-        set { setFieldValue(newValue, forKey: "CardNumber", isProtected: true) }
+        get { fieldValue(forKey: "MyPass.CardNumber") }
+        set { setFieldValue(newValue, forKey: "MyPass.CardNumber", isProtected: true) }
     }
 
     var cardholderName: String {
-        get { fieldValue(forKey: "CardholderName") }
-        set { setFieldValue(newValue, forKey: "CardholderName", isProtected: false) }
+        get { fieldValue(forKey: "MyPass.CardholderName") }
+        set { setFieldValue(newValue, forKey: "MyPass.CardholderName", isProtected: false) }
     }
 
     var expiryDate: String {
-        get { fieldValue(forKey: "ExpiryDate") }
-        set { setFieldValue(newValue, forKey: "ExpiryDate", isProtected: false) }
+        get { fieldValue(forKey: "MyPass.ExpiryDate") }
+        set { setFieldValue(newValue, forKey: "MyPass.ExpiryDate", isProtected: false) }
     }
 
     var cvv: String {
-        get { fieldValue(forKey: "CVV") }
-        set { setFieldValue(newValue, forKey: "CVV", isProtected: true) }
+        get { fieldValue(forKey: "MyPass.CVV") }
+        set { setFieldValue(newValue, forKey: "MyPass.CVV", isProtected: true) }
     }
 
     var notesBody: String {
-        get { fieldValue(forKey: "NotesBody") }
-        set { setFieldValue(newValue, forKey: "NotesBody", isProtected: false) }
+        get { fieldValue(forKey: "MyPass.NotesBody") }
+        set { setFieldValue(newValue, forKey: "MyPass.NotesBody", isProtected: false) }
     }
 }
 
 public extension KdbxEntry {
     static let standardFieldKeys: Set<String> = [
         "Title", "UserName", "Password", "URL", "Notes", "otp", "Favorite",
-        "MyPass.EntryType", "CardNumber", "CardholderName", "ExpiryDate", "CVV", "NotesBody"
+        "MyPass.EntryType", "MyPass.CardNumber", "MyPass.CardholderName", "MyPass.ExpiryDate", "MyPass.CVV", "MyPass.NotesBody"
     ]
     static let additionalURLsStringArrayKey = "KP2A_URL"
 

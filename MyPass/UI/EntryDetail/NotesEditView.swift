@@ -15,6 +15,7 @@ struct NotesEditView: View {
     @State private var notesBody: String = ""
     @State private var isFavorite: Bool
     @State private var pendingMarkdownAction: MarkdownWrapAction?
+    @State private var preservedAdditionalFields: [KdbxField] = []
 
     init(
         existingEntry: KdbxEntry?,
@@ -36,6 +37,7 @@ struct NotesEditView: View {
         _title = State(initialValue: existingEntry?.title ?? "")
         _notesBody = State(initialValue: existingEntry?.notesBody ?? "")
         _isFavorite = State(initialValue: existingEntry?.isFavorite ?? false)
+        _preservedAdditionalFields = State(initialValue: existingEntry?.additionalFields ?? [])
     }
 
     var body: some View {
@@ -118,6 +120,9 @@ struct NotesEditView: View {
         entry.lastAccessTime = now
 
         entry.fields.removeAll { !KdbxEntry.standardFieldKeys.contains($0.key) }
+        for field in preservedAdditionalFields {
+            entry.fields.append(field)
+        }
 
         onSave(entry, selectedGroupID)
     }

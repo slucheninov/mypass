@@ -186,17 +186,17 @@ final class KdbxEntryConvenienceTests: XCTestCase {
         XCTAssertEqual(entry.cardholderName, "Jane Doe")
         XCTAssertEqual(entry.expiryDate, "09/28")
         XCTAssertEqual(entry.cvv, "123")
-        XCTAssertEqual(entry.fields.first(where: { $0.key == "CardNumber" })?.isProtected, true)
-        XCTAssertEqual(entry.fields.first(where: { $0.key == "CVV" })?.isProtected, true)
-        XCTAssertEqual(entry.fields.first(where: { $0.key == "CardholderName" })?.isProtected, false)
-        XCTAssertEqual(entry.fields.first(where: { $0.key == "ExpiryDate" })?.isProtected, false)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "MyPass.CardNumber" })?.isProtected, true)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "MyPass.CVV" })?.isProtected, true)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "MyPass.CardholderName" })?.isProtected, false)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "MyPass.ExpiryDate" })?.isProtected, false)
     }
 
     func testNotesBodyRoundTrips() {
         var entry = makeEmptyEntry()
         entry.notesBody = "# Heading\n\nSome **bold** text."
         XCTAssertEqual(entry.notesBody, "# Heading\n\nSome **bold** text.")
-        XCTAssertEqual(entry.fields.first(where: { $0.key == "NotesBody" })?.isProtected, false)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "MyPass.NotesBody" })?.isProtected, false)
     }
 
     func testTemplateFieldKeysExcludedFromAdditionalFields() {

@@ -57,6 +57,17 @@ struct CardDetailView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle("Card")
+        .toolbar {
+            DetailActionsToolbarContent(onEdit: { navigationState.presentEdit(entryID: entry.uuid) })
+        }
+        .onChange(of: navigationState.selectedEntryID) { _, newID in
+            isCardNumberRevealed = false
+            isCVVRevealed = false
+            largeTypeField = nil
+            if let newID {
+                vaultSession.touchAccess(entryID: newID)
+            }
+        }
     }
 
     private var cardNumberRow: some View {
