@@ -51,9 +51,19 @@ final class SmartCategoryCountsTests: XCTestCase {
         XCTAssertEqual(SmartCategoryCounts.countDisplay(for: .deleted, database: db), "2")
     }
 
-    func testFavoritesAlwaysZero() {
-        let db = makeDatabase(rootEntries: [makeEntry(title: "A"), makeEntry(title: "B")])
-        XCTAssertEqual(SmartCategoryCounts.countDisplay(for: .favorites, database: db), "0")
+    func testFavoritesCountExcludesRecycleBin() {
+        var favorite1 = makeEntry(title: "F1")
+        favorite1.isFavorite = true
+        var favorite2 = makeEntry(title: "F2")
+        favorite2.isFavorite = true
+        var favoriteInBin = makeEntry(title: "FavDeleted")
+        favoriteInBin.isFavorite = true
+
+        let db = makeDatabase(
+            rootEntries: [favorite1, favorite2, makeEntry(title: "Plain")],
+            binEntries: [favoriteInBin]
+        )
+        XCTAssertEqual(SmartCategoryCounts.countDisplay(for: .favorites, database: db), "2")
     }
 
     func testSecurityAlwaysEmDash() {

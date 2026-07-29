@@ -7,7 +7,7 @@ enum SmartCategoryCounts {
         case .security:
             return "—"
         case .favorites:
-            return "0"
+            return String(favoritesCount(in: database))
         case .all:
             return String(allCount(in: database))
         case .codes:
@@ -29,6 +29,12 @@ enum SmartCategoryCounts {
         allEntries(in: database).filter {
             guard let secret = $0.totpSecretBase32 else { return false }
             return !secret.isEmpty
+        }.count
+    }
+
+    private static func favoritesCount(in database: KdbxDatabase) -> Int {
+        allEntries(in: database).filter {
+            $0.isFavorite && !RecycleBinEntryFilter.isInRecycleBin($0, database: database)
         }.count
     }
 
