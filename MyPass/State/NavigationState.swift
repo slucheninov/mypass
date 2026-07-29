@@ -26,7 +26,7 @@ extension PendingSaveProposal {
 enum DetailPresentation: Equatable, Hashable {
     case browse
     case edit(entryID: UUID)
-    case create(defaultGroupID: UUID?)
+    case create(defaultGroupID: UUID?, entryType: EntryType = .login)
     case createFromProposal(PendingSaveProposal)
 }
 
@@ -87,8 +87,8 @@ final class NavigationState: ObservableObject {
         detailPresentation = .edit(entryID: entryID)
     }
 
-    func presentCreate(defaultGroupID: UUID?) {
-        detailPresentation = .create(defaultGroupID: defaultGroupID)
+    func presentCreate(defaultGroupID: UUID?, entryType: EntryType = .login) {
+        detailPresentation = .create(defaultGroupID: defaultGroupID, entryType: entryType)
     }
 
     func presentCreateFromProposal(_ proposal: PendingSaveProposal) {

@@ -51,6 +51,16 @@ struct EntryListView: View {
         }
     }
 
+    private func presentCreate(entryType: EntryType) {
+        let binUUID = vaultSession.currentDatabase?.recycleBinGroupUUID
+        let defaultGroupID = GroupTreeOperations.clampedDefaultGroupID(
+            currentGroup.uuid,
+            in: rootGroup,
+            recycleBinGroupUUID: binUUID
+        )
+        navigationState.presentCreate(defaultGroupID: defaultGroupID, entryType: entryType)
+    }
+
     var body: some View {
         List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
             let isSelected = navigationState.selectedEntryID == entry.uuid
@@ -72,14 +82,10 @@ struct EntryListView: View {
         .searchable(text: $navigationState.searchText)
         .toolbar {
             ToolbarItem {
-                Button("Add", systemImage: "plus") {
-                    let binUUID = vaultSession.currentDatabase?.recycleBinGroupUUID
-                    let defaultGroupID = GroupTreeOperations.clampedDefaultGroupID(
-                        currentGroup.uuid,
-                        in: rootGroup,
-                        recycleBinGroupUUID: binUUID
-                    )
-                    navigationState.presentCreate(defaultGroupID: defaultGroupID)
+                Menu("Add", systemImage: "plus") {
+                    Button("Login") { presentCreate(entryType: .login) }
+                    Button("Card") { presentCreate(entryType: .card) }
+                    Button("Notes") { presentCreate(entryType: .notes) }
                 }
             }
             ToolbarItem {

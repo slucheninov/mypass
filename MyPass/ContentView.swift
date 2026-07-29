@@ -60,13 +60,34 @@ private struct DetailColumnView: View {
     var body: some View {
         switch navigationState.detailPresentation {
         case .browse:
-            EntryDetailView()
+            browseDetail()
         case .edit(let entryID):
             entryEdit(existingID: entryID)
-        case .create(let defaultGroupID):
-            entryEdit(existingID: nil, defaultGroupID: defaultGroupID)
+        case .create(let defaultGroupID, let entryType):
+            entryEdit(existingID: nil, defaultGroupID: defaultGroupID, entryType: entryType)
         case .createFromProposal(let proposal):
             entryEdit(existingID: nil, proposal: proposal)
+        }
+    }
+
+    private var currentBrowseEntry: KdbxEntry? {
+        guard let id = navigationState.selectedEntryID else { return nil }
+        return EntrySearch.allEntries(in: rootGroup).first { $0.uuid == id }
+    }
+
+    @ViewBuilder
+    private func browseDetail() -> some View {
+        if let entry = currentBrowseEntry {
+            switch entry.entryType {
+            case .card:
+                CardDetailView(entry: entry)
+            case .notes:
+                NotesDetailView(entry: entry)
+            case .login:
+                EntryDetailView()
+            }
+        } else {
+            EntryDetailView()
         }
     }
 
@@ -74,46 +95,67 @@ private struct DetailColumnView: View {
     private func entryEdit(
         existingID: UUID?,
         defaultGroupID: UUID? = nil,
-        proposal: PendingSaveProposal? = nil
+        proposal: PendingSaveProposal? = nil,
+        entryType: EntryType = .login
     ) -> some View {
         let targetGroupID = resolvedDefaultGroupID(existingID: existingID, defaultGroupID: defaultGroupID)
         let existingEntry = resolvedEntry(existingID: existingID, proposal: proposal)
-        EntryEditView(
-            existingEntry: existingEntry,
-            rootGroup: rootGroup,
-            recycleBinGroupUUID: vaultSession.currentDatabase?.recycleBinGroupUUID,
-            defaultGroupID: targetGroupID,
-            onCancel: { navigationState.presentBrowse() },
-            onSave: { saved, selectedGroupID in
-                vaultSession.mutate { database in
-                    if let existingID {
-                        EntryPersistence.replaceEntry(saved, in: database.rootGroup)
-                        if let location = GroupTreeOperations.entryLocation(entryID: existingID, in: database.rootGroup),
-                           location.group.uuid != selectedGroupID {
-                            GroupTreeOperations.moveEntry(withID: saved.uuid, to: selectedGroupID, in: database.rootGroup)
-                        }
-                    } else {
-                        EntryPersistence.addEntry(saved, toGroupWithID: selectedGroupID, in: database.rootGroup)
+        let resolvedType = existingEntry?.entryType ?? entryType
+        let recycleBinGroupUUID = vaultSession.currentDatabase?.recycleBinGroupUUID
+
+        let onCancel: () -> Void = { navigationState.presentBrowse() }
+        let onSave: (KdbxEntry, UUID) -> Void = { saved, selectedGroupID in
+            vaultSession.mutate { database in
+                if let existingID {
+                    EntryPersistence.replaceEntry(saved, in: database.rootGroup)
+                    if let location = GroupTreeOperations.entryLocation(entryID: existingID, in: database.rootGroup),
+                       location.group.uuid != selectedGroupID {
+                        GroupTreeOperations.moveEntry(withID: saved.uuid, to: selectedGroupID, in: database.rootGroup)
                     }
+                } else {
+                    EntryPersistence.addEntry(saved, toGroupWithID: selectedGroupID, in: database.rootGroup)
                 }
-                navigationState.selectedEntryID = saved.uuid
-                navigationState.presentBrowse()
-            },
-            onDelete: {
-                guard let existingEntry else { return }
-                vaultSession.mutate { database in
-                    GroupTreeOperations.softDeleteEntry(
-                        withID: existingEntry.uuid,
-                        in: database.rootGroup,
-                        deletedObjects: &database.deletedObjects,
-                        recycleBinGroupUUID: &database.recycleBinGroupUUID
-                    )
-                }
-                navigationState.selectedEntryID = nil
-                navigationState.presentBrowse()
             }
-        )
-        .id(navigationState.detailPresentation)
+            navigationState.selectedEntryID = saved.uuid
+            navigationState.presentBrowse()
+        }
+        let onDelete: () -> Void = {
+            guard let existingEntry else { return }
+            vaultSession.mutate { database in
+                GroupTreeOperations.softDeleteEntry(
+                    withID: existingEntry.uuid,
+                    in: database.rootGroup,
+                    deletedObjects: &database.deletedObjects,
+                    recycleBinGroupUUID: &database.recycleBinGroupUUID
+                )
+            }
+            navigationState.selectedEntryID = nil
+            navigationState.presentBrowse()
+        }
+
+        switch resolvedType {
+        case .login:
+            EntryEditView(
+                existingEntry: existingEntry, rootGroup: rootGroup,
+                recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
+                onCancel: onCancel, onSave: onSave, onDelete: onDelete
+            )
+            .id(navigationState.detailPresentation)
+        case .card:
+            CardEditView(
+                existingEntry: existingEntry, rootGroup: rootGroup,
+                recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
+                onCancel: onCancel, onSave: onSave, onDelete: onDelete
+            )
+            .id(navigationState.detailPresentation)
+        case .notes:
+            NotesEditView(
+                existingEntry: existingEntry, rootGroup: rootGroup,
+                recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
+                onCancel: onCancel, onSave: onSave, onDelete: onDelete
+            )
+            .id(navigationState.detailPresentation)
+        }
     }
 
     private func resolvedDefaultGroupID(existingID: UUID?, defaultGroupID: UUID?) -> UUID {
