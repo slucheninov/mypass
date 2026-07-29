@@ -77,19 +77,16 @@ struct NotesEditView: View {
         }
     }
 
+    // Only B/I/inline-code are offered here: U, H1-H3, HR, and fenced code blocks all
+    // require block-level or raw-HTML rendering that NotesBodyRenderer's plain-Text
+    // display can't show (see NotesBodyRenderer's doc comment) — offering a formatting
+    // action with no visible effect would be worse than not offering it at all.
     private var markdownToolbar: some View {
         HStack(spacing: 8) {
             toolbarButton("bold", "B") { pendingMarkdownAction = .wrap(prefix: "**", suffix: "**") }
             toolbarButton("italic", "I") { pendingMarkdownAction = .wrap(prefix: "*", suffix: "*") }
-            toolbarButton("underline", "U") { pendingMarkdownAction = .wrap(prefix: "<u>", suffix: "</u>") }
             Divider().frame(height: 16)
-            toolbarButton("h1", "H1") { pendingMarkdownAction = .linePrefix("# ") }
-            toolbarButton("h2", "H2") { pendingMarkdownAction = .linePrefix("## ") }
-            toolbarButton("h3", "H3") { pendingMarkdownAction = .linePrefix("### ") }
-            Divider().frame(height: 16)
-            toolbarButton("hr", "HR") { pendingMarkdownAction = .insertBlock("\n---\n") }
             toolbarButton("code", "`code`") { pendingMarkdownAction = .wrap(prefix: "`", suffix: "`") }
-            toolbarButton("codeblock", "```") { pendingMarkdownAction = .insertBlock("```\n\n```") }
             Spacer(minLength: 0)
         }
     }

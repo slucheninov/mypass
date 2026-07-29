@@ -3,8 +3,6 @@ import AppKit
 
 enum MarkdownWrapAction {
     case wrap(prefix: String, suffix: String)
-    case linePrefix(String)
-    case insertBlock(String)
 }
 
 struct MarkdownTextEditor: NSViewRepresentable {
@@ -75,12 +73,6 @@ struct MarkdownTextEditor: NSViewRepresentable {
                 textView.insertText(replacement, replacementRange: selectedRange)
                 let newCursorLocation = selectedRange.location + prefix.count + selectedText.count + suffix.count
                 textView.setSelectedRange(NSRange(location: newCursorLocation, length: 0))
-            case .linePrefix(let prefix):
-                let lineRange = nsString.lineRange(for: selectedRange)
-                let line = nsString.substring(with: lineRange)
-                textView.insertText(prefix + line, replacementRange: lineRange)
-            case .insertBlock(let block):
-                textView.insertText(block, replacementRange: selectedRange)
             }
             text.wrappedValue = textView.string
         }
