@@ -54,11 +54,11 @@ enum VaultMigrationError: Error {
 /// Governing rule for every branch: never destroy a copy before its
 /// replacement has been validated.
 final class VaultMigrationService {
-    private let fileStore: VaultFileStore
+    private let fileStore: VaultPrimaryStorage
     private let cipher: KdbxCipher
     private let compression: KdbxCompression
 
-    init(fileStore: VaultFileStore, cipher: KdbxCipher = .aes256, compression: KdbxCompression = .gzip) {
+    init(fileStore: VaultPrimaryStorage, cipher: KdbxCipher = .aes256, compression: KdbxCompression = .gzip) {
         self.fileStore = fileStore
         self.cipher = cipher
         self.compression = compression

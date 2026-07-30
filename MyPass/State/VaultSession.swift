@@ -25,7 +25,7 @@ final class VaultSession: ObservableObject {
     @Published private(set) var state: VaultState = .locked
     @Published private(set) var lastSaveError: String?
 
-    private let fileStore: VaultFileStore
+    private var fileStore: VaultPrimaryStorage
 
     /// Optional remote sync orchestrator (Phase 3). `nil` for sessions that
     /// only ever use local storage — every existing Phase 2 call site keeps
@@ -55,7 +55,7 @@ final class VaultSession: ObservableObject {
         return !touchAccessPersistWorkItem.isCancelled
     }
 
-    init(fileStore: VaultFileStore, syncEngine: SyncEngine? = nil) {
+    init(fileStore: VaultPrimaryStorage, syncEngine: SyncEngine? = nil) {
         self.fileStore = fileStore
         self.syncEngine = syncEngine
     }
@@ -100,6 +100,26 @@ final class VaultSession: ObservableObject {
         touchAccessPersistWorkItem = nil
         state = .locked
         sessionPassword = nil
+    }
+
+    /// Swaps the primary store the session reads/writes from — used when the
+    /// user changes the configured vault location. Callers are responsible for
+    /// having already migrated any existing data to the new store (see
+    /// `VaultLocationChangeSheet`); this method only changes where subsequent
+    /// `unlock`/`persist` calls point.
+    func updatePrimaryStore(_ newStore: VaultPrimaryStorage) {
+        fileStore = newStore
+    }
+
+    /// Checks `password` against the vault currently on disk at `fileStore`,
+    /// without mutating `state` or `sessionPassword` — used to gate a settings
+    /// change (e.g. changing the vault location) behind proof of ownership
+    /// without disturbing an in-progress unlocked session or its unsaved edits.
+    /// Returns `false` (never throws) for a wrong password, a corrupt file, or
+    /// when no vault exists yet at the current location.
+    func verifyPassword(_ password: String) -> Bool {
+        guard let data = (try? fileStore.load()) ?? nil else { return false }
+        return (try? KdbxDatabase.open(data: data, password: password)) != nil
     }
 
     func save(password: String) throws {

@@ -513,6 +513,48 @@ final class VaultSessionTests: XCTestCase {
         // Verify the vault is still locked, not silently re-unlocked by the guarded code
         XCTAssertEqual(session.state, .locked)
     }
+
+    // MARK: - verifyPassword / updatePrimaryStore
+
+    func testVerifyPasswordReturnsTrueForCorrectPasswordWithoutMutatingState() throws {
+        let session = VaultSession(fileStore: VaultFileStore(directory: tempDir))
+        try session.unlock(password: "correct-horse")
+        session.lock()
+
+        XCTAssertTrue(session.verifyPassword("correct-horse"))
+        XCTAssertEqual(session.state, .locked)
+    }
+
+    func testVerifyPasswordReturnsFalseForWrongPassword() throws {
+        let session = VaultSession(fileStore: VaultFileStore(directory: tempDir))
+        try session.unlock(password: "correct-horse")
+        session.lock()
+
+        XCTAssertFalse(session.verifyPassword("wrong-password"))
+    }
+
+    func testVerifyPasswordReturnsFalseWhenNoVaultExistsYet() {
+        let session = VaultSession(fileStore: VaultFileStore(directory: tempDir))
+        XCTAssertFalse(session.verifyPassword("anything"))
+    }
+
+    func testUpdatePrimaryStoreSwapsWhereSubsequentUnlockReadsFrom() throws {
+        let firstDir = tempDir.appendingPathComponent("first")
+        let secondDir = tempDir.appendingPathComponent("second")
+        try FileManager.default.createDirectory(at: firstDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: secondDir, withIntermediateDirectories: true)
+
+        let session = VaultSession(fileStore: VaultFileStore(directory: firstDir))
+        try session.unlock(password: "pw") // creates a fresh vault under firstDir
+        session.lock()
+
+        session.updatePrimaryStore(VaultFileStore(directory: secondDir))
+
+        // secondDir has no vault yet, so unlocking now creates a brand new one there.
+        XCTAssertNil(try session.loadVaultData())
+        try session.unlock(password: "different-pw")
+        XCTAssertNotNil(session.currentDatabase)
+    }
 }
 
 // MARK: - Test Doubles
