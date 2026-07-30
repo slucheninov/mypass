@@ -296,7 +296,7 @@ struct VaultLocationChangeSheet: View {
                       bookmarkData: chosenFolderBookmark,
                       localBackupDirectory: applicationSupportBackupsDirectory
                   ) else {
-                errorMessage = "The vault was moved, but MyPass could not switch to it. Restart MyPass and try again."
+                errorMessage = "The vault was moved, but MyPass could not switch to it. Choose the folder again and retry."
                 return
             }
             vaultSession.updatePrimaryStore(newStore)
