@@ -3,16 +3,23 @@ import AppKit
 import MyPassKit
 import SyncKit
 
-/// First-connect flow for the iCloud Drive backend: pick a folder inside
-/// iCloud Drive, see whether it already holds a vault, choose how to
-/// reconcile, run the migration, restart. Kept out of `SyncSettingsPane`,
-/// which already carries three backends' worth of configuration.
-struct SyncMigrationSheet: View {
+/// Changes the vault's primary `VaultLocation` (Local ↔ iCloud Drive),
+/// reachable whether the app is currently locked or unlocked. Entering the
+/// master password here is both the "prove you own this vault" check and,
+/// when the app was locked, the unlock itself — `VaultSession.verifyPassword`
+/// checks it without side effects, and only on success is the vault actually
+/// unlocked (if it wasn't already) before the existing probe/strategy/migrate
+/// flow (`VaultMigrationService`, unchanged) runs.
+struct VaultLocationChangeSheet: View {
+    let targetLocation: VaultLocationOption
+
     @EnvironmentObject private var vaultSession: VaultSession
     @Environment(\.dismiss) private var dismiss
+    @AppStorage("vaultLocation") private var vaultLocationRawValue: String = VaultLocationOption.local.rawValue
     @AppStorage(SyncBackendResolver.iCloudFolderBookmarkKey) private var syncICloudFolderBookmarkData: Data?
 
-    @State private var step: Step = .chooseFolder
+    @State private var step: Step
+    @State private var confirmPassword: String = ""
     @State private var chosenFolderURL: URL?
     @State private var chosenFolderBookmark: Data?
     @State private var outsideICloudDriveWarning: String?
@@ -21,7 +28,13 @@ struct SyncMigrationSheet: View {
     @State private var errorMessage: String?
     @State private var successMessage: String?
 
+    init(targetLocation: VaultLocationOption) {
+        self.targetLocation = targetLocation
+        _step = State(initialValue: .confirmPassword)
+    }
+
     private enum Step: Equatable {
+        case confirmPassword
         case chooseFolder
         case probing
         case confirmStrategy
@@ -29,9 +42,17 @@ struct SyncMigrationSheet: View {
         case finished
     }
 
+    /// Pure, testable version of "does the confirm-password step need to run
+    /// right now" — factored out so it does not depend on `VaultSession`'s
+    /// concrete `VaultState`/`KdbxDatabase` types.
+    enum LockStateSnapshot { case locked, unlocked }
+    static func needsPasswordConfirmation(currentState: LockStateSnapshot) -> Bool {
+        currentState == .locked
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Set Up iCloud Sync")
+            Text("Change Vault Location")
                 .font(.headline)
 
             content
@@ -47,14 +68,35 @@ struct SyncMigrationSheet: View {
         }
         .padding(20)
         .frame(width: 460)
+        .onAppear {
+            let snapshot: LockStateSnapshot = isVaultUnlocked ? .unlocked : .locked
+            if !Self.needsPasswordConfirmation(currentState: snapshot) {
+                step = targetLocation == .iCloudDrive ? .chooseFolder : .probing
+                if targetLocation == .local { startProbeAgainstLocal() }
+            }
+        }
+    }
+
+    private var isVaultUnlocked: Bool {
+        if case .unlocked = vaultSession.state { return true }
+        return false
     }
 
     @ViewBuilder
     private var content: some View {
         switch step {
+        case .confirmPassword:
+            VStack(alignment: .leading, spacing: 8) {
+                Text("Enter your master password to confirm this change.")
+                    .fixedSize(horizontal: false, vertical: true)
+                SecureField("Master Password", text: $confirmPassword)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(confirmPasswordAndContinue)
+            }
+
         case .chooseFolder:
             VStack(alignment: .leading, spacing: 8) {
-                Text("MyPass mirrors its encrypted vault into a folder inside your iCloud Drive. iCloud syncs that folder between your Macs, and no Apple Developer account is needed.")
+                Text("MyPass will keep the vault in a folder inside your iCloud Drive.")
                     .fixedSize(horizontal: false, vertical: true)
                 if let chosenFolderURL {
                     Text(chosenFolderURL.path)
@@ -74,7 +116,7 @@ struct SyncMigrationSheet: View {
         case .probing:
             HStack(spacing: 8) {
                 ProgressView().controlSize(.small)
-                Text("Checking the folder…")
+                Text("Checking the target location…")
             }
 
         case .confirmStrategy:
@@ -92,8 +134,6 @@ struct SyncMigrationSheet: View {
                 Label(successMessage ?? "Done.", systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .fixedSize(horizontal: false, vertical: true)
-                Text("Quit and reopen MyPass to start syncing: the sync backend is created when the app launches.")
-                    .fixedSize(horizontal: false, vertical: true)
             }
         }
     }
@@ -102,7 +142,7 @@ struct SyncMigrationSheet: View {
     private var strategyChooser: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let probe, probe.exists {
-                Text("That folder already contains a vault\(Self.describe(probe)). Choose what to do with it.")
+                Text("That location already contains a vault\(Self.describe(probe)). Choose what to do with it.")
                     .fixedSize(horizontal: false, vertical: true)
                 Picker("", selection: $strategy) {
                     ForEach([VaultMigrationStrategy.merge, .adoptRemote, .overwriteRemote]) { option in
@@ -116,7 +156,7 @@ struct SyncMigrationSheet: View {
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
             } else {
-                Text("That folder has no vault yet. MyPass will upload the vault from this Mac. Nothing on this Mac changes.")
+                Text("That location has no vault yet. MyPass will move the vault from its current location there.")
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
@@ -127,11 +167,16 @@ struct SyncMigrationSheet: View {
         HStack {
             Spacer()
             switch step {
+            case .confirmPassword:
+                Button("Cancel") { dismiss() }
+                Button("Continue") { confirmPasswordAndContinue() }
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(confirmPassword.isEmpty)
             case .chooseFolder:
                 Button("Cancel") { dismiss() }
                 Button(chosenFolderURL == nil ? "Choose Folder…" : "Choose Another Folder…") { chooseFolder() }
                 if chosenFolderBookmark != nil {
-                    Button("Continue") { startProbe() }
+                    Button("Continue") { startProbeAgainstICloud() }
                         .keyboardShortcut(.defaultAction)
                 }
             case .probing, .migrating:
@@ -140,9 +185,9 @@ struct SyncMigrationSheet: View {
             case .confirmStrategy:
                 Button("Back") {
                     errorMessage = nil
-                    step = .chooseFolder
+                    step = targetLocation == .iCloudDrive ? .chooseFolder : .confirmPassword
                 }
-                Button("Migrate") { startMigration() }
+                Button("Change Location") { startMigration() }
                     .keyboardShortcut(.defaultAction)
             case .finished:
                 Button("Done") { dismiss() }
@@ -152,6 +197,23 @@ struct SyncMigrationSheet: View {
     }
 
     // MARK: - Actions
+
+    private func confirmPasswordAndContinue() {
+        guard vaultSession.verifyPassword(confirmPassword) else {
+            errorMessage = "Incorrect password."
+            return
+        }
+        if case .locked = vaultSession.state {
+            try? vaultSession.unlock(password: confirmPassword)
+        }
+        confirmPassword = ""
+        errorMessage = nil
+        if targetLocation == .iCloudDrive {
+            step = .chooseFolder
+        } else {
+            startProbeAgainstLocal()
+        }
+    }
 
     private func chooseFolder() {
         let panel = NSOpenPanel()
@@ -169,7 +231,7 @@ struct SyncMigrationSheet: View {
         chosenFolderURL = folderURL
         outsideICloudDriveWarning = ICloudDriveLocation.isInsideICloudDrive(folderURL)
             ? nil
-            : "This folder is not inside iCloud Drive, so iCloud will not sync it. MyPass will still mirror the vault there."
+            : "This folder is not inside iCloud Drive, so iCloud will not sync it. MyPass will still keep the vault there."
         do {
             chosenFolderBookmark = try iCloudBackend.createFolderBookmark(for: folderURL)
         } catch {
@@ -178,8 +240,16 @@ struct SyncMigrationSheet: View {
         }
     }
 
-    private func startProbe() {
-        guard let backend = makeBackend() else { return }
+    private func startProbeAgainstICloud() {
+        guard let backend = makeICloudTargetBackend() else { return }
+        runProbe(against: backend)
+    }
+
+    private func startProbeAgainstLocal() {
+        runProbe(against: makeLocalTargetBackend())
+    }
+
+    private func runProbe(against backend: StorageBackend) {
         errorMessage = nil
         step = .probing
         vaultSession.probeMigrationTarget(remote: backend) { result in
@@ -195,28 +265,63 @@ struct SyncMigrationSheet: View {
     }
 
     private func startMigration() {
-        guard let backend = makeBackend() else { return }
+        let backend: StorageBackend?
+        switch targetLocation {
+        case .iCloudDrive: backend = makeICloudTargetBackend()
+        case .local: backend = makeLocalTargetBackend()
+        }
+        guard let backend else { return }
+
         errorMessage = nil
         step = .migrating
         vaultSession.performMigration(to: backend, strategy: strategy) { result in
             switch result {
             case .success(let outcome):
-                // The bookmark is only persisted once a migration actually
-                // succeeded, so a failed attempt never leaves the app pointing
-                // at a folder it could not use.
-                self.syncICloudFolderBookmarkData = self.chosenFolderBookmark
-                // A checkpoint left over from an earlier iCloud folder would
-                // make the first sync after restart skip the merge.
-                SyncBackendResolver.clearCheckpoint(for: .iCloud)
-                self.successMessage = Self.successMessage(for: outcome)
-                self.step = .finished
+                self.applyLocationChange(outcome: outcome)
             case .failure(let error):
                 self.handle(error)
             }
         }
     }
 
-    private func makeBackend() -> iCloudBackend? {
+    /// Only reached after `VaultMigrationService.migrate` has already
+    /// succeeded — persists the new location and swaps `VaultSession`'s live
+    /// primary store, so nothing is written to settings until the data is
+    /// safely in place.
+    private func applyLocationChange(outcome: VaultMigrationOutcome) {
+        switch targetLocation {
+        case .iCloudDrive:
+            guard let chosenFolderBookmark,
+                  let newStore = try? ICloudDriveVaultStore(
+                      bookmarkData: chosenFolderBookmark,
+                      localBackupDirectory: applicationSupportBackupsDirectory
+                  ) else {
+                errorMessage = "The vault was moved, but MyPass could not switch to it. Restart MyPass and try again."
+                return
+            }
+            vaultSession.updatePrimaryStore(newStore)
+            syncICloudFolderBookmarkData = chosenFolderBookmark
+        case .local:
+            vaultSession.updatePrimaryStore(VaultFileStore(directory: applicationSupportDirectory))
+        }
+        vaultLocationRawValue = targetLocation.rawValue
+        SyncBackendResolver.clearCheckpoint(for: .folder)
+        SyncBackendResolver.clearCheckpoint(for: .sftp)
+        successMessage = Self.successMessage(for: outcome)
+        step = .finished
+    }
+
+    private var applicationSupportDirectory: URL {
+        FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MyPass")
+    }
+
+    private var applicationSupportBackupsDirectory: URL {
+        applicationSupportDirectory.appendingPathComponent("backups")
+    }
+
+    private func makeICloudTargetBackend() -> iCloudBackend? {
         guard let chosenFolderBookmark else {
             errorMessage = "Choose a folder first."
             return nil
@@ -229,13 +334,13 @@ struct SyncMigrationSheet: View {
         }
     }
 
+    private func makeLocalTargetBackend() -> VaultFileStore {
+        VaultFileStore(directory: applicationSupportDirectory)
+    }
+
     private func handle(_ error: Error) {
         if let backendError = error as? iCloudBackendError,
            backendError == .folderBookmarkUnresolvable || backendError == .folderUnavailable {
-            // The candidate the user just tried didn't work, so forget it —
-            // but only wipe the persisted, already-configured bookmark when
-            // the failure actually invalidates it. A failing candidate must
-            // never take down a different, working configuration.
             if Self.shouldClearPersistedBookmark(
                 failingBookmark: chosenFolderBookmark,
                 persistedBookmark: syncICloudFolderBookmarkData
@@ -246,14 +351,12 @@ struct SyncMigrationSheet: View {
             chosenFolderURL = nil
         }
         errorMessage = Self.message(for: error)
-        step = .chooseFolder
+        step = targetLocation == .iCloudDrive ? .chooseFolder : .confirmPassword
     }
 
-    // MARK: - Copy
+    // MARK: - Copy (unchanged from the previous SyncMigrationSheet — see
+    // VaultLocationChangeSheetMessageTests for coverage)
 
-    /// `true` when the bookmark that just failed to resolve is the one persisted
-    /// as the app's configured iCloud folder — i.e. the failure invalidates the
-    /// active configuration, not just a candidate folder the user was trying out.
     static func shouldClearPersistedBookmark(failingBookmark: Data?, persistedBookmark: Data?) -> Bool {
         guard let failingBookmark, let persistedBookmark, !failingBookmark.isEmpty else { return false }
         return failingBookmark == persistedBookmark
@@ -272,36 +375,36 @@ struct SyncMigrationSheet: View {
 
     static func title(for strategy: VaultMigrationStrategy) -> String {
         switch strategy {
-        case .seedRemote: return "Upload the vault from this Mac"
+        case .seedRemote: return "Move the vault to the new location"
         case .merge: return "Merge both vaults (recommended)"
-        case .adoptRemote: return "Use the vault from the folder"
-        case .overwriteRemote: return "Replace the vault in the folder"
+        case .adoptRemote: return "Use the vault already at the new location"
+        case .overwriteRemote: return "Replace the vault at the new location"
         }
     }
 
     static func explanation(for strategy: VaultMigrationStrategy) -> String {
         switch strategy {
         case .seedRemote:
-            return "The folder has no vault yet, so the vault from this Mac is uploaded unchanged."
+            return "The new location has no vault yet, so the current vault is moved there unchanged."
         case .merge:
             return "Keeps every entry from both sides, using the same merge rules as normal syncing. Both copies end up identical."
         case .adoptRemote:
-            return "Replaces this Mac's vault with the one in the folder. The current local vault is snapshotted into the backups folder first."
+            return "Replaces the current vault with the one already at the new location. The current vault is snapshotted into the backups folder first."
         case .overwriteRemote:
-            return "Replaces the vault in the folder with the one from this Mac. The copy currently in the folder is discarded."
+            return "Replaces the vault at the new location with the current one. The copy currently there is discarded."
         }
     }
 
     static func successMessage(for outcome: VaultMigrationOutcome) -> String {
         switch outcome.strategy {
         case .seedRemote:
-            return "The vault from this Mac is now in the iCloud Drive folder."
+            return "The vault is now at the new location."
         case .merge:
-            return "Both vaults were merged. This Mac and the iCloud Drive folder now hold the same entries."
+            return "Both vaults were merged. The current vault and the new location now hold the same entries."
         case .adoptRemote:
-            return "This Mac now uses the vault from the iCloud Drive folder. The previous local vault was kept in the backups folder."
+            return "MyPass now uses the vault that was already at the new location. The previous vault was kept in the backups folder."
         case .overwriteRemote:
-            return "The iCloud Drive folder now holds the vault from this Mac."
+            return "The new location now holds the current vault."
         }
     }
 
@@ -312,29 +415,25 @@ struct SyncMigrationSheet: View {
         if let migrationError = error as? VaultMigrationError {
             switch migrationError {
             case .vaultLocked:
-                return "Unlock MyPass before setting up iCloud sync."
+                return "Unlock MyPass before changing the vault location."
             case .remoteNotAValidVault:
-                return "The file in that folder is not a MyPass vault. Nothing was changed on either side."
+                return "The file at that location is not a MyPass vault. Nothing was changed on either side."
             case .remotePasswordMismatch:
-                return "The vault in that folder uses a different password. Nothing was changed on either side."
+                return "The vault at that location uses a different password. Nothing was changed on either side."
             case .remoteUnreadable(let underlying):
-                // `VaultMigrationService` wraps every thrown error uniformly,
-                // including a real iCloud download timeout. Unwrap it so the
-                // dedicated "still downloading" copy below is reachable and
-                // the message matches what actually failed.
                 if let backendError = underlying as? iCloudBackendError {
                     return message(forICloudBackendError: backendError)
                 }
-                return "MyPass could not read that folder: \(underlying)"
+                return "MyPass could not read that location: \(underlying)"
             case .remoteWriteFailed(let underlying):
                 if let backendError = underlying as? iCloudBackendError {
                     return message(forICloudBackendError: backendError)
                 }
-                return "MyPass could not write to that folder: \(underlying). Your local vault was not changed."
+                return "MyPass could not write to that location: \(underlying). The current vault was not changed."
             case .serializedVaultInvalid:
-                return "MyPass could not prepare the vault for upload. Nothing was written to the folder."
+                return "MyPass could not prepare the vault for the move. Nothing was written to the new location."
             case .localWriteFailed(let underlying):
-                return "The copy in iCloud Drive is now ahead of the vault on this Mac: writing the result to disk failed (\(underlying)). Run setup again and choose \u{201C}Use the vault from the folder\u{201D} to catch up."
+                return "The new location is now ahead of the current vault: writing the result failed (\(underlying)). Try again and choose \u{201C}Use the vault already at the new location\u{201D} to catch up."
             }
         }
         return "\(error)"
@@ -345,9 +444,9 @@ struct SyncMigrationSheet: View {
         case .folderBookmarkUnresolvable, .folderUnavailable:
             return "That folder is no longer reachable. Choose the iCloud Drive folder again."
         case .downloadTimedOut:
-            return "The vault in that folder is still downloading from iCloud. Wait until it finishes, then try again."
+            return "The vault at that location is still downloading from iCloud. Wait until it finishes, then try again."
         case .containerUnavailable:
-            return "MyPass syncs through a folder in iCloud Drive, not a private iCloud container. Choose a folder to continue."
+            return "MyPass keeps the vault in a folder in iCloud Drive, not a private iCloud container. Choose a folder to continue."
         }
     }
 }

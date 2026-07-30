@@ -2,34 +2,35 @@ import XCTest
 import SyncKit
 @testable import MyPass
 
-/// The migration sheet's user-facing copy carries safety guarantees, so the
-/// wording of the branches that matter is asserted rather than trusted.
-final class SyncMigrationSheetMessageTests: XCTestCase {
+/// The vault location change sheet's user-facing copy carries safety
+/// guarantees, so the wording of the branches that matter is asserted rather
+/// than trusted.
+final class VaultLocationChangeSheetMessageTests: XCTestCase {
     func testLocalWriteFailureSaysTheCloudCopyIsAhead() {
         struct Boom: Error {}
-        let message = SyncMigrationSheet.message(for: VaultMigrationError.localWriteFailed(underlying: Boom()))
+        let message = VaultLocationChangeSheet.message(for: VaultMigrationError.localWriteFailed(underlying: Boom()))
         XCTAssertTrue(message.localizedCaseInsensitiveContains("ahead"), message)
     }
 
     func testPasswordMismatchSaysNothingChanged() {
-        let message = SyncMigrationSheet.message(for: VaultMigrationError.remotePasswordMismatch)
+        let message = VaultLocationChangeSheet.message(for: VaultMigrationError.remotePasswordMismatch)
         XCTAssertTrue(message.localizedCaseInsensitiveContains("different password"), message)
         XCTAssertTrue(message.localizedCaseInsensitiveContains("nothing was changed"), message)
     }
 
     func testInvalidRemoteVaultSaysNothingChanged() {
-        let message = SyncMigrationSheet.message(for: VaultMigrationError.remoteNotAValidVault)
+        let message = VaultLocationChangeSheet.message(for: VaultMigrationError.remoteNotAValidVault)
         XCTAssertTrue(message.localizedCaseInsensitiveContains("nothing was changed"), message)
     }
 
     func testRemoteWriteFailureSaysTheLocalVaultIsIntact() {
         struct Boom: Error {}
-        let message = SyncMigrationSheet.message(for: VaultMigrationError.remoteWriteFailed(underlying: Boom()))
-        XCTAssertTrue(message.localizedCaseInsensitiveContains("local vault was not changed"), message)
+        let message = VaultLocationChangeSheet.message(for: VaultMigrationError.remoteWriteFailed(underlying: Boom()))
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("current vault was not changed"), message)
     }
 
     func testDownloadTimeoutOffersToWaitAndRetry() {
-        let message = SyncMigrationSheet.message(for: iCloudBackendError.downloadTimedOut)
+        let message = VaultLocationChangeSheet.message(for: iCloudBackendError.downloadTimedOut)
         XCTAssertTrue(message.localizedCaseInsensitiveContains("still downloading"), message)
     }
 
@@ -45,13 +46,13 @@ final class SyncMigrationSheetMessageTests: XCTestCase {
             VaultMigrationError.serializedVaultInvalid
         ]
         for error in errors {
-            let message = SyncMigrationSheet.message(for: error)
+            let message = VaultLocationChangeSheet.message(for: error)
             XCTAssertFalse(message.localizedCaseInsensitiveContains("sign in to iCloud"), message)
         }
     }
 
     func testMergeIsDescribedAsKeepingBothSides() {
-        let explanation = SyncMigrationSheet.explanation(for: .merge)
+        let explanation = VaultLocationChangeSheet.explanation(for: .merge)
         XCTAssertTrue(explanation.localizedCaseInsensitiveContains("both sides"), explanation)
     }
 
@@ -61,20 +62,20 @@ final class SyncMigrationSheetMessageTests: XCTestCase {
             modificationDate: Date(timeIntervalSince1970: 1_700_000_000),
             byteCount: 4096
         )
-        let description = SyncMigrationSheet.describe(probe)
+        let description = VaultLocationChangeSheet.describe(probe)
         XCTAssertTrue(description.contains("KB"), description)
         XCTAssertTrue(description.localizedCaseInsensitiveContains("modified"), description)
     }
 
     func testProbeDescriptionIsEmptyWithoutMetadata() {
         let probe = VaultMigrationTargetProbe(exists: true, modificationDate: nil, byteCount: nil)
-        XCTAssertEqual(SyncMigrationSheet.describe(probe), "")
+        XCTAssertEqual(VaultLocationChangeSheet.describe(probe), "")
     }
 
     // MARK: - Download timeout unwrapping (wrapped by VaultMigrationService)
 
     func testRemoteWriteFailureFromDownloadTimeoutSaysStillDownloading() {
-        let message = SyncMigrationSheet.message(
+        let message = VaultLocationChangeSheet.message(
             for: VaultMigrationError.remoteWriteFailed(underlying: iCloudBackendError.downloadTimedOut)
         )
         XCTAssertTrue(message.localizedCaseInsensitiveContains("still downloading"), message)
@@ -82,7 +83,7 @@ final class SyncMigrationSheetMessageTests: XCTestCase {
     }
 
     func testRemoteUnreadableFromDownloadTimeoutSaysStillDownloading() {
-        let message = SyncMigrationSheet.message(
+        let message = VaultLocationChangeSheet.message(
             for: VaultMigrationError.remoteUnreadable(underlying: iCloudBackendError.downloadTimedOut)
         )
         XCTAssertTrue(message.localizedCaseInsensitiveContains("still downloading"), message)
@@ -91,38 +92,48 @@ final class SyncMigrationSheetMessageTests: XCTestCase {
 
     func testRemoteWriteFailureFromNonBackendErrorKeepsGenericMessage() {
         struct Boom: Error {}
-        let message = SyncMigrationSheet.message(for: VaultMigrationError.remoteWriteFailed(underlying: Boom()))
-        XCTAssertTrue(message.localizedCaseInsensitiveContains("local vault was not changed"), message)
+        let message = VaultLocationChangeSheet.message(for: VaultMigrationError.remoteWriteFailed(underlying: Boom()))
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("current vault was not changed"), message)
     }
 
     // MARK: - shouldClearPersistedBookmark
 
     func testShouldClearPersistedBookmarkWhenFailingBookmarkMatchesPersisted() {
         let bookmark = Data("same-folder".utf8)
-        XCTAssertTrue(SyncMigrationSheet.shouldClearPersistedBookmark(
+        XCTAssertTrue(VaultLocationChangeSheet.shouldClearPersistedBookmark(
             failingBookmark: bookmark,
             persistedBookmark: bookmark
         ))
     }
 
     func testShouldNotClearPersistedBookmarkWhenFailingBookmarkDiffersFromPersisted() {
-        XCTAssertFalse(SyncMigrationSheet.shouldClearPersistedBookmark(
+        XCTAssertFalse(VaultLocationChangeSheet.shouldClearPersistedBookmark(
             failingBookmark: Data("candidate-folder".utf8),
             persistedBookmark: Data("working-folder".utf8)
         ))
     }
 
     func testShouldNotClearPersistedBookmarkWhenNoPersistedBookmarkExists() {
-        XCTAssertFalse(SyncMigrationSheet.shouldClearPersistedBookmark(
+        XCTAssertFalse(VaultLocationChangeSheet.shouldClearPersistedBookmark(
             failingBookmark: Data("candidate-folder".utf8),
             persistedBookmark: nil
         ))
     }
 
     func testShouldNotClearPersistedBookmarkWhenFailingBookmarkIsNil() {
-        XCTAssertFalse(SyncMigrationSheet.shouldClearPersistedBookmark(
+        XCTAssertFalse(VaultLocationChangeSheet.shouldClearPersistedBookmark(
             failingBookmark: nil,
             persistedBookmark: Data("working-folder".utf8)
         ))
+    }
+
+    // MARK: - needsPasswordConfirmation
+
+    func testConfirmStepIsSkippedWhenAlreadyUnlocked() {
+        XCTAssertFalse(VaultLocationChangeSheet.needsPasswordConfirmation(currentState: .unlocked))
+    }
+
+    func testConfirmStepIsRequiredWhenLocked() {
+        XCTAssertTrue(VaultLocationChangeSheet.needsPasswordConfirmation(currentState: .locked))
     }
 }

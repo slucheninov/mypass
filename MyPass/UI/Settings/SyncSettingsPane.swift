@@ -138,7 +138,11 @@ struct SyncSettingsPane: View {
             .disabled(!isVaultUnlocked)
         }
         .sheet(isPresented: $showingMigrationSheet, onDismiss: refreshICloudStatus) {
-            SyncMigrationSheet()
+            // TODO(Task 7): this whole iCloud section belongs to
+            // VaultLocationSettingsPane now that iCloud Drive is a primary
+            // VaultLocation, not a secondary sync mirror — kept compiling
+            // here only as a stopgap until Task 7 replaces this pane.
+            VaultLocationChangeSheet(targetLocation: .iCloudDrive)
                 .environmentObject(vaultSession)
         }
     }
