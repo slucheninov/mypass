@@ -3,32 +3,19 @@ import AppKit
 import SyncKit
 
 struct SyncSettingsPane: View {
-    @AppStorage("syncBackend") private var syncBackendRawValue: String = SyncBackendOption.local.rawValue
-    @AppStorage("syncLocalFolderBookmark") private var syncLocalFolderBookmarkData: Data?
-    @AppStorage(SyncBackendResolver.iCloudFolderBookmarkKey) private var syncICloudFolderBookmarkData: Data?
+    @AppStorage("secondaryDestination") private var secondaryDestinationRawValue: String = SecondaryDestinationOption.none.rawValue
+    @AppStorage("secondaryFolderBookmark") private var secondaryFolderBookmarkData: Data?
 
-    // SFTP non-secret fields — host/port/username/remotePath/paths only.
-    // The private key PEM and its passphrase NEVER go through @AppStorage/
-    // UserDefaults — they are stored exclusively via CredentialKeychainStore
-    // (Task 9), per the design doc's security stance that secret material
-    // belongs in Keychain, not plist-backed UserDefaults.
     @AppStorage("syncSFTPHost") private var sftpHost: String = ""
     @AppStorage("syncSFTPPort") private var sftpPort: Int = 22
     @AppStorage("syncSFTPUsername") private var sftpUsername: String = ""
     @AppStorage("syncSFTPRemotePath") private var sftpRemotePath: String = "/upload/vault.kdbx"
     @AppStorage("syncSFTPPrivateKeyPath") private var sftpPrivateKeyPath: String = ""
-    // UI-only bookkeeping — known gap: not wired into SFTPBackendConfiguration
-    // (Task 10 has no certificate field), kept only so the chosen path survives
-    // across Settings reopens.
     @AppStorage("syncSFTPCertificatePath") private var sftpCertificatePath: String = ""
 
     @State private var sftpPrivateKeyPEM: String = ""
     @State private var sftpPassphrase: String = ""
     @State private var connectionTestState: ConnectionTestState = .idle
-
-    @State private var iCloudFolderDisplayPath: String?
-    @State private var iCloudStatusMessage: String?
-    @State private var showingMigrationSheet = false
     @State private var manualSyncStatusMessage: String?
 
     @EnvironmentObject private var vaultSession: VaultSession
@@ -40,36 +27,38 @@ struct SyncSettingsPane: View {
         case failure(String)
     }
 
-    private var selectedOption: SyncBackendOption {
-        SyncBackendOption(rawValue: syncBackendRawValue) ?? .local
+    private var selectedOption: SecondaryDestinationOption {
+        SecondaryDestinationOption(rawValue: secondaryDestinationRawValue) ?? .none
     }
 
     var body: some View {
         Form {
             Section {
-                Picker("Backend", selection: $syncBackendRawValue) {
-                    ForEach(SyncBackendOption.allCases) { option in
+                Picker("Also Sync To", selection: $secondaryDestinationRawValue) {
+                    ForEach(SecondaryDestinationOption.allCases) { option in
                         Text(option.rawValue).tag(option.rawValue)
                     }
                 }
                 switch selectedOption {
-                case .local:
-                    localFolderSection
-                case .iCloud:
-                    iCloudSection
+                case .none:
+                    EmptyView()
+                case .folder:
+                    folderSection
                 case .sftp:
                     sftpSection
                 }
-                Button("Sync Now") {
-                    vaultSession.triggerBackgroundSync()
-                    manualSyncStatusMessage = "Started…"
+                if selectedOption != .none {
+                    Button("Sync Now") {
+                        vaultSession.triggerBackgroundSync()
+                        manualSyncStatusMessage = "Started…"
+                    }
+                    if let manualSyncStatusMessage {
+                        Text(manualSyncStatusMessage)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                if let manualSyncStatusMessage {
-                    Text(manualSyncStatusMessage)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                SettingsHelperText(text: "Choose where the encrypted vault is mirrored and run an immediate sync when you change devices or paths.")
+                SettingsHelperText(text: "Keep an additional copy of the vault in a folder or on an SFTP server, on top of its main location (set under Vault Location). Restart MyPass after changing this.")
             } header: {
                 Text("Sync")
                     .font(.system(size: 13, weight: .semibold))
@@ -77,18 +66,12 @@ struct SyncSettingsPane: View {
         }
         .formStyle(.grouped)
         .padding()
-        .onAppear {
-            refreshICloudStatus()
-            loadSFTPCredentialsIfAvailable()
-        }
-        .onChange(of: syncBackendRawValue) { _, _ in
-            refreshICloudStatus()
-        }
+        .onAppear { loadSFTPCredentialsIfAvailable() }
     }
 
-    private var localFolderSection: some View {
+    private var folderSection: some View {
         VStack(alignment: .leading, spacing: 4) {
-            if let bookmarkData = syncLocalFolderBookmarkData, !bookmarkData.isEmpty,
+            if let bookmarkData = secondaryFolderBookmarkData, !bookmarkData.isEmpty,
                SyncBackendResolver.resolveLocalFolderBackend(bookmarkData: bookmarkData) != nil {
                 Text("Folder selected.")
                     .foregroundStyle(.secondary)
@@ -102,54 +85,10 @@ struct SyncSettingsPane: View {
                 panel.canChooseDirectories = true
                 panel.allowsMultipleSelection = false
                 if panel.runModal() == .OK, let folderURL = panel.url {
-                    syncLocalFolderBookmarkData = try? LocalFolderBackend.createBookmark(for: folderURL)
+                    secondaryFolderBookmarkData = try? LocalFolderBackend.createBookmark(for: folderURL)
                 }
             }
         }
-    }
-
-    private var iCloudSection: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let iCloudFolderDisplayPath {
-                Text("Mirroring the vault to: \(iCloudFolderDisplayPath)")
-                    .foregroundStyle(.secondary)
-                    .lineLimit(2)
-                    .truncationMode(.middle)
-            } else {
-                Text("MyPass mirrors its encrypted vault into a folder inside your iCloud Drive, which needs no Apple Developer account. Syncing through a private iCloud container would require a paid developer account and is not enabled in this build.")
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if let iCloudStatusMessage {
-                Text(iCloudStatusMessage)
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            if !isVaultUnlocked {
-                Text("Unlock the vault first: MyPass needs your vault password to read a vault that is already in the chosen folder.")
-                    .font(.caption)
-                    .foregroundStyle(.orange)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
-            Button(iCloudFolderDisplayPath == nil ? "Set Up iCloud Sync…" : "Change iCloud Folder…") {
-                showingMigrationSheet = true
-            }
-            .disabled(!isVaultUnlocked)
-        }
-        .sheet(isPresented: $showingMigrationSheet, onDismiss: refreshICloudStatus) {
-            // TODO(Task 7): this whole iCloud section belongs to
-            // VaultLocationSettingsPane now that iCloud Drive is a primary
-            // VaultLocation, not a secondary sync mirror — kept compiling
-            // here only as a stopgap until Task 7 replaces this pane.
-            VaultLocationChangeSheet(targetLocation: .iCloudDrive)
-                .environmentObject(vaultSession)
-        }
-    }
-
-    private var isVaultUnlocked: Bool {
-        if case .unlocked = vaultSession.state { return true }
-        return false
     }
 
     private var sftpSection: some View {
@@ -195,8 +134,6 @@ struct SyncSettingsPane: View {
                     panel.canChooseDirectories = false
                     panel.allowsMultipleSelection = false
                     if panel.runModal() == .OK, let url = panel.url {
-                        // Path-only, UI bookkeeping — known gap: not yet wired into any
-                        // real SSH authentication.
                         sftpCertificatePath = url.path
                     }
                 }
@@ -263,37 +200,5 @@ struct SyncSettingsPane: View {
                 }
             }
         }
-    }
-
-    /// Reports the configured iCloud Drive folder, and self-heals a bookmark
-    /// that no longer resolves by clearing it and asking the user to re-pick.
-    /// Deliberately does NOT probe a ubiquity container: this build has no
-    /// container entitlement, so the old "sign in to iCloud" message was
-    /// always wrong about the cause.
-    private func refreshICloudStatus() {
-        guard selectedOption == .iCloud else { return }
-        guard let bookmarkData = syncICloudFolderBookmarkData, !bookmarkData.isEmpty else {
-            iCloudFolderDisplayPath = nil
-            iCloudStatusMessage = nil
-            return
-        }
-
-        var isStale = false
-        guard let folderURL = try? URL(
-            resolvingBookmarkData: bookmarkData,
-            options: .withSecurityScope,
-            relativeTo: nil,
-            bookmarkDataIsStale: &isStale
-        ), !isStale else {
-            syncICloudFolderBookmarkData = nil
-            iCloudFolderDisplayPath = nil
-            iCloudStatusMessage = "The saved iCloud Drive folder is no longer available. Choose the folder again."
-            return
-        }
-
-        iCloudFolderDisplayPath = folderURL.path
-        iCloudStatusMessage = ICloudDriveLocation.isInsideICloudDrive(folderURL)
-            ? nil
-            : "This folder is not inside iCloud Drive, so iCloud will not sync it."
     }
 }
