@@ -2,6 +2,7 @@ import SwiftUI
 
 enum SettingsPane: String, CaseIterable, Identifiable {
     case general
+    case vaultLocation
     case security
     case browser
     case sync
@@ -12,6 +13,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .general: return "General"
+        case .vaultLocation: return "Vault Location"
         case .security: return "Security"
         case .browser: return "Browser"
         case .sync: return "Sync"
@@ -22,6 +24,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
     var symbolName: String {
         switch self {
         case .general: return "gearshape"
+        case .vaultLocation: return "folder"
         case .security: return "lock.fill"
         case .browser: return "globe"
         case .sync: return "arrow.triangle.2.circlepath"
