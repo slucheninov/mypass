@@ -1,4 +1,5 @@
 import XCTest
+import SyncKit
 @testable import MyPass
 
 final class VaultFileStoreTests: XCTestCase {
@@ -61,5 +62,22 @@ final class VaultFileStoreTests: XCTestCase {
             payloads.contains(finalData!),
             "final vault contents should exactly match one of the written payloads, not a corrupted mix"
         )
+    }
+
+    func testConformsToVaultPrimaryStorageViaLoadAndSave() throws {
+        let store: VaultPrimaryStorage = VaultFileStore(directory: tempDir)
+        XCTAssertNil(try store.load())
+        try store.save(data: Data("primary-storage-round-trip".utf8))
+        XCTAssertEqual(try store.load(), Data("primary-storage-round-trip".utf8))
+    }
+
+    func testConformsToStorageBackendViaReadAndWrite() throws {
+        let store: StorageBackend = VaultFileStore(directory: tempDir)
+        XCTAssertFalse(try store.exists())
+        XCTAssertNil(try store.modificationDate())
+        try store.write(Data("storage-backend-round-trip".utf8))
+        XCTAssertTrue(try store.exists())
+        XCTAssertEqual(try store.read(), Data("storage-backend-round-trip".utf8))
+        XCTAssertNotNil(try store.modificationDate())
     }
 }

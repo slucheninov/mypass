@@ -1,4 +1,5 @@
 import Foundation
+import SyncKit
 
 struct VaultFileStore {
     let directory: URL
@@ -64,5 +65,21 @@ struct VaultFileStore {
         for url in sorted.prefix(sorted.count - backupCount) {
             try fm.removeItem(at: url)
         }
+    }
+}
+
+extension VaultFileStore: VaultPrimaryStorage {}
+
+extension VaultFileStore: StorageBackend {
+    func read() throws -> Data? { try load() }
+    func write(_ data: Data) throws { try save(data: data) }
+
+    func exists() throws -> Bool {
+        FileManager.default.fileExists(atPath: vaultURL.path)
+    }
+
+    func modificationDate() throws -> Date? {
+        guard FileManager.default.fileExists(atPath: vaultURL.path) else { return nil }
+        return try vaultURL.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
     }
 }
