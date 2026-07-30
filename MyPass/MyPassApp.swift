@@ -25,18 +25,58 @@ struct MyPassApp: App {
 
     init() {
         let defaults = UserDefaults.standard
-        let syncBackendOption = SyncBackendOption(rawValue: defaults.string(forKey: "syncBackend") ?? "") ?? .local
         let autoLockIdleTimeout = AutoLockIdleTimeout(rawValue: defaults.string(forKey: "autoLockIdleTimeout") ?? "") ?? .thirtyMinutes
         let lockOnDeviceSleepEnabled = defaults.object(forKey: "lockOnDeviceSleepEnabled") as? Bool ?? true
 
+        let applicationSupportDirectory = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MyPass")
+
+        if defaults.string(forKey: "vaultLocation") == nil,
+           let migration = VaultLocationResolver.migrateLegacyBackendIfNeeded(
+               legacySyncBackendRawValue: defaults.string(forKey: "syncBackend"),
+               legacyLocalFolderBookmark: defaults.data(forKey: "syncLocalFolderBookmark")
+           ) {
+            defaults.set(migration.vaultLocation.rawValue, forKey: "vaultLocation")
+            if let secondaryDestination = migration.secondaryDestination {
+                defaults.set(secondaryDestination.rawValue, forKey: "secondaryDestination")
+            }
+            if let bookmark = migration.secondaryFolderBookmark {
+                defaults.set(bookmark, forKey: "secondaryFolderBookmark")
+            }
+        }
+
+        let vaultLocation = VaultLocationResolver.resolveVaultLocation(rawValue: defaults.string(forKey: "vaultLocation"))
+        let primaryStore: VaultPrimaryStorage
+        var iCloudPrimaryStore: ICloudDriveVaultStore?
+        switch vaultLocation {
+        case .local:
+            primaryStore = VaultFileStore(directory: applicationSupportDirectory)
+        case .iCloudDrive:
+            if let bookmarkData = defaults.data(forKey: SyncBackendResolver.iCloudFolderBookmarkKey), !bookmarkData.isEmpty,
+               let store = try? ICloudDriveVaultStore(
+                   bookmarkData: bookmarkData,
+                   localBackupDirectory: applicationSupportDirectory.appendingPathComponent("backups")
+               ) {
+                primaryStore = store
+                iCloudPrimaryStore = store
+            } else {
+                // Bookmark missing or stale: fall back to Local rather than crash
+                // launch. Settings surfaces this so the user can re-grant access.
+                primaryStore = VaultFileStore(directory: applicationSupportDirectory)
+            }
+        }
+
+        let secondaryDestination = SecondaryDestinationOption(rawValue: defaults.string(forKey: "secondaryDestination") ?? "") ?? .none
+
         var localFolderURLForWatcher: URL?
         let syncEngine: SyncEngine? = {
-            guard syncBackendOption.isAvailable else { return nil }
-
             let backend: StorageBackend?
-            switch syncBackendOption {
-            case .local:
-                let bookmarkData = defaults.data(forKey: "syncLocalFolderBookmark")
+            switch secondaryDestination {
+            case .none:
+                return nil
+            case .folder:
+                let bookmarkData = defaults.data(forKey: "secondaryFolderBookmark")
                 backend = SyncBackendResolver.resolveLocalFolderBackend(bookmarkData: bookmarkData)
                 if let bookmarkData, !bookmarkData.isEmpty {
                     var isStale = false
@@ -48,10 +88,6 @@ struct MyPassApp: App {
                     )
                     if isStale { localFolderURLForWatcher = nil }
                 }
-            case .iCloud:
-                backend = SyncBackendResolver.resolveICloudBackend(
-                    bookmarkData: defaults.data(forKey: SyncBackendResolver.iCloudFolderBookmarkKey)
-                )
             case .sftp:
                 let host = defaults.string(forKey: "syncSFTPHost") ?? ""
                 let port = defaults.object(forKey: "syncSFTPPort") as? Int ?? 22
@@ -75,20 +111,24 @@ struct MyPassApp: App {
 
             guard let backend else { return nil }
             let checkpointStore = UserDefaultsSyncCheckpointStore(
-                key: SyncBackendResolver.checkpointKey(for: syncBackendOption)
+                key: SyncBackendResolver.checkpointKey(for: secondaryDestination)
             )
             return SyncEngine(remote: backend, checkpointStore: checkpointStore)
         }()
 
         let session = VaultSession(
-            fileStore: VaultFileStore(
-                directory: FileManager.default
-                    .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("MyPass")
-            ),
+            fileStore: primaryStore,
             syncEngine: syncEngine
         )
         _vaultSession = StateObject(wrappedValue: session)
+
+        // Design spec's external-change handling: reload-and-merge when another
+        // device/process touches the same iCloud Drive file.
+        if let iCloudPrimaryStore {
+            iCloudPrimaryStore.onRemoteChange = { [weak session] in
+                session?.triggerBackgroundSync()
+            }
+        }
 
         let pairingStore = KeychainExtensionPairingStore()
         let pairingStoreModel = ExtensionPairingStoreModel(store: pairingStore)
@@ -184,7 +224,7 @@ struct MyPassApp: App {
         // Design spec's Local-folder backend requirement "FSEvents for
         // external changes" — closes the forward reference Task 3 left
         // open ("Consumed by ... app-level auto-sync trigger").
-        if syncBackendOption == .local, let folderURL = localFolderURLForWatcher {
+        if secondaryDestination == .folder, let folderURL = localFolderURLForWatcher {
             let watcher = LocalFolderChangeWatcher(folderURL: folderURL) { [weak session] in
                 session?.triggerBackgroundSync()
             }
