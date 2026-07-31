@@ -68,7 +68,16 @@ struct VaultFileStore {
     }
 }
 
-extension VaultFileStore: VaultPrimaryStorage {}
+extension VaultFileStore: VaultPrimaryStorage {
+    var primaryVaultFileURL: URL? { vaultURL }
+
+    func deleteVaultFileIfPresent() throws {
+        try queue.sync {
+            guard FileManager.default.fileExists(atPath: vaultURL.path) else { return }
+            try FileManager.default.removeItem(at: vaultURL)
+        }
+    }
+}
 
 extension VaultFileStore: StorageBackend {
     func read() throws -> Data? { try load() }

@@ -7,4 +7,10 @@ import Foundation
 protocol VaultPrimaryStorage {
     func load() throws -> Data?
     func save(data: Data) throws
+
+    /// Absolute path to the primary `vault.kdbx` (or opened `.kdbx`) for Settings display.
+    var primaryVaultFileURL: URL? { get }
+
+    /// Removes the primary vault file if it exists. Used after a verified move.
+    func deleteVaultFileIfPresent() throws
 }
