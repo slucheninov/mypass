@@ -56,7 +56,12 @@ struct VaultLocationFirstRunSheet: View {
         guard panel.runModal() == .OK, let folderURL = panel.url else { return }
 
         do {
-            let bookmark = try iCloudBackend.createFolderBookmark(for: folderURL)
+            // Wherever the user grants access, keep the vault in its own
+            // "MyPass" subfolder rather than dropping it loose into whatever
+            // folder they picked (which defaults to the iCloud Drive root).
+            let vaultFolderURL = folderURL.appendingPathComponent("MyPass", isDirectory: true)
+            try FileManager.default.createDirectory(at: vaultFolderURL, withIntermediateDirectories: true)
+            let bookmark = try iCloudBackend.createFolderBookmark(for: vaultFolderURL)
             let applicationSupportDirectory = FileManager.default
                 .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
                 .appendingPathComponent("MyPass")

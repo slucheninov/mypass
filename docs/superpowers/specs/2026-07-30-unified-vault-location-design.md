@@ -95,7 +95,11 @@ kept as the standing behavior rather than a side effect of "mirror sync."
 Pre-auth wizard, matching the approved mockup:
 
 - **Use iCloud Drive** (default) — opens the folder picker pre-navigated to
-  the iCloud Drive root, requesting the one-time grant.
+  the iCloud Drive root, requesting the one-time grant. Whatever folder the
+  grant is made on, MyPass creates (or reuses) a "MyPass" subfolder inside it
+  and stores the vault there — never loose in the granted folder's root. This
+  mirrors `.local`, which already gets its own dedicated `MyPass` subfolder
+  under Application Support with no prompt at all.
 - **Skip for now (local only)** — silently proceeds with `.local`.
 
 (Custom Folder is not offered here, since it's secondary-destination-only in
