@@ -451,13 +451,41 @@ final class VaultSession: ObservableObject {
     /// this method itself is about to overwrite both. Deleting in any other
     /// case would destroy a vault that isn't a throwaway default (e.g. the
     /// iCloud copy, or a previously-opened external file).
+    ///
+    /// Ordering follows the same "commit first, delete-the-old-copy last and
+    /// non-fatally" contract `VaultLocationChangeSheet.applyLocationChange`
+    /// already established for its own old-location cleanup: every mutation
+    /// that actually switches the live session onto the new vault
+    /// (`updatePrimaryStore`, the `defaults` writes, publishing `state` and
+    /// `sessionPassword`, seeding the write-tracking snapshot) runs first and
+    /// unconditionally, and only the very last step — deleting the old
+    /// Application Support vault file — can fail without rolling any of that
+    /// back. That failure is caught and reported back to the caller as a
+    /// non-nil warning instead of thrown, so `fileStore`/`defaults` and
+    /// `state`/`sessionPassword` can never disagree about which vault is
+    /// current: by the time deletion is attempted, the retarget itself has
+    /// unconditionally already succeeded.
+    ///
+    /// Returns `nil` on a fully clean retarget, or a user-displayable warning
+    /// string when the retarget itself succeeded but the old Application
+    /// Support vault file could not be removed (permissions, transient IO,
+    /// etc.) — mirroring how `VaultLocationChangeSheet` turns the same class
+    /// of failure into a warning-flavored `successMessage` rather than an
+    /// error. Also published via `lastSaveError` (not just returned) so it
+    /// surfaces through the same "Save Error" alert `ContentView` already
+    /// wires up regardless of which caller triggered this — important
+    /// because `UnlockView`'s own call site is about to be swapped out for
+    /// the unlocked `NavigationSplitView` the instant `state` above flips to
+    /// `.unlocked`, so a warning only handed back to `UnlockView` itself
+    /// would never actually be shown.
+    @discardableResult
     func retargetToOpenExistingVault(
         fileURL: URL,
         bookmarkData: Data,
         password: String,
         database: KdbxDatabase,
         defaults: UserDefaults = .standard
-    ) throws {
+    ) throws -> String? {
         let newStore = try LocalFileVaultStore(bookmarkData: bookmarkData)
         // A missing `"vaultLocation"` value (fresh install, never touched
         // Settings) counts as default local too — `VaultLocationResolver`
@@ -473,17 +501,6 @@ final class VaultSession: ObservableObject {
         defaults.set(VaultLocationOption.local.rawValue, forKey: "vaultLocation")
         defaults.set(bookmarkData, forKey: SyncBackendResolver.localVaultFileBookmarkKey)
         defaults.removeObject(forKey: SyncBackendResolver.iCloudFolderBookmarkKey)
-
-        if wasDefaultLocal {
-            // Delete via the captured `oldStore` instance itself (not a
-            // freshly reconstructed `VaultFileStore` pointed at the real
-            // system Application Support directory) so this operates on
-            // whatever directory that store was actually configured with —
-            // the production default (`MyPassApp`'s real App Support path)
-            // and a test double pointed at a temp directory both work
-            // correctly, rather than only the former.
-            try oldStore.deleteVaultFileIfPresent()
-        }
 
         state = .unlocked(database)
         sessionPassword = password
@@ -501,6 +518,32 @@ final class VaultSession: ObservableObject {
         // there is nothing to persist yet, only tracking state to seed.
         let data = try database.save(password: password, cipher: .aes256, compression: .gzip)
         recordSuccessfulWrite(data, database: database)
+
+        guard wasDefaultLocal else { return nil }
+
+        // Last step, warning-only: everything above has already committed,
+        // so a failure here must never be allowed to make this method throw
+        // and leave the caller thinking the retarget itself failed.
+        do {
+            // Delete via the captured `oldStore` instance itself (not a
+            // freshly reconstructed `VaultFileStore` pointed at the real
+            // system Application Support directory) so this operates on
+            // whatever directory that store was actually configured with —
+            // the production default (`MyPassApp`'s real App Support path)
+            // and a test double pointed at a temp directory both work
+            // correctly, rather than only the former.
+            try oldStore.deleteVaultFileIfPresent()
+            return nil
+        } catch {
+            let warning: String
+            if let path = oldStore.primaryVaultFileURL?.path {
+                warning = "The vault was switched, but the old copy at \(path) could not be removed."
+            } else {
+                warning = "The vault was switched, but the old copy could not be removed."
+            }
+            lastSaveError = warning
+            return warning
+        }
     }
 
     /// Dismisses a surfaced save-error alert without affecting vault state.

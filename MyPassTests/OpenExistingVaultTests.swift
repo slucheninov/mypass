@@ -101,4 +101,87 @@ final class OpenExistingVaultTests: XCTestCase {
         XCTAssertNotNil(defaults.data(forKey: SyncBackendResolver.localVaultFileBookmarkKey))
         XCTAssertNotNil(try icloudStore.load())
     }
+
+    /// The third `wasDefaultLocal` branch, previously unverified by any
+    /// test: retargeting when the *previous* primary was already a
+    /// bookmarked `LocalFileVaultStore` (the user had already done an
+    /// "Open Existing…" once before, or was on some other non-default local
+    /// file) — not the plain default `VaultFileStore`. This must NOT delete
+    /// the first file: `oldStore is VaultFileStore` is false for a
+    /// `LocalFileVaultStore`, so `wasDefaultLocal` should short-circuit to
+    /// `false` and skip deletion entirely.
+    func testRetargetFromBookmarkedLocalFileDoesNotDeleteIt() throws {
+        let firstVaultURL = appSupportDir.deletingLastPathComponent().appendingPathComponent("first/first.kdbx")
+        try FileManager.default.createDirectory(at: firstVaultURL.deletingLastPathComponent(), withIntermediateDirectories: true)
+        let firstDB = try makeDatabase(title: "First")
+        try firstDB.save(password: password, cipher: .aes256, compression: .gzip).write(to: firstVaultURL)
+        let firstBookmark = try LocalFileVaultStore.createFileBookmark(for: firstVaultURL)
+        let firstStore = try LocalFileVaultStore(bookmarkData: firstBookmark)
+
+        defaults.set(VaultLocationOption.local.rawValue, forKey: "vaultLocation")
+        defaults.set(firstBookmark, forKey: SyncBackendResolver.localVaultFileBookmarkKey)
+
+        let session = VaultSession(fileStore: firstStore)
+        let newDB = try makeDatabase(title: "External")
+        let newData = try newDB.save(password: password, cipher: .aes256, compression: .gzip)
+        try newData.write(to: externalVaultURL)
+        let newBookmark = try LocalFileVaultStore.createFileBookmark(for: externalVaultURL)
+
+        try session.retargetToOpenExistingVault(
+            fileURL: externalVaultURL,
+            bookmarkData: newBookmark,
+            password: password,
+            database: newDB,
+            defaults: defaults
+        )
+
+        XCTAssertTrue(FileManager.default.fileExists(atPath: firstVaultURL.path))
+        XCTAssertEqual(defaults.data(forKey: SyncBackendResolver.localVaultFileBookmarkKey), newBookmark)
+        XCTAssertEqual(session.currentDatabase?.rootGroup.entries.first?.title, "External")
+        XCTAssertTrue(session.currentPrimaryStore is LocalFileVaultStore)
+    }
+
+    /// A failed delete of the old default Application Support vault (e.g. a
+    /// permissions error) must not roll back the retarget itself, and must
+    /// not leave `state`/`sessionPassword` disagreeing with `fileStore`/
+    /// `defaults` — the fix for the reviewer's "no rollback / inconsistent
+    /// partial state" finding. Simulated here by removing the App Support
+    /// directory's write permission after seeding it, so
+    /// `VaultFileStore.deleteVaultFileIfPresent()` throws.
+    func testRetargetStillCompletesWhenOldVaultDeleteFails() throws {
+        let defaultStore = VaultFileStore(directory: appSupportDir)
+        let session = VaultSession(fileStore: defaultStore)
+        let oldDB = try makeDatabase(title: "Old")
+        try defaultStore.save(data: try oldDB.save(password: password, cipher: .aes256, compression: .gzip))
+
+        // Make the containing directory non-writable so the delete inside
+        // `deleteVaultFileIfPresent()` throws, without needing to touch the
+        // vault file itself (which must still be readable for the
+        // `fileExists` check below to be meaningful).
+        try FileManager.default.setAttributes([.posixPermissions: 0o555], ofItemAtPath: appSupportDir.path)
+        defer { try? FileManager.default.setAttributes([.posixPermissions: 0o755], ofItemAtPath: appSupportDir.path) }
+
+        let newDB = try makeDatabase(title: "External")
+        let newData = try newDB.save(password: password, cipher: .aes256, compression: .gzip)
+        try newData.write(to: externalVaultURL)
+        let bookmark = try LocalFileVaultStore.createFileBookmark(for: externalVaultURL)
+
+        let warning = try session.retargetToOpenExistingVault(
+            fileURL: externalVaultURL,
+            bookmarkData: bookmark,
+            password: password,
+            database: newDB,
+            defaults: defaults
+        )
+
+        // The retarget itself must have fully committed despite the delete
+        // failure: session state, defaults, and the primary store must all
+        // agree on the new vault, not disagree with each other.
+        XCTAssertNotNil(warning)
+        XCTAssertEqual(defaults.string(forKey: "vaultLocation"), VaultLocationOption.local.rawValue)
+        XCTAssertEqual(defaults.data(forKey: SyncBackendResolver.localVaultFileBookmarkKey), bookmark)
+        XCTAssertEqual(session.currentDatabase?.rootGroup.entries.first?.title, "External")
+        XCTAssertTrue(session.currentPrimaryStore is LocalFileVaultStore)
+        XCTAssertNotNil(session.currentDatabase)
+    }
 }
