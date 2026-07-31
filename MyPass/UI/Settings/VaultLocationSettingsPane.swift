@@ -16,6 +16,11 @@ struct VaultLocationSettingsPane: View {
         Form {
             Section {
                 LabeledContent("Current Location", value: currentLocation.rawValue)
+                Text(vaultSession.primaryVaultPathDisplay)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+                    .truncationMode(.middle)
                 if vaultSession.iCloudPrimaryFallbackActive {
                     Label(
                         "MyPass could not reach the configured iCloud Drive folder and is using the local copy on this Mac instead.",
@@ -26,7 +31,7 @@ struct VaultLocationSettingsPane: View {
                         pendingTargetLocation = .iCloudDrive
                     }
                 }
-                Button(currentLocation == .local ? "Switch to iCloud Drive…" : "Switch to Local…") {
+                Button(currentLocation == .local ? "Move to iCloud Drive…" : "Move to Local…") {
                     pendingTargetLocation = currentLocation == .local ? .iCloudDrive : .local
                 }
                 SettingsHelperText(text: "Local keeps the vault only on this Mac. iCloud Drive keeps it in a folder that syncs between your Macs (and, in the future, other devices signed into the same iCloud account).")

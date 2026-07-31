@@ -588,6 +588,22 @@ final class VaultSessionTests: XCTestCase {
         }
         XCTAssertTrue(sawWrite, "expected the rewired onRemoteChange handler to trigger a background sync that persists to the new store")
     }
+
+    func testPrimaryVaultPathDisplayReturnsVaultURLPath() throws {
+        let session = VaultSession(fileStore: fileStore)
+        XCTAssertEqual(session.primaryVaultPathDisplay, fileStore.primaryVaultFileURL?.path)
+    }
+
+    func testPrimaryVaultPathDisplayUnavailableWhenURLNil() {
+        final class NoURLStore: VaultPrimaryStorage {
+            var primaryVaultFileURL: URL? { nil }
+            func load() throws -> Data? { nil }
+            func save(data: Data) throws {}
+            func deleteVaultFileIfPresent() throws {}
+        }
+        let session = VaultSession(fileStore: NoURLStore())
+        XCTAssertEqual(session.primaryVaultPathDisplay, "Path unavailable")
+    }
 }
 
 // MARK: - Test Doubles

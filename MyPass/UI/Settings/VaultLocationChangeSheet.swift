@@ -59,7 +59,7 @@ struct VaultLocationChangeSheet: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
-            Text("Change Vault Location")
+            Text("Move Vault")
                 .font(.headline)
 
             content
@@ -220,7 +220,7 @@ struct VaultLocationChangeSheet: View {
                     errorMessage = nil
                     step = targetLocation == .iCloudDrive ? .chooseFolder : .confirmPassword
                 }
-                Button("Change Location") { startMigration() }
+                Button("Move Vault") { startMigration() }
                     .keyboardShortcut(.defaultAction)
             case .finished:
                 Button("Done") { dismiss() }

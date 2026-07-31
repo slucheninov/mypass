@@ -84,6 +84,10 @@ final class VaultSession: ObservableObject {
     /// location has been verified. Read-only: mutate via `updatePrimaryStore`.
     var currentPrimaryStore: VaultPrimaryStorage { fileStore }
 
+    var primaryVaultPathDisplay: String {
+        fileStore.primaryVaultFileURL?.path ?? "Path unavailable"
+    }
+
     func loadVaultData() throws -> Data? {
         try fileStore.load()
     }
