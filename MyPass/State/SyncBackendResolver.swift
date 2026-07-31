@@ -48,11 +48,11 @@ enum SyncBackendResolver {
     /// the migration flow, which clears it so the first sync after a restart
     /// performs a full merge instead of trusting a checkpoint taken against a
     /// different remote.
-    static func checkpointKey(for option: SyncBackendOption) -> String {
+    static func checkpointKey(for option: SecondaryDestinationOption) -> String {
         "com.mypass.sync.checkpoint.\(option.rawValue)"
     }
 
-    static func clearCheckpoint(for option: SyncBackendOption, defaults: UserDefaults = .standard) {
+    static func clearCheckpoint(for option: SecondaryDestinationOption, defaults: UserDefaults = .standard) {
         defaults.removeObject(forKey: checkpointKey(for: option))
     }
 

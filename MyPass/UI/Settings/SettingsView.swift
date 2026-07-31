@@ -34,6 +34,9 @@ struct SettingsView: View {
         switch pane {
         case .general:
             GeneralSettingsPane()
+        case .vaultLocation:
+            VaultLocationSettingsPane()
+                .environmentObject(vaultSession)
         case .security:
             SecuritySettingsPane()
                 .environmentObject(autoLockController)

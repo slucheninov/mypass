@@ -156,11 +156,11 @@ final class SettingsViewSyncBackendTests: XCTestCase {
         XCTAssertNil(SyncBackendResolver.resolveICloudBackend(bookmarkData: garbage))
     }
 
-    func testCheckpointKeyIsNamespacedPerBackend() {
-        XCTAssertEqual(SyncBackendResolver.checkpointKey(for: .iCloud), "com.mypass.sync.checkpoint.iCloud Drive")
-        XCTAssertEqual(SyncBackendResolver.checkpointKey(for: .local), "com.mypass.sync.checkpoint.Local File")
+    func testCheckpointKeyIsNamespacedPerSecondaryDestination() {
+        XCTAssertEqual(SyncBackendResolver.checkpointKey(for: .folder), "com.mypass.sync.checkpoint.Folder")
+        XCTAssertEqual(SyncBackendResolver.checkpointKey(for: .sftp), "com.mypass.sync.checkpoint.SFTP")
         XCTAssertNotEqual(
-            SyncBackendResolver.checkpointKey(for: .iCloud),
+            SyncBackendResolver.checkpointKey(for: .folder),
             SyncBackendResolver.checkpointKey(for: .sftp)
         )
     }
@@ -177,12 +177,12 @@ final class SettingsViewSyncBackendTests: XCTestCase {
         let defaults = try XCTUnwrap(UserDefaults(suiteName: suiteName))
         defer { UserDefaults.standard.removePersistentDomain(forName: suiteName) }
 
-        defaults.set(1.0, forKey: SyncBackendResolver.checkpointKey(for: .iCloud))
-        defaults.set(2.0, forKey: SyncBackendResolver.checkpointKey(for: .local))
+        defaults.set(1.0, forKey: SyncBackendResolver.checkpointKey(for: .folder))
+        defaults.set(2.0, forKey: SyncBackendResolver.checkpointKey(for: .sftp))
 
-        SyncBackendResolver.clearCheckpoint(for: .iCloud, defaults: defaults)
+        SyncBackendResolver.clearCheckpoint(for: .folder, defaults: defaults)
 
-        XCTAssertNil(defaults.object(forKey: SyncBackendResolver.checkpointKey(for: .iCloud)))
-        XCTAssertNotNil(defaults.object(forKey: SyncBackendResolver.checkpointKey(for: .local)))
+        XCTAssertNil(defaults.object(forKey: SyncBackendResolver.checkpointKey(for: .folder)))
+        XCTAssertNotNil(defaults.object(forKey: SyncBackendResolver.checkpointKey(for: .sftp)))
     }
 }

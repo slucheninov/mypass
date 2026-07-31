@@ -25,7 +25,18 @@ final class VaultSession: ObservableObject {
     @Published private(set) var state: VaultState = .locked
     @Published private(set) var lastSaveError: String?
 
-    private let fileStore: VaultFileStore
+    /// `true` when the configured primary location is iCloud Drive but its
+    /// bookmark could not be resolved at launch (see
+    /// `VaultPrimaryStoreResolver`), so `fileStore` is actually the Local
+    /// fallback rather than the real iCloud store — possibly a stale copy
+    /// from before the user switched to iCloud. `VaultLocationSettingsPane`
+    /// reads this to warn instead of claiming "iCloud Drive" is active, and
+    /// offers the existing "Switch to iCloud Drive…" flow to recover.
+    /// Cleared whenever `updatePrimaryStore` runs, since that only ever
+    /// happens with a store that already resolved successfully.
+    @Published private(set) var iCloudPrimaryFallbackActive: Bool
+
+    private var fileStore: VaultPrimaryStorage
 
     /// Optional remote sync orchestrator (Phase 3). `nil` for sessions that
     /// only ever use local storage — every existing Phase 2 call site keeps
@@ -55,9 +66,11 @@ final class VaultSession: ObservableObject {
         return !touchAccessPersistWorkItem.isCancelled
     }
 
-    init(fileStore: VaultFileStore, syncEngine: SyncEngine? = nil) {
+    init(fileStore: VaultPrimaryStorage, syncEngine: SyncEngine? = nil, iCloudPrimaryFallbackActive: Bool = false) {
         self.fileStore = fileStore
         self.syncEngine = syncEngine
+        self.iCloudPrimaryFallbackActive = iCloudPrimaryFallbackActive
+        wireRemoteChangeHandler(on: fileStore)
     }
 
     var currentDatabase: KdbxDatabase? {
@@ -100,6 +113,41 @@ final class VaultSession: ObservableObject {
         touchAccessPersistWorkItem = nil
         state = .locked
         sessionPassword = nil
+    }
+
+    /// Swaps the primary store the session reads/writes from — used when the
+    /// user changes the configured vault location. Callers are responsible for
+    /// having already migrated any existing data to the new store (see
+    /// `VaultLocationChangeSheet`); this method only changes where subsequent
+    /// `unlock`/`persist` calls point.
+    func updatePrimaryStore(_ newStore: VaultPrimaryStorage) {
+        fileStore = newStore
+        iCloudPrimaryFallbackActive = false
+        wireRemoteChangeHandler(on: newStore)
+    }
+
+    /// Design spec's external-change handling: reload-and-merge when another
+    /// device/process touches the same iCloud Drive file. Wired centrally here
+    /// — both at `init` and on every later `updatePrimaryStore` swap — so an
+    /// in-session switch to iCloud (`VaultLocationChangeSheet`) keeps working
+    /// without every call site having to remember to re-wire it. A `.local`
+    /// store is a no-op since `VaultFileStore` has no such notification.
+    private func wireRemoteChangeHandler(on store: VaultPrimaryStorage) {
+        guard let iCloudStore = store as? ICloudDriveVaultStore else { return }
+        iCloudStore.onRemoteChange = { [weak self] in
+            self?.triggerBackgroundSync()
+        }
+    }
+
+    /// Checks `password` against the vault currently on disk at `fileStore`,
+    /// without mutating `state` or `sessionPassword` — used to gate a settings
+    /// change (e.g. changing the vault location) behind proof of ownership
+    /// without disturbing an in-progress unlocked session or its unsaved edits.
+    /// Returns `false` (never throws) for a wrong password, a corrupt file, or
+    /// when no vault exists yet at the current location.
+    func verifyPassword(_ password: String) -> Bool {
+        guard let data = (try? fileStore.load()) ?? nil else { return false }
+        return (try? KdbxDatabase.open(data: data, password: password)) != nil
     }
 
     func save(password: String) throws {

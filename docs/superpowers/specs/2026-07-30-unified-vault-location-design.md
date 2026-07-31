@@ -28,8 +28,8 @@ This has two problems:
   client would also open). No separate "primary copy vs. mirror" split for
   these two.
 - Custom Folder and SFTP remain available, but strictly as an optional
-  **backup target** layered on top of whichever primary location is active —
-  not as alternatives to it.
+  **secondary destination** layered on top of whichever primary location is
+  active — not as alternatives to it.
 - The vault location (and other settings) can be viewed and changed from
   Settings *before* authenticating.
 - Changing the active location is gated: the user must successfully
@@ -60,17 +60,25 @@ Replaces `VaultFileStore`'s hardcoded directory. Two cases only:
   folder-picker grant — the sandbox has no way around that without the paid
   container entitlement (unchanged constraint, confirmed not in scope).
 
-Whichever is active, `VaultFileStore` reads and writes directly there. There
-is no second, separate canonical copy and no continuous push/pull between
-"local" and "remote" for these two — they *are* the single copy.
+Whichever is active, the primary store (`VaultFileStore` for Local,
+`ICloudDriveVaultStore` for iCloud Drive) reads and writes directly there.
+There is no second, separate canonical copy and no continuous push/pull
+between "local" and "remote" for these two — they *are* the single copy.
 
-### Backup target (orthogonal, not a `VaultLocation` case)
+### Secondary destination (orthogonal, not a `VaultLocation` case)
 
-A single picker, independent of the primary location: **None / Backup to
-Folder / Backup to SFTP**. One at a time (not simultaneous). This keeps
-today's `LocalFolderBackend`, `SFTPBackend`, `SyncEngine` push/pull-with-merge
-machinery exactly as it works now — a backup target is inherently a second
-copy that needs reconciliation, unlike the primary location.
+A single picker, independent of the primary location, labeled "Also Sync To"
+in Settings: **None / Folder / SFTP**. One at a time (not simultaneous). This
+keeps today's `LocalFolderBackend`, `SFTPBackend`, `SyncEngine`
+push/pull-with-merge machinery exactly as it works now — a secondary
+destination is inherently a second copy that needs reconciliation, unlike the
+primary location.
+
+(Implementation note: the picker and its backing `SecondaryDestinationOption`
+type deliberately avoid "Backup"/"Backups" wording — a naming constraint
+adopted during implementation because these are sync mirrors, not backups in
+the traditional sense, and using "backup" language risked implying a
+restore/versioning guarantee the feature doesn't provide.)
 
 ### External-change handling
 
@@ -85,23 +93,23 @@ kept as the standing behavior rather than a side effect of "mirror sync."
 
 ### First run (no vault exists anywhere yet)
 
-Pre-auth wizard, matching the approved mockup:
+No wizard, no dialogs: MyPass silently creates the vault on `.local`
+(Application Support), exactly as every existing install already works. This
+mirrors `.local`'s existing dedicated `MyPass` subfolder under Application
+Support with no prompt at all.
 
-- **Use iCloud Drive** (default) — opens the folder picker pre-navigated to
-  the iCloud Drive root, requesting the one-time grant.
-- **Skip for now (local only)** — silently proceeds with `.local`.
+Choosing iCloud Drive is only available afterward, as an explicit action from
+Settings → Vault Location → "Switch to iCloud Drive…" — see "Changing the
+primary location later" below. It is never offered or forced on first run.
 
-(Custom Folder is not offered here, since it's backup-only in this design —
-it remains available afterward from the Backup target picker.)
-
-Whichever is chosen, the normal first-unlock flow proceeds unchanged
+Whichever location is active, the normal first-unlock flow proceeds unchanged
 (`VaultSession.unlock` with `fileStore.load() == nil` creates the new
 database and sets the master password). No separate verification step is
 needed here — there is nothing yet to verify against.
 
 ### Existing installs
 
-Never forced through the wizard. A pre-existing Application Support
+Never forced onto a different location. A pre-existing Application Support
 `vault.kdbx` means the location is already "configured: Local," full stop.
 Nothing changes for them until they explicitly go pick a different location.
 
@@ -111,7 +119,10 @@ Reachable from a new **Vault Location** settings pane, regardless of whether
 the app is currently locked or unlocked:
 
 1. User picks Local ↔ iCloud Drive (granting folder access if switching to
-   iCloud and not already granted).
+   iCloud and not already granted). Whatever folder the grant is made on,
+   MyPass creates (or reuses) a "MyPass" subfolder inside it and stores the
+   vault there — never loose in the granted folder's root. This is the only
+   place in the app a user picks an iCloud folder.
 2. This *stages* the change — nothing is persisted yet, no I/O against the
    target happens yet.
 3. The pane prompts for the master password inline ("Enter your password to
@@ -149,19 +160,23 @@ verbatim, just surfaced from the new pane:
   (fresh install vs. pre-existing Application-Support vault vs. previously
   granted iCloud bookmark), and confirm-password gating (success persists +
   migrates; failure leaves settings and session state untouched).
-- Manual verification via the `run` skill: first-run wizard end-to-end,
+- Manual verification via the `run` skill: silent local-only first run,
   changing location both pre-auth and post-auth, wrong-password rejection,
   and that an existing pre-redesign install keeps working unchanged on
   Local.
 
-## Open implementation notes (for the implementation plan, not decided here)
+## Implementation notes (resolved)
 
-- Exact renaming/removal scope of `SyncBackendOption` (today: `local`,
-  `iCloud`, `sftp` as one mutually-exclusive picker) into the new two-picker
-  shape (`VaultLocation`: local/iCloudDrive; `BackupTarget`: none/folder/sftp).
-- Whether `SettingsPane.sync` gets renamed/split into a `.vaultLocation` pane
-  and a `.backup` pane, or stays one pane with two sections.
-- Persistence keys for the new settings (reusing vs. renaming today's
-  `syncICloudFolderBookmark`, `syncLocalFolderBookmark`, `syncBackend`
-  `UserDefaults` keys) — needs care so existing installs don't lose their
-  configured backend on upgrade.
+The open questions this section originally posed are all settled in the
+shipped implementation:
+
+- `SyncBackendOption` was fully retired. The new two-picker shape is
+  `VaultLocation` (local/iCloudDrive) plus `SecondaryDestinationOption`
+  (none/folder/sftp, labeled "Also Sync To" in Settings — deliberately not
+  `BackupTarget`/"Backup", see "Secondary destination" above).
+- `SettingsPane` gained a dedicated `.vaultLocation` pane, separate from the
+  existing sync pane (which now only covers the secondary destination).
+- Persistence keys: the pinned `syncICloudFolderBookmark` key is reused
+  as-is (never renamed); `syncLocalFolderBookmark`/`syncBackend` are read
+  once for legacy migration and superseded by `vaultLocation`/
+  `secondaryDestination`/`secondaryFolderBookmark` going forward.
