@@ -60,7 +60,18 @@ public enum KdbxDatabaseError: Error, Equatable {
 /// (e.g. a direct binding to the Argon2 reference implementation) replaces
 /// swift-sodium here. `KdbxCrossCompatibilityTests` documents this gap
 /// explicitly rather than silently asserting success.
-public struct KdbxDatabase {
+/// `Equatable` compares *logical* content (the group tree, tombstones, and
+/// recycle-bin reference) — synthesized from `rootGroup`/`deletedObjects`/
+/// `recycleBinGroupUUID`, all of which are themselves `Equatable` by value
+/// (`KdbxGroup`'s `==` recurses through `entries`/`subgroups`). This is
+/// deliberately NOT the same thing as two `save(password:cipher:compression:)`
+/// outputs being byte-identical: `save` mints a fresh random `masterSeed`,
+/// KDF `salt`, `encryptionIV`, and `innerStreamKey` via `SecRandomCopyBytes`
+/// on every call, so two serializations of logically-identical content are
+/// essentially never byte-identical. Callers that want a cheap "did anything
+/// actually change" check (e.g. `VaultSession.persist(_:)`'s skip-write path)
+/// must compare `KdbxDatabase` values directly, not their serialized bytes.
+public struct KdbxDatabase: Equatable {
     public var rootGroup: KdbxGroup
     public var deletedObjects: [KdbxDeletedObject]
     /// Mirrors KDBX4's `Meta/RecycleBinUUID`: a UUID reference to whichever

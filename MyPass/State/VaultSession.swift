@@ -60,22 +60,39 @@ final class VaultSession: ObservableObject {
     private var touchAccessPersistWorkItem: DispatchWorkItem?
 
     /// The bytes last successfully written to `fileStore` by `persist(_:)`,
-    /// so a subsequent persist whose freshly-serialized snapshot is
-    /// byte-identical (e.g. a no-op background sync tick, or a `touchAccess`
-    /// that ended up not changing anything observable in the KDF-derived
-    /// ciphertext) can skip the disk write and the sync round-trip entirely.
-    /// Read and written *only* from `persistQueue` (inside `persist(_:)`'s
-    /// background closure) to avoid a data race; the main-thread seed points
-    /// (`unlock`, `save(password:)`, `syncOnUnlock`) go through
-    /// `recordSuccessfulWrite(_:)`, which hops onto the same serial queue via
-    /// `sync` rather than assigning the property directly.
+    /// tracked for downstream consumers that need last-known-good ciphertext
+    /// (e.g. a future remote-change reload comparing against what's on disk).
+    /// NOT used to decide whether to skip a write — `KdbxDatabase.save`
+    /// mints fresh random KDF salt/IV/inner-stream-key material on every
+    /// call, so two serializations of logically-identical content are
+    /// essentially never byte-identical; see `lastSuccessfullyWrittenDatabase`
+    /// for the actual skip check. Read and written *only* from `persistQueue`
+    /// (inside `persist(_:)`'s background closure) to avoid a data race; the
+    /// main-thread seed points (`unlock`, `save(password:)`, `syncOnUnlock`)
+    /// go through `recordSuccessfulWrite(_:database:)`, which hops onto the
+    /// same serial queue via `sync` rather than assigning the property directly.
     private var lastSuccessfullyWrittenBytes: Data?
 
-    /// `true` whenever in-memory state has changed since the last byte-exact
-    /// write reached `fileStore`. Set on the main thread by `mutate` and
-    /// cleared on the main thread by `persist(_:)`'s completion handlers (via
-    /// `DispatchQueue.main.async`), so — unlike `lastSuccessfullyWrittenBytes`
-    /// — it never needs a lock: every read and write happens on the main
+    /// The logical content (group tree + tombstones + recycle-bin reference)
+    /// last successfully written to `fileStore`. `persist(_:)` compares its
+    /// freshly-mutated snapshot against this — via `KdbxDatabase`'s
+    /// `Equatable` conformance, which recurses through `rootGroup`'s entries
+    /// and subgroups — rather than against serialized bytes, so a no-op
+    /// persist (nothing actually changed) is correctly detected even though
+    /// re-serializing would always produce different ciphertext. Always a
+    /// deep copy, never a reference into live session state: `KdbxGroup` is a
+    /// class, so storing the session's actual `rootGroup` here would let a
+    /// later in-place `mutate()` silently mutate this "last written" snapshot
+    /// too, making every subsequent comparison spuriously equal. Same
+    /// threading contract as `lastSuccessfullyWrittenBytes` — `persistQueue`
+    /// only, seeded from the main thread via `recordSuccessfulWrite(_:database:)`.
+    private var lastSuccessfullyWrittenDatabase: KdbxDatabase?
+
+    /// `true` whenever in-memory state has changed since the last write
+    /// reached `fileStore`. Set on the main thread by `mutate` and cleared on
+    /// the main thread by `persist(_:)`'s completion handlers (via
+    /// `DispatchQueue.main.async`), so — unlike the two properties above —
+    /// it never needs a lock: every read and write happens on the main
     /// thread. Backs `triggerBackgroundSyncIfDirty()`, which the app-level
     /// timer calls instead of unconditionally syncing every tick.
     private var hasDirtyLocalChanges = false
@@ -118,7 +135,7 @@ final class VaultSession: ObservableObject {
             let db = try KdbxDatabase.open(data: existingData, password: password)
             state = .unlocked(db)
             sessionPassword = password
-            recordSuccessfulWrite(existingData)
+            recordSuccessfulWrite(existingData, database: db)
             state = .unlocked(syncOnUnlock(db, password: password))
         } else {
             let now = Date()
@@ -152,10 +169,23 @@ final class VaultSession: ObservableObject {
     /// having already migrated any existing data to the new store (see
     /// `VaultLocationChangeSheet`); this method only changes where subsequent
     /// `unlock`/`persist` calls point.
+    ///
+    /// Also invalidates `persist(_:)`'s logical-equality skip state
+    /// (`lastSuccessfullyWrittenBytes`/`lastSuccessfullyWrittenDatabase`):
+    /// that state records what content is already durably written to the
+    /// *previous* `fileStore`, which says nothing about the new one — without
+    /// clearing it, a swap to a store that doesn't yet have the current
+    /// content (the common case) would still compare the next persist's
+    /// snapshot against the stale "already written" record, see them as
+    /// logically equal, and wrongly skip writing to the new store entirely.
     func updatePrimaryStore(_ newStore: VaultPrimaryStorage) {
         fileStore = newStore
         iCloudPrimaryFallbackActive = false
         wireRemoteChangeHandler(on: newStore)
+        persistQueue.sync {
+            self.lastSuccessfullyWrittenBytes = nil
+            self.lastSuccessfullyWrittenDatabase = nil
+        }
     }
 
     /// Design spec's external-change handling: reload-and-merge when another
@@ -200,7 +230,7 @@ final class VaultSession: ObservableObject {
         }
         let data = try db.save(password: password, cipher: .aes256, compression: .gzip)
         try fileStore.save(data: data)
-        recordSuccessfulWrite(data)
+        recordSuccessfulWrite(data, database: db)
     }
 
     func mutate(_ body: (inout KdbxDatabase) -> Void) {
@@ -355,22 +385,32 @@ final class VaultSession: ObservableObject {
         do {
             let data = try mergedDatabase.save(password: password, cipher: .aes256, compression: .gzip)
             try fileStore.save(data: data)
-            recordSuccessfulWrite(data)
+            recordSuccessfulWrite(data, database: mergedDatabase)
         } catch {
             lastSaveError = "Failed to save merged changes locally: \(error)"
         }
         return mergedDatabase
     }
 
-    /// Seeds/updates `lastSuccessfullyWrittenBytes` from a write that just
-    /// succeeded on the *main* thread (`unlock`, `save(password:)`,
-    /// `syncOnUnlock`). Hops onto `persistQueue` synchronously so every
-    /// read/write of `lastSuccessfullyWrittenBytes` — whether from here or
-    /// from `persist(_:)`'s background closure — happens on that one serial
-    /// queue, with no lock required.
-    private func recordSuccessfulWrite(_ data: Data) {
+    /// Seeds/updates `lastSuccessfullyWrittenBytes`/`lastSuccessfullyWrittenDatabase`
+    /// from a write that just succeeded on the *main* thread (`unlock`,
+    /// `save(password:)`, `syncOnUnlock`). Deep-copies `database`'s group tree
+    /// before storing it — `database` here is (or is about to become) the
+    /// live session's mutable `state`, and `KdbxGroup` is a class, so storing
+    /// the reference as-is would let a later in-place `mutate()` silently
+    /// mutate this "last written" snapshot too. Hops onto `persistQueue`
+    /// synchronously so every read/write of either property — whether from
+    /// here or from `persist(_:)`'s background closure — happens on that one
+    /// serial queue, with no lock required.
+    private func recordSuccessfulWrite(_ data: Data, database: KdbxDatabase) {
+        let snapshot = KdbxDatabase(
+            rootGroup: database.rootGroup.deepCopy(),
+            deletedObjects: database.deletedObjects,
+            recycleBinGroupUUID: database.recycleBinGroupUUID
+        )
         persistQueue.sync {
             self.lastSuccessfullyWrittenBytes = data
+            self.lastSuccessfullyWrittenDatabase = snapshot
         }
     }
 
@@ -386,24 +426,31 @@ final class VaultSession: ObservableObject {
         )
         persistQueue.async { [weak self, fileStore, syncEngine] in
             guard let self else { return }
+
+            // Logically identical to what's already on disk (and, if
+            // attached, already synced) — skip both the KDF derivation +
+            // write and the sync round-trip. Compared as `KdbxDatabase`
+            // values (see its `Equatable` doc comment), NOT as serialized
+            // bytes: `save(password:cipher:compression:)` mints fresh random
+            // KDF salt/IV/inner-stream-key material on every call, so two
+            // serializations of identical content are essentially never
+            // byte-identical — a raw-bytes comparison here would never fire.
+            // Safe to read `lastSuccessfullyWrittenDatabase` here: we're on
+            // `persistQueue`, the only queue that ever touches it.
+            if snapshot == self.lastSuccessfullyWrittenDatabase {
+                DispatchQueue.main.async { [weak self] in
+                    self?.hasDirtyLocalChanges = false
+                    self?.lastSaveError = nil
+                }
+                return
+            }
+
             let data: Data
             do {
                 data = try snapshot.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
             } catch {
                 DispatchQueue.main.async { [weak self] in
                     self?.lastSaveError = "Failed to save changes: \(error)"
-                }
-                return
-            }
-
-            // Identical to what's already on disk (and, if attached, already
-            // synced) — skip both the write and the sync round-trip. Safe to
-            // read `lastSuccessfullyWrittenBytes` here: we're on `persistQueue`,
-            // the only queue that ever touches it.
-            if data == self.lastSuccessfullyWrittenBytes {
-                DispatchQueue.main.async { [weak self] in
-                    self?.hasDirtyLocalChanges = false
-                    self?.lastSaveError = nil
                 }
                 return
             }
@@ -417,6 +464,7 @@ final class VaultSession: ObservableObject {
                 return
             }
             self.lastSuccessfullyWrittenBytes = data
+            self.lastSuccessfullyWrittenDatabase = snapshot
 
             guard let syncEngine else {
                 DispatchQueue.main.async { [weak self] in

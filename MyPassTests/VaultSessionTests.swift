@@ -611,16 +611,50 @@ final class VaultSessionTests: XCTestCase {
         let spy = CountingVaultPrimaryStorage(inner: fileStore)
         let session = VaultSession(fileStore: spy)
         try session.unlock(password: "correct-horse")
-
         waitForPersist(on: session)
 
-        let writesAfterUnlock = spy.saveCallCount
-        XCTAssertGreaterThan(writesAfterUnlock, 0)
+        // Establish a real, non-empty write first — `hasDirtyLocalChanges` is
+        // only set by `mutate`, so calling `triggerBackgroundSyncIfDirty()`
+        // right after `unlock()` alone would return before `persist(_:)` is
+        // even invoked and never reach the skip branch under test.
+        session.mutate { db in
+            var entry = KdbxEntry(
+                uuid: UUID(), iconID: 0, fields: [],
+                creationTime: Date(), lastModificationTime: Date(),
+                lastAccessTime: Date(), locationChanged: Date(), history: []
+            )
+            entry.title = "New"
+            db.rootGroup.entries.append(entry)
+        }
+        waitForPersist(on: session)
+        let writesAfterRealMutation = spy.saveCallCount
+        XCTAssertGreaterThan(writesAfterRealMutation, 0)
 
-        session.triggerBackgroundSyncIfDirty()
+        // `KdbxDatabase.save(password:cipher:compression:)` mints fresh
+        // random KDF salt/IV/inner-stream-key material via SecRandomCopyBytes
+        // on every call, so two serializations of logically identical
+        // content are essentially never byte-identical — a raw ciphertext
+        // comparison would never hit the skip branch. This no-op `mutate`
+        // re-triggers `persist(_:)` with a database that has the same
+        // entries/tree as what's already on disk; the skip check must be
+        // based on that logical content, not the (always-different) bytes.
+        session.mutate { _ in }
         waitForBackgroundWork()
 
-        XCTAssertEqual(spy.saveCallCount, writesAfterUnlock, "identical bytes should not invoke save again")
+        XCTAssertEqual(
+            spy.saveCallCount, writesAfterRealMutation,
+            "logically identical content should not invoke save again, even though re-serializing it produces different ciphertext bytes"
+        )
+
+        // The skip path also clears `hasDirtyLocalChanges`, so a follow-up
+        // timer tick should likewise be a no-op — confirms the dirty flag and
+        // the logical-equality skip check agree rather than fighting.
+        session.triggerBackgroundSyncIfDirty()
+        waitForBackgroundWork()
+        XCTAssertEqual(
+            spy.saveCallCount, writesAfterRealMutation,
+            "no pending changes after a skipped persist should mean no further writes"
+        )
     }
 
     func testPersistWritesWhenDatabaseMutated() throws {
