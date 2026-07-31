@@ -13,6 +13,10 @@ struct SyncSettingsPane: View {
     @AppStorage("syncSFTPPrivateKeyPath") private var sftpPrivateKeyPath: String = ""
     @AppStorage("syncSFTPCertificatePath") private var sftpCertificatePath: String = ""
 
+    // The private key PEM and its passphrase never go through @AppStorage/
+    // UserDefaults — Keychain only (see loadSFTPCredentialsIfAvailable/
+    // persistCredentialsToKeychain below). Keep these as plain @State, not
+    // @AppStorage, when touching this file.
     @State private var sftpPrivateKeyPEM: String = ""
     @State private var sftpPassphrase: String = ""
     @State private var connectionTestState: ConnectionTestState = .idle

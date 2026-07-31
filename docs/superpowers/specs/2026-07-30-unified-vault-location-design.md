@@ -60,9 +60,10 @@ Replaces `VaultFileStore`'s hardcoded directory. Two cases only:
   folder-picker grant — the sandbox has no way around that without the paid
   container entitlement (unchanged constraint, confirmed not in scope).
 
-Whichever is active, `VaultFileStore` reads and writes directly there. There
-is no second, separate canonical copy and no continuous push/pull between
-"local" and "remote" for these two — they *are* the single copy.
+Whichever is active, the primary store (`VaultFileStore` for Local,
+`ICloudDriveVaultStore` for iCloud Drive) reads and writes directly there.
+There is no second, separate canonical copy and no continuous push/pull
+between "local" and "remote" for these two — they *are* the single copy.
 
 ### Secondary destination (orthogonal, not a `VaultLocation` case)
 
@@ -108,7 +109,7 @@ needed here — there is nothing yet to verify against.
 
 ### Existing installs
 
-Never forced through the wizard. A pre-existing Application Support
+Never forced onto a different location. A pre-existing Application Support
 `vault.kdbx` means the location is already "configured: Local," full stop.
 Nothing changes for them until they explicitly go pick a different location.
 
@@ -164,14 +165,18 @@ verbatim, just surfaced from the new pane:
   and that an existing pre-redesign install keeps working unchanged on
   Local.
 
-## Open implementation notes (for the implementation plan, not decided here)
+## Implementation notes (resolved)
 
-- Exact renaming/removal scope of `SyncBackendOption` (today: `local`,
-  `iCloud`, `sftp` as one mutually-exclusive picker) into the new two-picker
-  shape (`VaultLocation`: local/iCloudDrive; `BackupTarget`: none/folder/sftp).
-- Whether `SettingsPane.sync` gets renamed/split into a `.vaultLocation` pane
-  and a `.backup` pane, or stays one pane with two sections.
-- Persistence keys for the new settings (reusing vs. renaming today's
-  `syncICloudFolderBookmark`, `syncLocalFolderBookmark`, `syncBackend`
-  `UserDefaults` keys) — needs care so existing installs don't lose their
-  configured backend on upgrade.
+The open questions this section originally posed are all settled in the
+shipped implementation:
+
+- `SyncBackendOption` was fully retired. The new two-picker shape is
+  `VaultLocation` (local/iCloudDrive) plus `SecondaryDestinationOption`
+  (none/folder/sftp, labeled "Also Sync To" in Settings — deliberately not
+  `BackupTarget`/"Backup", see "Secondary destination" above).
+- `SettingsPane` gained a dedicated `.vaultLocation` pane, separate from the
+  existing sync pane (which now only covers the secondary destination).
+- Persistence keys: the pinned `syncICloudFolderBookmark` key is reused
+  as-is (never renamed); `syncLocalFolderBookmark`/`syncBackend` are read
+  once for legacy migration and superseded by `vaultLocation`/
+  `secondaryDestination`/`secondaryFolderBookmark` going forward.
