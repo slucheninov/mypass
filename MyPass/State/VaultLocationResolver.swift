@@ -28,13 +28,34 @@ enum VaultLocationResolver {
     /// `"vaultLocation"` key is not yet set.
     static func migrateLegacyBackendIfNeeded(
         legacySyncBackendRawValue: String?,
-        legacyLocalFolderBookmark: Data?
+        legacyLocalFolderBookmark: Data?,
+        legacyICloudFolderBookmark: Data? = nil,
+        localVaultModificationDate: Date? = nil,
+        iCloudVaultModificationDate: Date? = nil
     ) -> LegacyMigrationResult? {
         guard let legacySyncBackendRawValue else { return nil }
         switch legacySyncBackendRawValue {
         case "iCloud Drive":
-            // The user was already mirroring into iCloud Drive — promote it
-            // straight to primary, which is what they were already relying on.
+            // In the old model, Application Support was always canonical and
+            // iCloud only a mirror — one updated on save, but which can lag
+            // behind if the last sync push failed while offline. Promoting
+            // straight to iCloud-primary is only safe when the iCloud copy is
+            // provably at least as new as the local one; otherwise (including
+            // when either date is unavailable) keep Local canonical and
+            // preserve the iCloud folder as a Folder secondary so nothing is
+            // lost — the existing merge machinery can reconcile them later.
+            let iCloudIsAtLeastAsNewAsLocal: Bool = {
+                guard let iCloudDate = iCloudVaultModificationDate,
+                      let localDate = localVaultModificationDate else { return false }
+                return iCloudDate >= localDate
+            }()
+            guard iCloudIsAtLeastAsNewAsLocal else {
+                return LegacyMigrationResult(
+                    vaultLocation: .local,
+                    secondaryDestination: .folder,
+                    secondaryFolderBookmark: legacyICloudFolderBookmark
+                )
+            }
             return LegacyMigrationResult(vaultLocation: .iCloudDrive, secondaryDestination: nil, secondaryFolderBookmark: nil)
         case "Local File":
             // The user was mirroring into a picked folder — that folder

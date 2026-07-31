@@ -32,17 +32,39 @@ struct MyPassApp: App {
             .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("MyPass")
 
-        if defaults.string(forKey: "vaultLocation") == nil,
-           let migration = VaultLocationResolver.migrateLegacyBackendIfNeeded(
-               legacySyncBackendRawValue: defaults.string(forKey: "syncBackend"),
-               legacyLocalFolderBookmark: defaults.data(forKey: "syncLocalFolderBookmark")
-           ) {
-            defaults.set(migration.vaultLocation.rawValue, forKey: "vaultLocation")
-            if let secondaryDestination = migration.secondaryDestination {
-                defaults.set(secondaryDestination.rawValue, forKey: "secondaryDestination")
+        if defaults.string(forKey: "vaultLocation") == nil {
+            let legacySyncBackendRawValue = defaults.string(forKey: "syncBackend")
+            var legacyICloudFolderBookmark: Data?
+            var localVaultModificationDate: Date?
+            var iCloudVaultModificationDate: Date?
+            if legacySyncBackendRawValue == "iCloud Drive" {
+                // Only worth the filesystem/coordinated-read cost when we're
+                // actually about to decide between promoting iCloud to
+                // primary or keeping Local — every other legacy value, and
+                // every normal launch after migration has already run once,
+                // skips this entirely.
+                localVaultModificationDate = try? VaultFileStore(directory: applicationSupportDirectory).modificationDate()
+                let bookmark = defaults.data(forKey: SyncBackendResolver.iCloudFolderBookmarkKey)
+                legacyICloudFolderBookmark = bookmark
+                if let bookmark, !bookmark.isEmpty,
+                   let backend = try? iCloudBackend(root: .userFolder(bookmark: bookmark), relativePath: "vault.kdbx") {
+                    iCloudVaultModificationDate = try? backend.modificationDate()
+                }
             }
-            if let bookmark = migration.secondaryFolderBookmark {
-                defaults.set(bookmark, forKey: "secondaryFolderBookmark")
+            if let migration = VaultLocationResolver.migrateLegacyBackendIfNeeded(
+                legacySyncBackendRawValue: legacySyncBackendRawValue,
+                legacyLocalFolderBookmark: defaults.data(forKey: "syncLocalFolderBookmark"),
+                legacyICloudFolderBookmark: legacyICloudFolderBookmark,
+                localVaultModificationDate: localVaultModificationDate,
+                iCloudVaultModificationDate: iCloudVaultModificationDate
+            ) {
+                defaults.set(migration.vaultLocation.rawValue, forKey: "vaultLocation")
+                if let secondaryDestination = migration.secondaryDestination {
+                    defaults.set(secondaryDestination.rawValue, forKey: "secondaryDestination")
+                }
+                if let bookmark = migration.secondaryFolderBookmark {
+                    defaults.set(bookmark, forKey: "secondaryFolderBookmark")
+                }
             }
         }
 
