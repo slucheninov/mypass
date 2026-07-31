@@ -117,6 +117,30 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
         set { presenter.onChange = newValue }
     }
 
+    /// Absolute path of the coordinated file this backend reads/writes.
+    /// Exposed for callers (e.g. `ICloudDriveVaultStore.primaryVaultFileURL`)
+    /// that need the path for display or for a post-verification delete.
+    public var vaultFileURL: URL { fileURL }
+
+    /// Deletes the coordinated file if it currently exists. A no-op (not an
+    /// error) when there is nothing there — mirrors `read()`'s treatment of a
+    /// missing file as "no data" rather than a failure.
+    public func deleteFileIfPresent() throws {
+        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
+        let coordinator = NSFileCoordinator(filePresenter: presenter)
+        var coordinatorError: NSError?
+        var deleteError: Error?
+        coordinator.coordinate(writingItemAt: fileURL, options: .forDeleting, error: &coordinatorError) { url in
+            do {
+                try FileManager.default.removeItem(at: url)
+            } catch {
+                deleteError = error
+            }
+        }
+        if let coordinatorError { throw coordinatorError }
+        if let deleteError { throw deleteError }
+    }
+
     /// Pure helper computing the file URL for `relativePath` inside a ubiquity
     /// container, so it is directly unit-testable without a real container.
     /// `Documents` is the standard iCloud Drive-visible subdirectory of a

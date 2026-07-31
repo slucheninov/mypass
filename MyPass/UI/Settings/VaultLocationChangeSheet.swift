@@ -28,6 +28,12 @@ struct VaultLocationChangeSheet: View {
     @State private var strategy: VaultMigrationStrategy = .merge
     @State private var errorMessage: String?
     @State private var successMessage: String?
+    /// The primary store `VaultSession` was using right before `startMigration()`
+    /// kicked off the current migration — captured so `applyLocationChange` knows
+    /// what "the old location" is once the new one has been verified. `nil`
+    /// whenever there is nothing to delete (e.g. `applyLocationChangeWithoutMigration`'s
+    /// first-run path, which never sets it).
+    @State private var sourceStoreBeforeMigration: VaultPrimaryStorage?
 
     init(targetLocation: VaultLocationOption) {
         self.targetLocation = targetLocation
@@ -307,12 +313,13 @@ struct VaultLocationChangeSheet: View {
         }
         guard let backend else { return }
 
+        sourceStoreBeforeMigration = vaultSession.currentPrimaryStore
         errorMessage = nil
         step = .migrating
         vaultSession.performMigration(to: backend, strategy: strategy) { result in
             switch result {
             case .success(let outcome):
-                self.applyLocationChange(outcome: outcome)
+                self.applyLocationChange(outcome: outcome, destinationBackend: backend)
             case .failure(let error):
                 self.handle(error)
             }
@@ -320,10 +327,52 @@ struct VaultLocationChangeSheet: View {
     }
 
     /// Only reached after `VaultMigrationService.migrate` has already
-    /// succeeded — persists the new location and swaps `VaultSession`'s live
-    /// primary store, so nothing is written to settings until the data is
-    /// safely in place.
-    private func applyLocationChange(outcome: VaultMigrationOutcome) {
+    /// succeeded. Before touching anything persistent, re-reads the bytes
+    /// `migrate` just wrote to `destinationBackend` and confirms they open
+    /// with the vault's own password — the same "prove it's real" bar the
+    /// old location was already held to — and only then deletes the old
+    /// location's file and swaps `VaultSession`'s live primary store. If the
+    /// verify fails, nothing is changed on either side and the user is sent
+    /// back to choose again. If verify succeeds but the delete fails, the
+    /// move still completes (the new location is good and already primary)
+    /// but the success message becomes a warning about the leftover copy.
+    private func applyLocationChange(outcome: VaultMigrationOutcome, destinationBackend: StorageBackend) {
+        let destinationData: Data
+        do {
+            guard let data = try destinationBackend.read() else {
+                errorMessage = "MyPass could not read the vault at the new location. Nothing was changed."
+                step = .confirmStrategy
+                return
+            }
+            destinationData = data
+        } catch {
+            errorMessage = "MyPass could not read the vault at the new location. Nothing was changed."
+            step = .confirmStrategy
+            return
+        }
+
+        do {
+            try vaultSession.verifyDestinationOpens(data: destinationData)
+        } catch {
+            errorMessage = "The vault at the new location could not be opened with your password. Nothing was changed."
+            step = .confirmStrategy
+            return
+        }
+
+        var sourceDeleteWarning: String?
+        if let sourceStore = sourceStoreBeforeMigration {
+            do {
+                try VaultLocationMoveSupport.deleteSourceVault(at: sourceStore)
+            } catch {
+                if let path = sourceStore.primaryVaultFileURL?.path {
+                    sourceDeleteWarning = "The vault was moved, but an old copy could not be removed at \(path)."
+                } else {
+                    sourceDeleteWarning = "The vault was moved, but the previous copy could not be removed."
+                }
+            }
+        }
+        sourceStoreBeforeMigration = nil
+
         switch targetLocation {
         case .iCloudDrive:
             guard let chosenFolderBookmark,
@@ -342,7 +391,7 @@ struct VaultLocationChangeSheet: View {
         vaultLocationRawValue = targetLocation.rawValue
         SyncBackendResolver.clearCheckpoint(for: .folder)
         SyncBackendResolver.clearCheckpoint(for: .sftp)
-        successMessage = Self.successMessage(for: outcome)
+        successMessage = sourceDeleteWarning ?? Self.successMessage(for: outcome)
         step = .finished
     }
 

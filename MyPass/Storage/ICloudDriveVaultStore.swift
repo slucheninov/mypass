@@ -67,9 +67,9 @@ final class ICloudDriveVaultStore: VaultPrimaryStorage {
         }
     }
 
-    var primaryVaultFileURL: URL? { nil }
+    var primaryVaultFileURL: URL? { backend.vaultFileURL }
 
     func deleteVaultFileIfPresent() throws {
-        // No-op for iCloud Drive storage
+        try backend.deleteFileIfPresent()
     }
 }

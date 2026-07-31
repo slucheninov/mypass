@@ -78,6 +78,12 @@ final class VaultSession: ObservableObject {
         return db
     }
 
+    /// The primary store currently backing this session, snapshotted before a
+    /// location-change migration starts — `VaultLocationChangeSheet` holds
+    /// onto it as "the old location" so it knows what to delete once the new
+    /// location has been verified. Read-only: mutate via `updatePrimaryStore`.
+    var currentPrimaryStore: VaultPrimaryStorage { fileStore }
+
     func loadVaultData() throws -> Data? {
         try fileStore.load()
     }
@@ -148,6 +154,18 @@ final class VaultSession: ObservableObject {
     func verifyPassword(_ password: String) -> Bool {
         guard let data = (try? fileStore.load()) ?? nil else { return false }
         return (try? KdbxDatabase.open(data: data, password: password)) != nil
+    }
+
+    /// Confirms `data` (bytes just written to a location-change destination)
+    /// opens with the password already proven for this session, without
+    /// exposing that password to the caller — used by
+    /// `VaultLocationChangeSheet` to gate deleting the old location's file on
+    /// the new location genuinely being readable. Throws
+    /// `VaultSessionError.notUnlocked` if there is no session password to
+    /// verify against (should not happen: migration itself requires one).
+    func verifyDestinationOpens(data: Data) throws {
+        guard let sessionPassword else { throw VaultSessionError.notUnlocked }
+        try VaultLocationMoveSupport.verifyDestinationOpens(data: data, password: sessionPassword)
     }
 
     func save(password: String) throws {
