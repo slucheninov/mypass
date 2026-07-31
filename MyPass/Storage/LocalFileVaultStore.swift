@@ -22,7 +22,11 @@ final class LocalFileVaultStore: VaultPrimaryStorage {
             throw LocalFileVaultStoreError.staleBookmark
         }
         self.fileURL = url
-        self.holdsSecurityScope = url.startAccessingSecurityScopedResource()
+        let accessGranted = url.startAccessingSecurityScopedResource()
+        guard accessGranted else {
+            throw LocalFileVaultStoreError.accessDenied
+        }
+        self.holdsSecurityScope = true
     }
 
     deinit {
@@ -66,4 +70,5 @@ final class LocalFileVaultStore: VaultPrimaryStorage {
 
 enum LocalFileVaultStoreError: Error {
     case staleBookmark
+    case accessDenied
 }
