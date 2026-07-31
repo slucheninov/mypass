@@ -28,8 +28,8 @@ This has two problems:
   client would also open). No separate "primary copy vs. mirror" split for
   these two.
 - Custom Folder and SFTP remain available, but strictly as an optional
-  **backup target** layered on top of whichever primary location is active —
-  not as alternatives to it.
+  **secondary destination** layered on top of whichever primary location is
+  active — not as alternatives to it.
 - The vault location (and other settings) can be viewed and changed from
   Settings *before* authenticating.
 - Changing the active location is gated: the user must successfully
@@ -64,13 +64,20 @@ Whichever is active, `VaultFileStore` reads and writes directly there. There
 is no second, separate canonical copy and no continuous push/pull between
 "local" and "remote" for these two — they *are* the single copy.
 
-### Backup target (orthogonal, not a `VaultLocation` case)
+### Secondary destination (orthogonal, not a `VaultLocation` case)
 
-A single picker, independent of the primary location: **None / Backup to
-Folder / Backup to SFTP**. One at a time (not simultaneous). This keeps
-today's `LocalFolderBackend`, `SFTPBackend`, `SyncEngine` push/pull-with-merge
-machinery exactly as it works now — a backup target is inherently a second
-copy that needs reconciliation, unlike the primary location.
+A single picker, independent of the primary location, labeled "Also Sync To"
+in Settings: **None / Folder / SFTP**. One at a time (not simultaneous). This
+keeps today's `LocalFolderBackend`, `SFTPBackend`, `SyncEngine`
+push/pull-with-merge machinery exactly as it works now — a secondary
+destination is inherently a second copy that needs reconciliation, unlike the
+primary location.
+
+(Implementation note: the picker and its backing `SecondaryDestinationOption`
+type deliberately avoid "Backup"/"Backups" wording — a naming constraint
+adopted during implementation because these are sync mirrors, not backups in
+the traditional sense, and using "backup" language risked implying a
+restore/versioning guarantee the feature doesn't provide.)
 
 ### External-change handling
 
@@ -91,8 +98,8 @@ Pre-auth wizard, matching the approved mockup:
   the iCloud Drive root, requesting the one-time grant.
 - **Skip for now (local only)** — silently proceeds with `.local`.
 
-(Custom Folder is not offered here, since it's backup-only in this design —
-it remains available afterward from the Backup target picker.)
+(Custom Folder is not offered here, since it's secondary-destination-only in
+this design — it remains available afterward from the "Also Sync To" picker.)
 
 Whichever is chosen, the normal first-unlock flow proceeds unchanged
 (`VaultSession.unlock` with `fileStore.load() == nil` creates the new
