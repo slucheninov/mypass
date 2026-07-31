@@ -263,16 +263,7 @@ struct VaultLocationChangeSheet: View {
             // existing vault.kdbx at its root, or already named "MyPass"),
             // since nesting again there would orphan an existing vault or
             // double-nest a folder created by this same flow on another Mac.
-            let alreadyHoldsVault = FileManager.default.fileExists(
-                atPath: folderURL.appendingPathComponent("vault.kdbx").path
-            )
-            let vaultFolderURL: URL
-            if alreadyHoldsVault || folderURL.lastPathComponent == "MyPass" {
-                vaultFolderURL = folderURL
-            } else {
-                vaultFolderURL = folderURL.appendingPathComponent("MyPass", isDirectory: true)
-                try FileManager.default.createDirectory(at: vaultFolderURL, withIntermediateDirectories: true)
-            }
+            let vaultFolderURL = try VaultICloudFolderSelection.resolveVaultFolder(from: folderURL)
             chosenFolderURL = vaultFolderURL
             outsideICloudDriveWarning = ICloudDriveLocation.isInsideICloudDrive(vaultFolderURL)
                 ? nil
