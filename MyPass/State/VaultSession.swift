@@ -25,6 +25,17 @@ final class VaultSession: ObservableObject {
     @Published private(set) var state: VaultState = .locked
     @Published private(set) var lastSaveError: String?
 
+    /// `true` when the configured primary location is iCloud Drive but its
+    /// bookmark could not be resolved at launch (see
+    /// `VaultPrimaryStoreResolver`), so `fileStore` is actually the Local
+    /// fallback rather than the real iCloud store — possibly a stale copy
+    /// from before the user switched to iCloud. `VaultLocationSettingsPane`
+    /// reads this to warn instead of claiming "iCloud Drive" is active, and
+    /// offers the existing "Switch to iCloud Drive…" flow to recover.
+    /// Cleared whenever `updatePrimaryStore` runs, since that only ever
+    /// happens with a store that already resolved successfully.
+    @Published private(set) var iCloudPrimaryFallbackActive: Bool
+
     private var fileStore: VaultPrimaryStorage
 
     /// Optional remote sync orchestrator (Phase 3). `nil` for sessions that
@@ -55,9 +66,10 @@ final class VaultSession: ObservableObject {
         return !touchAccessPersistWorkItem.isCancelled
     }
 
-    init(fileStore: VaultPrimaryStorage, syncEngine: SyncEngine? = nil) {
+    init(fileStore: VaultPrimaryStorage, syncEngine: SyncEngine? = nil, iCloudPrimaryFallbackActive: Bool = false) {
         self.fileStore = fileStore
         self.syncEngine = syncEngine
+        self.iCloudPrimaryFallbackActive = iCloudPrimaryFallbackActive
         wireRemoteChangeHandler(on: fileStore)
     }
 
@@ -110,6 +122,7 @@ final class VaultSession: ObservableObject {
     /// `unlock`/`persist` calls point.
     func updatePrimaryStore(_ newStore: VaultPrimaryStorage) {
         fileStore = newStore
+        iCloudPrimaryFallbackActive = false
         wireRemoteChangeHandler(on: newStore)
     }
 

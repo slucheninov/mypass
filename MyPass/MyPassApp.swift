@@ -47,25 +47,18 @@ struct MyPassApp: App {
         }
 
         let vaultLocation = VaultLocationResolver.resolveVaultLocation(rawValue: defaults.string(forKey: "vaultLocation"))
-        let primaryStore: VaultPrimaryStorage
-        var iCloudPrimaryStore: ICloudDriveVaultStore?
-        switch vaultLocation {
-        case .local:
-            primaryStore = VaultFileStore(directory: applicationSupportDirectory)
-        case .iCloudDrive:
-            if let bookmarkData = defaults.data(forKey: SyncBackendResolver.iCloudFolderBookmarkKey), !bookmarkData.isEmpty,
-               let store = try? ICloudDriveVaultStore(
-                   bookmarkData: bookmarkData,
-                   localBackupDirectory: applicationSupportDirectory.appendingPathComponent("backups")
-               ) {
-                primaryStore = store
-                iCloudPrimaryStore = store
-            } else {
-                // Bookmark missing or stale: fall back to Local rather than crash
-                // launch. Settings surfaces this so the user can re-grant access.
-                primaryStore = VaultFileStore(directory: applicationSupportDirectory)
+        let resolution = VaultPrimaryStoreResolver.resolvePrimaryStore(
+            vaultLocation: vaultLocation,
+            applicationSupportDirectory: applicationSupportDirectory,
+            iCloudBookmarkData: defaults.data(forKey: SyncBackendResolver.iCloudFolderBookmarkKey),
+            makeICloudStore: { bookmarkData in
+                try? ICloudDriveVaultStore(
+                    bookmarkData: bookmarkData,
+                    localBackupDirectory: applicationSupportDirectory.appendingPathComponent("backups")
+                )
             }
-        }
+        )
+        let primaryStore = resolution.primaryStore
 
         let secondaryDestination = SecondaryDestinationOption(rawValue: defaults.string(forKey: "secondaryDestination") ?? "") ?? .none
 
@@ -118,7 +111,8 @@ struct MyPassApp: App {
 
         let session = VaultSession(
             fileStore: primaryStore,
-            syncEngine: syncEngine
+            syncEngine: syncEngine,
+            iCloudPrimaryFallbackActive: resolution.iCloudFallbackToLocal
         )
         _vaultSession = StateObject(wrappedValue: session)
 
