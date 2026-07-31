@@ -6,7 +6,6 @@ import SwiftUI
 struct VaultLocationSettingsPane: View {
     @EnvironmentObject private var vaultSession: VaultSession
     @AppStorage("vaultLocation") private var vaultLocationRawValue: String = VaultLocationOption.local.rawValue
-    @State private var showingChangeSheet = false
     @State private var pendingTargetLocation: VaultLocationOption?
 
     private var currentLocation: VaultLocationOption {
@@ -25,12 +24,10 @@ struct VaultLocationSettingsPane: View {
                     .foregroundStyle(.orange)
                     Button("Re-grant iCloud Drive Access…") {
                         pendingTargetLocation = .iCloudDrive
-                        showingChangeSheet = true
                     }
                 }
                 Button(currentLocation == .local ? "Switch to iCloud Drive…" : "Switch to Local…") {
                     pendingTargetLocation = currentLocation == .local ? .iCloudDrive : .local
-                    showingChangeSheet = true
                 }
                 SettingsHelperText(text: "Local keeps the vault only on this Mac. iCloud Drive keeps it in a folder that syncs between your Macs (and, in the future, other devices signed into the same iCloud account).")
             } header: {
@@ -40,10 +37,8 @@ struct VaultLocationSettingsPane: View {
         }
         .formStyle(.grouped)
         .padding()
-        .sheet(isPresented: $showingChangeSheet) {
-            if let pendingTargetLocation {
-                VaultLocationChangeSheet(targetLocation: pendingTargetLocation)
-            }
+        .sheet(item: $pendingTargetLocation) { target in
+            VaultLocationChangeSheet(targetLocation: target)
         }
     }
 }
