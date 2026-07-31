@@ -19,6 +19,7 @@ struct VaultLocationChangeSheet: View {
     @AppStorage(SyncBackendResolver.iCloudFolderBookmarkKey) private var syncICloudFolderBookmarkData: Data?
 
     @State private var step: Step
+    @State private var vaultExistedAtOpen = true
     @State private var confirmPassword: String = ""
     @State private var chosenFolderURL: URL?
     @State private var chosenFolderBookmark: Data?
@@ -69,6 +70,19 @@ struct VaultLocationChangeSheet: View {
         .padding(20)
         .frame(width: 460)
         .onAppear {
+            vaultExistedAtOpen = (try? vaultSession.loadVaultData()) != nil
+            guard vaultExistedAtOpen else {
+                // Nothing exists anywhere yet, so there is nothing to
+                // authorize and nothing to migrate — set the location
+                // directly, mirroring what the (now-removed) first-run
+                // wizard used to do for a brand-new install.
+                if targetLocation == .iCloudDrive {
+                    step = .chooseFolder
+                } else {
+                    applyLocationChangeWithoutMigration()
+                }
+                return
+            }
             let snapshot: LockStateSnapshot = isVaultUnlocked ? .unlocked : .locked
             if !Self.needsPasswordConfirmation(currentState: snapshot) {
                 step = targetLocation == .iCloudDrive ? .chooseFolder : .probing
@@ -176,7 +190,9 @@ struct VaultLocationChangeSheet: View {
                 Button("Cancel") { dismiss() }
                 Button(chosenFolderURL == nil ? "Choose Folder…" : "Choose Another Folder…") { chooseFolder() }
                 if chosenFolderBookmark != nil {
-                    Button("Continue") { startProbeAgainstICloud() }
+                    Button("Continue") {
+                        vaultExistedAtOpen ? startProbeAgainstICloud() : applyLocationChangeWithoutMigration()
+                    }
                         .keyboardShortcut(.defaultAction)
                 }
             case .probing, .migrating:
@@ -222,7 +238,7 @@ struct VaultLocationChangeSheet: View {
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Use Folder"
-        panel.message = "Choose a folder inside iCloud Drive for the MyPass vault."
+        panel.message = "Choose a folder inside iCloud Drive for the MyPass vault. MyPass will create a \"MyPass\" subfolder inside it if needed."
         panel.directoryURL = ICloudDriveLocation.iCloudDriveRootURL
 
         guard panel.runModal() == .OK, let folderURL = panel.url else { return }
@@ -231,9 +247,21 @@ struct VaultLocationChangeSheet: View {
         do {
             // Wherever the user grants access, keep the vault in its own
             // "MyPass" subfolder rather than dropping it loose into whatever
-            // folder they picked (which defaults to the iCloud Drive root).
-            let vaultFolderURL = folderURL.appendingPathComponent("MyPass", isDirectory: true)
-            try FileManager.default.createDirectory(at: vaultFolderURL, withIntermediateDirectories: true)
+            // folder they picked (which defaults to the iCloud Drive root) —
+            // unless the picked folder already IS a MyPass vault folder (an
+            // existing vault.kdbx at its root, or already named "MyPass"),
+            // since nesting again there would orphan an existing vault or
+            // double-nest a folder created by this same flow on another Mac.
+            let alreadyHoldsVault = FileManager.default.fileExists(
+                atPath: folderURL.appendingPathComponent("vault.kdbx").path
+            )
+            let vaultFolderURL: URL
+            if alreadyHoldsVault || folderURL.lastPathComponent == "MyPass" {
+                vaultFolderURL = folderURL
+            } else {
+                vaultFolderURL = folderURL.appendingPathComponent("MyPass", isDirectory: true)
+                try FileManager.default.createDirectory(at: vaultFolderURL, withIntermediateDirectories: true)
+            }
             chosenFolderURL = vaultFolderURL
             outsideICloudDriveWarning = ICloudDriveLocation.isInsideICloudDrive(vaultFolderURL)
                 ? nil
@@ -313,6 +341,31 @@ struct VaultLocationChangeSheet: View {
         SyncBackendResolver.clearCheckpoint(for: .folder)
         SyncBackendResolver.clearCheckpoint(for: .sftp)
         successMessage = Self.successMessage(for: outcome)
+        step = .finished
+    }
+
+    /// Reached only when `vaultExistedAtOpen` is `false`: nothing exists
+    /// anywhere yet, so there is nothing to authorize and nothing to
+    /// migrate — just point the primary store at the chosen location,
+    /// mirroring what the (now-removed) first-run wizard used to do.
+    private func applyLocationChangeWithoutMigration() {
+        switch targetLocation {
+        case .iCloudDrive:
+            guard let chosenFolderBookmark,
+                  let newStore = try? ICloudDriveVaultStore(
+                      bookmarkData: chosenFolderBookmark,
+                      localBackupDirectory: applicationSupportBackupsDirectory
+                  ) else {
+                errorMessage = "MyPass could not use that folder. Choose the folder again and retry."
+                return
+            }
+            vaultSession.updatePrimaryStore(newStore)
+            syncICloudFolderBookmarkData = chosenFolderBookmark
+        case .local:
+            vaultSession.updatePrimaryStore(VaultFileStore(directory: applicationSupportDirectory))
+        }
+        vaultLocationRawValue = targetLocation.rawValue
+        successMessage = "Vault location set. Choose a master password to finish setting up your vault."
         step = .finished
     }
 
