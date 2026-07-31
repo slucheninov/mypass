@@ -45,6 +45,22 @@ final class ICloudDriveVaultStoreTests: XCTestCase {
         XCTAssertEqual(try store.load(), Data("second-version".utf8))
     }
 
+    func testSaveSucceedsEvenWhenBackupStepFails() throws {
+        let bookmark = try iCloudBackend.createFolderBookmark(for: folderDir)
+        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir)
+        try store.save(data: Data("first-version".utf8))
+
+        // Sabotage the backup directory so the pre-save backup step (which now
+        // has existing content to snapshot) fails the way an evicted iCloud
+        // placeholder / `downloadTimedOut` read would in production — a plain
+        // file sits where `backupCurrentContentIfPresent` expects a directory.
+        try FileManager.default.removeItem(at: backupDir)
+        try Data().write(to: backupDir)
+
+        XCTAssertNoThrow(try store.save(data: Data("second-version".utf8)))
+        XCTAssertEqual(try store.load(), Data("second-version".utf8))
+    }
+
     func testRotatesOldestBackupsBeyondBackupCount() throws {
         let bookmark = try iCloudBackend.createFolderBookmark(for: folderDir)
         let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir, backupCount: 2)

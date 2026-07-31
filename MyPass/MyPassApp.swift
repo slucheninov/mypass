@@ -122,13 +122,12 @@ struct MyPassApp: App {
         )
         _vaultSession = StateObject(wrappedValue: session)
 
-        // Design spec's external-change handling: reload-and-merge when another
-        // device/process touches the same iCloud Drive file.
-        if let iCloudPrimaryStore {
-            iCloudPrimaryStore.onRemoteChange = { [weak session] in
-                session?.triggerBackgroundSync()
-            }
-        }
+        // Design spec's external-change handling (reload-and-merge when
+        // another device/process touches the same iCloud Drive file) is wired
+        // centrally by `VaultSession` itself — on `init` above and on every
+        // later `updatePrimaryStore` swap (see `VaultSession.swift`), so an
+        // in-session switch to iCloud from `VaultLocationChangeSheet` keeps it
+        // working without this call site having to remember to re-wire it.
 
         let pairingStore = KeychainExtensionPairingStore()
         let pairingStoreModel = ExtensionPairingStoreModel(store: pairingStore)

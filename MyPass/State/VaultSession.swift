@@ -58,6 +58,7 @@ final class VaultSession: ObservableObject {
     init(fileStore: VaultPrimaryStorage, syncEngine: SyncEngine? = nil) {
         self.fileStore = fileStore
         self.syncEngine = syncEngine
+        wireRemoteChangeHandler(on: fileStore)
     }
 
     var currentDatabase: KdbxDatabase? {
@@ -109,6 +110,20 @@ final class VaultSession: ObservableObject {
     /// `unlock`/`persist` calls point.
     func updatePrimaryStore(_ newStore: VaultPrimaryStorage) {
         fileStore = newStore
+        wireRemoteChangeHandler(on: newStore)
+    }
+
+    /// Design spec's external-change handling: reload-and-merge when another
+    /// device/process touches the same iCloud Drive file. Wired centrally here
+    /// — both at `init` and on every later `updatePrimaryStore` swap — so an
+    /// in-session switch to iCloud (`VaultLocationChangeSheet`) keeps working
+    /// without every call site having to remember to re-wire it. A `.local`
+    /// store is a no-op since `VaultFileStore` has no such notification.
+    private func wireRemoteChangeHandler(on store: VaultPrimaryStorage) {
+        guard let iCloudStore = store as? ICloudDriveVaultStore else { return }
+        iCloudStore.onRemoteChange = { [weak self] in
+            self?.triggerBackgroundSync()
+        }
     }
 
     /// Checks `password` against the vault currently on disk at `fileStore`,

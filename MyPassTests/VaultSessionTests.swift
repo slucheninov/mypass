@@ -555,6 +555,39 @@ final class VaultSessionTests: XCTestCase {
         try session.unlock(password: "different-pw")
         XCTAssertNotNil(session.currentDatabase)
     }
+
+    func testUpdatePrimaryStoreRewiresOnRemoteChangeForTheNewStore() throws {
+        let session = VaultSession(fileStore: fileStore)
+        try session.unlock(password: "correct-horse")
+
+        let icloudFolder = tempDir.appendingPathComponent("icloud-folder")
+        let icloudBackups = tempDir.appendingPathComponent("icloud-backups")
+        try FileManager.default.createDirectory(at: icloudFolder, withIntermediateDirectories: true)
+        let bookmark = try iCloudBackend.createFolderBookmark(for: icloudFolder)
+        let iCloudStore = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: icloudBackups)
+
+        session.updatePrimaryStore(iCloudStore)
+
+        XCTAssertNotNil(
+            iCloudStore.onRemoteChange,
+            "expected updatePrimaryStore to wire onRemoteChange on the swapped-in store, not just the one built at launch"
+        )
+
+        // Simulate an external change notification on the *new* store and
+        // confirm it actually reaches VaultSession's background sync path
+        // (a persist to that same store), not just that a closure is set.
+        iCloudStore.onRemoteChange?()
+
+        var sawWrite = false
+        for _ in 0..<30 {
+            if (try? iCloudStore.load()) != nil {
+                sawWrite = true
+                break
+            }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        XCTAssertTrue(sawWrite, "expected the rewired onRemoteChange handler to trigger a background sync that persists to the new store")
+    }
 }
 
 // MARK: - Test Doubles

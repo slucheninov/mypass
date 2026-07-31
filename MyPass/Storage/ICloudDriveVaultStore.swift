@@ -35,7 +35,12 @@ final class ICloudDriveVaultStore: VaultPrimaryStorage {
     }
 
     func save(data: Data) throws {
-        try backupCurrentContentIfPresent()
+        // Best-effort: an evicted iCloud placeholder or a slow network can make
+        // the pre-save backup read throw `downloadTimedOut`. The backup is a
+        // nice-to-have, not the authoritative write — it must never block
+        // `backend.write(data)` below, so failures here are swallowed rather
+        // than propagated.
+        try? backupCurrentContentIfPresent()
         try backend.write(data)
     }
 
