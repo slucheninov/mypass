@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import MyPassKit
 
 struct UnlockView: View {
     @EnvironmentObject var vaultSession: VaultSession
@@ -13,6 +15,7 @@ struct UnlockView: View {
     @State private var errorMessage: String?
     @State private var isFirstRun = false
     @State private var didAutoPromptDeviceUnlock = false
+    @State private var openExistingVaultURL: URL?
 
     let biometricKeyStore: BiometricKeyStoring
 
@@ -96,6 +99,9 @@ struct UnlockView: View {
                     .frame(maxWidth: 320)
             }
 
+            Button("Open Existing .kdbx…") { openExistingVault() }
+                .buttonStyle(.link)
+
             Text(isFirstRun
                  ? "This password protects your vault. Remember it — it cannot be changed or reset later."
                  : "Vault is locked. Enter your master password or use Touch ID.")
@@ -114,6 +120,21 @@ struct UnlockView: View {
                 attemptDeviceUnlock(silentCancel: true)
             }
         }
+        .sheet(isPresented: Binding(
+            get: { openExistingVaultURL != nil },
+            set: { if !$0 { openExistingVaultURL = nil } }
+        )) {
+            if let url = openExistingVaultURL {
+                OpenExistingVaultSheet(
+                    fileURL: url,
+                    onSuccess: { database, openedPassword in
+                        openExistingVaultURL = nil
+                        completeOpenExistingVault(fileURL: url, password: openedPassword, database: database)
+                    },
+                    onCancel: { openExistingVaultURL = nil }
+                )
+            }
+        }
     }
 
     private func attemptUnlock() {
@@ -126,6 +147,37 @@ struct UnlockView: View {
             lastFullPasswordEntryTimestamp = now
         } catch {
             errorMessage = "Incorrect password or corrupted file."
+        }
+    }
+
+    private func openExistingVault() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.data]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        openExistingVaultURL = url
+    }
+
+    /// Called once `OpenExistingVaultSheet` has already proven `password`
+    /// opens the file at `fileURL` — creates the security-scoped bookmark
+    /// this session needs to keep reading `fileURL` across launches, then
+    /// hands off to `VaultSession.retargetToOpenExistingVault`, which both
+    /// retargets and publishes the unlocked database (so the app transitions
+    /// straight from locked to this vault without a second unlock step).
+    private func completeOpenExistingVault(fileURL: URL, password: String, database: KdbxDatabase) {
+        do {
+            let bookmark = try LocalFileVaultStore.createFileBookmark(for: fileURL)
+            try vaultSession.retargetToOpenExistingVault(
+                fileURL: fileURL,
+                bookmarkData: bookmark,
+                password: password,
+                database: database
+            )
+            let now = Date().timeIntervalSince1970
+            lastDeviceUnlockTimestamp = now
+            lastFullPasswordEntryTimestamp = now
+        } catch {
+            errorMessage = "Could not switch to this vault file."
         }
     }
 

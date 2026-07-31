@@ -429,6 +429,80 @@ final class VaultSession: ObservableObject {
         }
     }
 
+    /// Retargets this session's primary vault to an existing `.kdbx` file the
+    /// user picked via "Open Existing…" (`EntryListView`/`UnlockView`,
+    /// `OpenExistingVaultSheet`). `database` must already have been opened
+    /// with `password` against the bytes at `fileURL` — this method never
+    /// verifies the password itself, only wires up the new location and
+    /// publishes what the caller already proved openable.
+    ///
+    /// Persists the switch to `defaults`: sets `"vaultLocation"` to `.local`,
+    /// stores `bookmarkData` under `SyncBackendResolver.localVaultFileBookmarkKey`
+    /// so `VaultPrimaryStoreResolver` reopens the same file on next launch,
+    /// and clears `SyncBackendResolver.iCloudFolderBookmarkKey` — leaving a
+    /// stale iCloud bookmark around would let a later resolver run treat the
+    /// abandoned iCloud folder as still primary.
+    ///
+    /// Deletes the Application Support vault only when the *previous* primary
+    /// was the plain default `VaultFileStore` with no file bookmark recorded
+    /// (i.e. the user was on the untouched default local vault, not one they
+    /// already retargeted once, and not iCloud) — that snapshot must be taken
+    /// from `defaults`/`fileStore` *before* `updatePrimaryStore` runs, since
+    /// this method itself is about to overwrite both. Deleting in any other
+    /// case would destroy a vault that isn't a throwaway default (e.g. the
+    /// iCloud copy, or a previously-opened external file).
+    func retargetToOpenExistingVault(
+        fileURL: URL,
+        bookmarkData: Data,
+        password: String,
+        database: KdbxDatabase,
+        defaults: UserDefaults = .standard
+    ) throws {
+        let newStore = try LocalFileVaultStore(bookmarkData: bookmarkData)
+        // A missing `"vaultLocation"` value (fresh install, never touched
+        // Settings) counts as default local too — `VaultLocationResolver`
+        // resolves a `nil` raw value to `.local`, and this check needs the
+        // same "what location is actually in effect" semantics rather than
+        // a literal string match against an unset key.
+        let oldStore = fileStore
+        let wasDefaultLocal = oldStore is VaultFileStore
+            && defaults.data(forKey: SyncBackendResolver.localVaultFileBookmarkKey) == nil
+            && VaultLocationResolver.resolveVaultLocation(rawValue: defaults.string(forKey: "vaultLocation")) == .local
+
+        updatePrimaryStore(newStore)
+        defaults.set(VaultLocationOption.local.rawValue, forKey: "vaultLocation")
+        defaults.set(bookmarkData, forKey: SyncBackendResolver.localVaultFileBookmarkKey)
+        defaults.removeObject(forKey: SyncBackendResolver.iCloudFolderBookmarkKey)
+
+        if wasDefaultLocal {
+            // Delete via the captured `oldStore` instance itself (not a
+            // freshly reconstructed `VaultFileStore` pointed at the real
+            // system Application Support directory) so this operates on
+            // whatever directory that store was actually configured with —
+            // the production default (`MyPassApp`'s real App Support path)
+            // and a test double pointed at a temp directory both work
+            // correctly, rather than only the former.
+            try oldStore.deleteVaultFileIfPresent()
+        }
+
+        state = .unlocked(database)
+        sessionPassword = password
+        hasDirtyLocalChanges = false
+
+        // Record what's already durably on disk at `fileURL` as this
+        // session's "last successfully written" snapshot, via the same
+        // `recordSuccessfulWrite` path `unlock`/`save(password:)`/
+        // `syncOnUnlock` use — so `persist(_:)`'s logical-equality skip check
+        // (see `lastSuccessfullyWrittenDatabase`'s doc comment) has a correct
+        // baseline immediately, instead of writing a byte-identical copy
+        // right back on the very next autosave. Deliberately does NOT write
+        // these bytes to `newStore`: the file the user picked already
+        // contains content that opened successfully with `password`, so
+        // there is nothing to persist yet, only tracking state to seed.
+        let data = try database.save(password: password, cipher: .aes256, compression: .gzip)
+        recordSuccessfulWrite(data, database: database)
+    }
+
     /// Dismisses a surfaced save-error alert without affecting vault state.
     func acknowledgeSaveError() {
         lastSaveError = nil

@@ -6,6 +6,7 @@ struct EntryListView: View {
     let rootGroup: KdbxGroup
     @EnvironmentObject var navigationState: NavigationState
     @EnvironmentObject var vaultSession: VaultSession
+    @State private var openExistingVaultURL: URL?
 
     private var currentGroup: KdbxGroup {
         find(uuid: navigationState.selectedGroupID, in: rootGroup) ?? rootGroup
@@ -96,6 +97,21 @@ struct EntryListView: View {
                 }
             }
         }
+        .sheet(isPresented: Binding(
+            get: { openExistingVaultURL != nil },
+            set: { if !$0 { openExistingVaultURL = nil } }
+        )) {
+            if let url = openExistingVaultURL {
+                OpenExistingVaultSheet(
+                    fileURL: url,
+                    onSuccess: { database, password in
+                        openExistingVaultURL = nil
+                        completeOpenExistingVault(fileURL: url, password: password, database: database)
+                    },
+                    onCancel: { openExistingVaultURL = nil }
+                )
+            }
+        }
     }
 
     private func find(uuid: UUID?, in group: KdbxGroup) -> KdbxGroup? {
@@ -131,19 +147,27 @@ struct EntryListView: View {
         panel.allowedContentTypes = [.data]
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
+        openExistingVaultURL = url
+    }
 
-        // Known limitation (see plan Global Constraints): only .kdbx files created by
-        // MyPass itself (16-byte Argon2id salt) are guaranteed to open. Third-party
-        // KeePassXC files with a 32-byte salt will fail here with a message that
-        // explicitly names this limitation rather than a bare "wrong password".
+    /// Called once `OpenExistingVaultSheet` has already proven `password`
+    /// opens the file at `fileURL` — creates the security-scoped bookmark
+    /// this session needs to keep reading `fileURL` across launches, then
+    /// hands off to `VaultSession.retargetToOpenExistingVault` to actually
+    /// switch the primary vault over.
+    private func completeOpenExistingVault(fileURL: URL, password: String, database: KdbxDatabase) {
         do {
-            let data = try Data(contentsOf: url)
-            _ = try KdbxDatabase.open(data: data, password: "") // password prompt UI deferred; placeholder call demonstrates the error path
+            let bookmark = try LocalFileVaultStore.createFileBookmark(for: fileURL)
+            try vaultSession.retargetToOpenExistingVault(
+                fileURL: fileURL,
+                bookmarkData: bookmark,
+                password: password,
+                database: database
+            )
         } catch {
             NSSound.beep()
-            // A production alert would read: "Could not open file. MyPass supports
-            // opening .kdbx files created by MyPass itself; third-party KeePassXC
-            // files with a 32-byte Argon2id salt are not yet supported."
+            // A production alert would read: "Could not switch to this vault
+            // file: \(error)".
         }
     }
 }
