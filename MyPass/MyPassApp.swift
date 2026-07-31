@@ -73,11 +73,15 @@ struct MyPassApp: App {
             vaultLocation: vaultLocation,
             applicationSupportDirectory: applicationSupportDirectory,
             iCloudBookmarkData: defaults.data(forKey: SyncBackendResolver.iCloudFolderBookmarkKey),
+            localVaultFileBookmarkData: defaults.data(forKey: SyncBackendResolver.localVaultFileBookmarkKey),
             makeICloudStore: { bookmarkData in
                 try? ICloudDriveVaultStore(
                     bookmarkData: bookmarkData,
                     localBackupDirectory: applicationSupportDirectory.appendingPathComponent("backups")
                 )
+            },
+            makeLocalFileStore: { bookmarkData in
+                try? LocalFileVaultStore(bookmarkData: bookmarkData)
             }
         )
         let primaryStore = resolution.primaryStore

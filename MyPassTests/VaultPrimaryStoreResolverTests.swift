@@ -11,7 +11,9 @@ final class VaultPrimaryStoreResolverTests: XCTestCase {
             vaultLocation: .local,
             applicationSupportDirectory: applicationSupportDirectory,
             iCloudBookmarkData: nil,
-            makeICloudStore: { _ in XCTFail("must not attempt iCloud construction for .local"); return nil }
+            localVaultFileBookmarkData: nil,
+            makeICloudStore: { _ in XCTFail("must not attempt iCloud construction for .local"); return nil },
+            makeLocalFileStore: { _ in nil }
         )
         XCTAssertTrue(resolution.primaryStore is VaultFileStore)
         XCTAssertFalse(resolution.iCloudFallbackToLocal)
@@ -33,7 +35,9 @@ final class VaultPrimaryStoreResolverTests: XCTestCase {
             vaultLocation: .iCloudDrive,
             applicationSupportDirectory: applicationSupportDirectory,
             iCloudBookmarkData: bookmark,
-            makeICloudStore: { _ in expectedStore }
+            localVaultFileBookmarkData: nil,
+            makeICloudStore: { _ in expectedStore },
+            makeLocalFileStore: { _ in nil }
         )
         XCTAssertTrue(resolution.primaryStore is ICloudDriveVaultStore)
         XCTAssertFalse(resolution.iCloudFallbackToLocal)
@@ -44,7 +48,9 @@ final class VaultPrimaryStoreResolverTests: XCTestCase {
             vaultLocation: .iCloudDrive,
             applicationSupportDirectory: applicationSupportDirectory,
             iCloudBookmarkData: nil,
-            makeICloudStore: { _ in XCTFail("must not attempt construction with no bookmark data"); return nil }
+            localVaultFileBookmarkData: nil,
+            makeICloudStore: { _ in XCTFail("must not attempt construction with no bookmark data"); return nil },
+            makeLocalFileStore: { _ in nil }
         )
         XCTAssertTrue(resolution.primaryStore is VaultFileStore)
         XCTAssertTrue(resolution.iCloudFallbackToLocal)
@@ -55,7 +61,9 @@ final class VaultPrimaryStoreResolverTests: XCTestCase {
             vaultLocation: .iCloudDrive,
             applicationSupportDirectory: applicationSupportDirectory,
             iCloudBookmarkData: Data("stale-or-unresolvable".utf8),
-            makeICloudStore: { _ in nil }
+            localVaultFileBookmarkData: nil,
+            makeICloudStore: { _ in nil },
+            makeLocalFileStore: { _ in nil }
         )
         XCTAssertTrue(resolution.primaryStore is VaultFileStore)
         XCTAssertTrue(resolution.iCloudFallbackToLocal)
@@ -66,10 +74,49 @@ final class VaultPrimaryStoreResolverTests: XCTestCase {
             vaultLocation: .iCloudDrive,
             applicationSupportDirectory: applicationSupportDirectory,
             iCloudBookmarkData: Data(),
-            makeICloudStore: { _ in XCTFail("must not attempt construction with empty bookmark data"); return nil }
+            localVaultFileBookmarkData: nil,
+            makeICloudStore: { _ in XCTFail("must not attempt construction with empty bookmark data"); return nil },
+            makeLocalFileStore: { _ in nil }
         )
         XCTAssertTrue(resolution.primaryStore is VaultFileStore)
         XCTAssertTrue(resolution.iCloudFallbackToLocal)
+    }
+
+    func testLocalLocationWithValidFileBookmarkUsesLocalFileVaultStore() throws {
+        let vaultFile = applicationSupportDirectory.appendingPathComponent("opened.kdbx")
+        try FileManager.default.createDirectory(at: applicationSupportDirectory, withIntermediateDirectories: true)
+        try Data("opened".utf8).write(to: vaultFile)
+        let bookmark = try LocalFileVaultStore.createFileBookmark(for: vaultFile)
+        let expectedStore = try LocalFileVaultStore(bookmarkData: bookmark)
+
+        let resolution = VaultPrimaryStoreResolver.resolvePrimaryStore(
+            vaultLocation: .local,
+            applicationSupportDirectory: applicationSupportDirectory,
+            iCloudBookmarkData: nil,
+            localVaultFileBookmarkData: bookmark,
+            makeICloudStore: { _ in XCTFail("must not attempt iCloud for .local"); return nil },
+            makeLocalFileStore: { data in try? LocalFileVaultStore(bookmarkData: data) }
+        )
+        XCTAssertTrue(resolution.primaryStore is LocalFileVaultStore)
+        XCTAssertFalse(resolution.iCloudFallbackToLocal)
+        XCTAssertEqual(
+            resolution.primaryStore.primaryVaultFileURL?.path,
+            expectedStore.primaryVaultFileURL?.path
+        )
+    }
+
+    func testLocalLocationWithoutFileBookmarkUsesApplicationSupportVaultFileStore() {
+        let resolution = VaultPrimaryStoreResolver.resolvePrimaryStore(
+            vaultLocation: .local,
+            applicationSupportDirectory: applicationSupportDirectory,
+            iCloudBookmarkData: nil,
+            localVaultFileBookmarkData: nil,
+            makeICloudStore: { _ in XCTFail("must not attempt iCloud for .local"); return nil },
+            makeLocalFileStore: { _ in XCTFail("must not attempt file bookmark store without data"); return nil }
+        )
+        XCTAssertTrue(resolution.primaryStore is VaultFileStore)
+        XCTAssertFalse(resolution.primaryStore is LocalFileVaultStore)
+        XCTAssertFalse(resolution.iCloudFallbackToLocal)
     }
 
     private func bookmarkData(for url: URL) throws -> Data {

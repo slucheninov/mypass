@@ -12,6 +12,10 @@ enum SyncBackendResolver {
     /// silently split configuration across three different keys.
     static let iCloudFolderBookmarkKey = "syncICloudFolderBookmark"
 
+    /// UserDefaults key holding the security-scoped bookmark for a user-opened
+    /// `.kdbx` file used as the local primary vault (Open Existing flow).
+    static let localVaultFileBookmarkKey = "localVaultFileBookmark"
+
     /// Resolves the Local-folder backend from previously-persisted
     /// security-scoped bookmark data (Task 2's `LocalFolderBackend`).
     /// Returns `nil` (never throws) when no folder has been chosen yet — a

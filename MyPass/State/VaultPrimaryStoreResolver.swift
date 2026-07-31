@@ -26,10 +26,16 @@ enum VaultPrimaryStoreResolver {
         vaultLocation: VaultLocationOption,
         applicationSupportDirectory: URL,
         iCloudBookmarkData: Data?,
-        makeICloudStore: (Data) -> ICloudDriveVaultStore?
+        localVaultFileBookmarkData: Data?,
+        makeICloudStore: (Data) -> ICloudDriveVaultStore?,
+        makeLocalFileStore: (Data) -> LocalFileVaultStore?
     ) -> Resolution {
         switch vaultLocation {
         case .local:
+            if let localVaultFileBookmarkData, !localVaultFileBookmarkData.isEmpty,
+               let store = makeLocalFileStore(localVaultFileBookmarkData) {
+                return Resolution(primaryStore: store, iCloudFallbackToLocal: false)
+            }
             return Resolution(
                 primaryStore: VaultFileStore(directory: applicationSupportDirectory),
                 iCloudFallbackToLocal: false
