@@ -281,6 +281,47 @@ public final class iCloudBackend: StorageBackend, ConflictResolvingStorageBacken
         }
         return true
     }
+
+    /// Reads whatever the newest available bytes for this backend's file
+    /// currently are — used by `VaultSession.reloadPrimaryFromRemoteIfChanged()`
+    /// (Task 7's Last-Writer-Wins remote-change reload), which always
+    /// replaces its in-memory state wholesale with whatever this returns,
+    /// rather than merging entry-by-entry. Any unresolved `NSFileVersion`
+    /// conflict versions are folded in first via `resolveConflictVersionsLWW()`
+    /// (newest `modificationDate` wins), which is deliberately NOT the same
+    /// resolution strategy as `resolveConflictVersions(merge:)` above — that
+    /// one stays for callers that want an entry-level merge (`SyncEngine`).
+    public func readNewestAvailableBytes() throws -> Data? {
+        try resolveConflictVersionsLWW()
+        return try read()
+    }
+
+    /// Picks the newest-by-modification-date candidate among the current file
+    /// content and any unresolved `NSFileVersion` conflict versions of this
+    /// backend's file, writes it back as the current version, and marks the
+    /// conflicts resolved. A no-op (returns `false`) when there are no
+    /// unresolved conflicts, mirroring `resolveConflictVersions(merge:)`'s
+    /// same early-out.
+    @discardableResult
+    private func resolveConflictVersionsLWW() throws -> Bool {
+        guard let versions = NSFileVersion.unresolvedConflictVersionsOfItem(at: fileURL), !versions.isEmpty else {
+            return false
+        }
+        var candidates: [(date: Date, data: Data)] = []
+        if let current = try read() {
+            candidates.append((try modificationDate() ?? .distantPast, current))
+        }
+        for version in versions {
+            guard let data = try? Data(contentsOf: version.url) else { continue }
+            candidates.append((version.modificationDate ?? .distantPast, data))
+        }
+        guard let newest = candidates.max(by: { $0.date < $1.date }) else { return false }
+        try write(newest.data)
+        for version in versions {
+            version.isResolved = true
+        }
+        return true
+    }
 }
 
 /// Minimal `NSFilePresenter` — required for `NSFileCoordinator`-coordinated

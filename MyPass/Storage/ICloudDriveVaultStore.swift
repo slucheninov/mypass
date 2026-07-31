@@ -34,6 +34,14 @@ final class ICloudDriveVaultStore: VaultPrimaryStorage {
         try backend.read()
     }
 
+    /// Forwards to `iCloudBackend.readNewestAvailableBytes()` — the LWW read
+    /// `VaultSession.reloadPrimaryFromRemoteIfChanged()` uses instead of
+    /// `load()` so any unresolved iCloud conflict versions are folded in
+    /// (newest wins) before the bytes are handed back.
+    func loadNewestBytes() throws -> Data? {
+        try backend.readNewestAvailableBytes()
+    }
+
     func save(data: Data) throws {
         // Best-effort: an evicted iCloud placeholder or a slow network can make
         // the pre-save backup read throw `downloadTimedOut`. The backup is a

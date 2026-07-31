@@ -188,16 +188,84 @@ final class VaultSession: ObservableObject {
         }
     }
 
-    /// Design spec's external-change handling: reload-and-merge when another
-    /// device/process touches the same iCloud Drive file. Wired centrally here
-    /// — both at `init` and on every later `updatePrimaryStore` swap — so an
-    /// in-session switch to iCloud (`VaultLocationChangeSheet`) keeps working
-    /// without every call site having to remember to re-wire it. A `.local`
-    /// store is a no-op since `VaultFileStore` has no such notification.
+    /// Design spec's external-change handling: reload (Last-Writer-Wins, not
+    /// push) when another device/process touches the same iCloud Drive file.
+    /// Wired centrally here — both at `init` and on every later
+    /// `updatePrimaryStore` swap — so an in-session switch to iCloud
+    /// (`VaultLocationChangeSheet`) keeps working without every call site
+    /// having to remember to re-wire it. A `.local` store is a no-op since
+    /// `VaultFileStore` has no such notification.
     private func wireRemoteChangeHandler(on store: VaultPrimaryStorage) {
         guard let iCloudStore = store as? ICloudDriveVaultStore else { return }
         iCloudStore.onRemoteChange = { [weak self] in
-            self?.triggerBackgroundSync()
+            self?.reloadPrimaryFromRemoteIfChanged()
+        }
+    }
+
+    /// Reloads in-memory state from whatever the newest available bytes are
+    /// at `fileStore` (Last-Writer-Wins), instead of pushing local state up —
+    /// the old `wireRemoteChangeHandler` wiring called `triggerBackgroundSync()`
+    /// here, which this replaces. Runs the coordinated iCloud read + KDF
+    /// derivation on `persistQueue`, same as `persist(_:)`, so it cannot
+    /// interleave with an autosave or another reload. No-op when locked, when
+    /// there is no session password to open the remote bytes with, or when
+    /// `fileStore` isn't backed by iCloud (the Local backend has no
+    /// remote-change notion at all, so it never calls this).
+    func reloadPrimaryFromRemoteIfChanged() {
+        guard case .unlocked = state, let password = sessionPassword else { return }
+        guard let iCloudStore = fileStore as? ICloudDriveVaultStore else { return }
+        persistQueue.async { [weak self] in
+            guard let self else { return }
+            do {
+                guard let remoteBytes = try iCloudStore.loadNewestBytes() else { return }
+                let decodedDatabase = try KdbxDatabase.open(data: remoteBytes, password: password)
+
+                // Compared as `KdbxDatabase` values (logical content), NOT as
+                // serialized bytes: `save(password:cipher:compression:)`
+                // mints fresh random KDF salt/IV/inner-stream-key material on
+                // every call, so two serializations of identical content are
+                // essentially never byte-identical — a raw-bytes comparison
+                // here would almost never detect "nothing actually changed"
+                // and would instead reload+republish on every remote-change
+                // notification, including ones caused by this device's own
+                // writes. Safe to read `lastSuccessfullyWrittenDatabase` here:
+                // we're on `persistQueue`, the only queue that ever touches it.
+                if decodedDatabase == self.lastSuccessfullyWrittenDatabase {
+                    return
+                }
+
+                // Deep-copy before storing as the new "last written" snapshot,
+                // same reason `recordSuccessfulWrite`/`persist(_:)` do:
+                // `KdbxGroup` is a class, so storing `decodedDatabase`'s own
+                // `rootGroup` here (rather than a copy) would let a later
+                // in-place `mutate()` on the live `state` silently mutate this
+                // snapshot too, making every subsequent comparison spuriously
+                // equal.
+                let snapshot = KdbxDatabase(
+                    rootGroup: decodedDatabase.rootGroup.deepCopy(),
+                    deletedObjects: decodedDatabase.deletedObjects,
+                    recycleBinGroupUUID: decodedDatabase.recycleBinGroupUUID
+                )
+                self.lastSuccessfullyWrittenBytes = remoteBytes
+                self.lastSuccessfullyWrittenDatabase = snapshot
+
+                DispatchQueue.main.async { [weak self] in
+                    guard let self else { return }
+                    self.hasDirtyLocalChanges = false
+                    self.lastSaveError = nil
+                    // Only replace state if still unlocked — if the user
+                    // called lock() while this reload was in flight, don't
+                    // silently re-unlock the vault (same guard
+                    // `performMigration`'s completion handler uses).
+                    if case .unlocked = self.state {
+                        self.state = .unlocked(decodedDatabase)
+                    }
+                }
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastSaveError = "Could not reload vault from iCloud: \(error)"
+                }
+            }
         }
     }
 

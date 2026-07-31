@@ -573,20 +573,109 @@ final class VaultSessionTests: XCTestCase {
             "expected updatePrimaryStore to wire onRemoteChange on the swapped-in store, not just the one built at launch"
         )
 
-        // Simulate an external change notification on the *new* store and
-        // confirm it actually reaches VaultSession's background sync path
-        // (a persist to that same store), not just that a closure is set.
+        // Simulate an external change notification on the *new* store. Task 7
+        // replaces the old unconditional push (`triggerBackgroundSync()`) with
+        // a pull-only LWW reload (`reloadPrimaryFromRemoteIfChanged()`) — the
+        // new store has no vault file at all yet, so there is nothing newer to
+        // pull, and the handler must NOT push local content to it either.
         iCloudStore.onRemoteChange?()
 
-        var sawWrite = false
-        for _ in 0..<30 {
-            if (try? iCloudStore.load()) != nil {
-                sawWrite = true
-                break
-            }
-            Thread.sleep(forTimeInterval: 0.1)
+        waitForBackgroundWork()
+
+        XCTAssertNil(
+            try iCloudStore.load(),
+            "expected the rewired onRemoteChange handler to pull (not push); the new store has no remote content to reload from"
+        )
+    }
+
+    // MARK: - Remote change LWW reload
+
+    func testRemoteChangeReloadsWhenBytesDiffer() throws {
+        let folder = tempDir.appendingPathComponent("icloud-primary")
+        let backups = tempDir.appendingPathComponent("icloud-backups")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let bookmark = try iCloudBackend.createFolderBookmark(for: folder)
+        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backups)
+        let session = VaultSession(fileStore: store)
+        try session.unlock(password: "correct-horse")
+
+        waitForPersist(on: session)
+
+        let remoteDB = KdbxDatabase(
+            rootGroup: KdbxGroup(
+                uuid: UUID(), name: "MyPass", iconID: 0,
+                creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(),
+                entries: [], subgroups: []
+            ),
+            deletedObjects: []
+        )
+        var remoteEntry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: Date(), lastModificationTime: Date(),
+            lastAccessTime: Date(), locationChanged: Date(), history: []
+        )
+        remoteEntry.title = "From Other Mac"
+        remoteDB.rootGroup.entries.append(remoteEntry)
+        let remoteBytes = try remoteDB.save(password: "correct-horse", cipher: .aes256, compression: .gzip)
+        try store.save(data: remoteBytes)
+
+        session.reloadPrimaryFromRemoteIfChanged()
+
+        // `state` is republished via `DispatchQueue.main.async`, so waiting
+        // must pump the main run loop rather than block it with
+        // `Thread.sleep` — this test runs on the main thread, and a blocked
+        // main thread can never drain its own queued `DispatchQueue.main`
+        // work, which would make this loop spin for the full timeout every
+        // time regardless of how quickly the reload actually completes.
+        for _ in 0..<50 {
+            if session.currentDatabase?.rootGroup.entries.first?.title == "From Other Mac" { break }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.05))
         }
-        XCTAssertTrue(sawWrite, "expected the rewired onRemoteChange handler to trigger a background sync that persists to the new store")
+        XCTAssertEqual(session.currentDatabase?.rootGroup.entries.first?.title, "From Other Mac")
+        XCTAssertNil(session.lastSaveError)
+    }
+
+    func testRemoteChangeNoOpsWhenBytesMatch() throws {
+        let folder = tempDir.appendingPathComponent("icloud-primary-nochange")
+        let backups = tempDir.appendingPathComponent("icloud-backups-nochange")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let bookmark = try iCloudBackend.createFolderBookmark(for: folder)
+        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backups)
+        let session = VaultSession(fileStore: store)
+        try session.unlock(password: "correct-horse")
+        waitForPersist(on: session)
+
+        guard let db = session.currentDatabase else {
+            return XCTFail("expected unlocked state")
+        }
+
+        // Re-serialize the SAME logical content that's already on disk, with
+        // fresh crypto material — `KdbxDatabase.save` mints a fresh random KDF
+        // salt/IV/inner-stream-key on every call, so these bytes are
+        // guaranteed to differ from what's already at `store` even though the
+        // decoded content is identical. This is deliberate: it exercises the
+        // logical-equality no-op check (comparing decoded `KdbxDatabase`
+        // values), not a byte-identical short-circuit that would never fire
+        // for real KeePass writers either.
+        let onDiskBefore = try store.load()
+        let sameContentDifferentBytes = try db.save(password: "correct-horse", cipher: .aes256, compression: .gzip)
+        XCTAssertNotEqual(
+            sameContentDifferentBytes, onDiskBefore,
+            "test setup must produce different raw bytes for the same logical content, or this test would not exercise the logical-equality path"
+        )
+        try store.save(data: sameContentDifferentBytes)
+
+        let backupCountBefore = (try? FileManager.default.contentsOfDirectory(atPath: backups.path).count) ?? 0
+
+        session.reloadPrimaryFromRemoteIfChanged()
+        waitForBackgroundWork()
+
+        let backupCountAfter = (try? FileManager.default.contentsOfDirectory(atPath: backups.path).count) ?? 0
+        XCTAssertEqual(
+            backupCountAfter, backupCountBefore,
+            "logically-unchanged remote content should not trigger a write-back to the store (a write-back would create a new local backup)"
+        )
+        XCTAssertNil(session.lastSaveError)
     }
 
     func testPrimaryVaultPathDisplayReturnsVaultURLPath() throws {
