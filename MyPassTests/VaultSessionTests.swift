@@ -604,6 +604,55 @@ final class VaultSessionTests: XCTestCase {
         let session = VaultSession(fileStore: NoURLStore())
         XCTAssertEqual(session.primaryVaultPathDisplay, "Path unavailable")
     }
+
+    // MARK: - Skip-identical-bytes persist
+
+    func testPersistSkipsWriteWhenSerializedBytesUnchanged() throws {
+        let spy = CountingVaultPrimaryStorage(inner: fileStore)
+        let session = VaultSession(fileStore: spy)
+        try session.unlock(password: "correct-horse")
+
+        waitForPersist(on: session)
+
+        let writesAfterUnlock = spy.saveCallCount
+        XCTAssertGreaterThan(writesAfterUnlock, 0)
+
+        session.triggerBackgroundSyncIfDirty()
+        waitForBackgroundWork()
+
+        XCTAssertEqual(spy.saveCallCount, writesAfterUnlock, "identical bytes should not invoke save again")
+    }
+
+    func testPersistWritesWhenDatabaseMutated() throws {
+        let spy = CountingVaultPrimaryStorage(inner: fileStore)
+        let session = VaultSession(fileStore: spy)
+        try session.unlock(password: "correct-horse")
+        waitForPersist(on: session)
+        let baseline = spy.saveCallCount
+
+        session.mutate { db in
+            var entry = KdbxEntry(
+                uuid: UUID(), iconID: 0, fields: [],
+                creationTime: Date(), lastModificationTime: Date(),
+                lastAccessTime: Date(), locationChanged: Date(), history: []
+            )
+            entry.title = "New"
+            db.rootGroup.entries.append(entry)
+        }
+        waitForPersist(on: session)
+        XCTAssertGreaterThan(spy.saveCallCount, baseline)
+    }
+
+    private func waitForPersist(on session: VaultSession, file: StaticString = #file, line: UInt = #line) {
+        for _ in 0..<50 {
+            if session.lastSaveError != nil { break }
+            Thread.sleep(forTimeInterval: 0.05)
+        }
+    }
+
+    private func waitForBackgroundWork() {
+        Thread.sleep(forTimeInterval: 0.3)
+    }
 }
 
 // MARK: - Test Doubles
@@ -650,5 +699,23 @@ private class BlockingStorageBackend: StorageBackend {
 
     func unblockRead() {
         readBlocker.signal()
+    }
+}
+
+/// Wraps a `VaultFileStore` and counts `save(data:)` invocations, so tests can
+/// assert that identical-bytes persists are skipped rather than re-written.
+private final class CountingVaultPrimaryStorage: VaultPrimaryStorage {
+    let inner: VaultFileStore
+    private(set) var saveCallCount = 0
+
+    init(inner: VaultFileStore) { self.inner = inner }
+
+    var primaryVaultFileURL: URL? { inner.primaryVaultFileURL }
+    func load() throws -> Data? { try inner.load() }
+    func deleteVaultFileIfPresent() throws { try inner.deleteVaultFileIfPresent() }
+
+    func save(data: Data) throws {
+        saveCallCount += 1
+        try inner.save(data: data)
     }
 }

@@ -237,7 +237,7 @@ struct MyPassApp: App {
             withTimeInterval: Self.backgroundSyncInterval,
             repeats: true
         ) { [weak session] _ in
-            session?.triggerBackgroundSync()
+            session?.triggerBackgroundSyncIfDirty()
         }
 
         // Design spec's Local-folder backend requirement "FSEvents for

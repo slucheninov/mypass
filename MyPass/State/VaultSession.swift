@@ -59,6 +59,27 @@ final class VaultSession: ObservableObject {
     /// Coalesces rapid `touchAccess` calls into a single debounced persist.
     private var touchAccessPersistWorkItem: DispatchWorkItem?
 
+    /// The bytes last successfully written to `fileStore` by `persist(_:)`,
+    /// so a subsequent persist whose freshly-serialized snapshot is
+    /// byte-identical (e.g. a no-op background sync tick, or a `touchAccess`
+    /// that ended up not changing anything observable in the KDF-derived
+    /// ciphertext) can skip the disk write and the sync round-trip entirely.
+    /// Read and written *only* from `persistQueue` (inside `persist(_:)`'s
+    /// background closure) to avoid a data race; the main-thread seed points
+    /// (`unlock`, `save(password:)`, `syncOnUnlock`) go through
+    /// `recordSuccessfulWrite(_:)`, which hops onto the same serial queue via
+    /// `sync` rather than assigning the property directly.
+    private var lastSuccessfullyWrittenBytes: Data?
+
+    /// `true` whenever in-memory state has changed since the last byte-exact
+    /// write reached `fileStore`. Set on the main thread by `mutate` and
+    /// cleared on the main thread by `persist(_:)`'s completion handlers (via
+    /// `DispatchQueue.main.async`), so — unlike `lastSuccessfullyWrittenBytes`
+    /// — it never needs a lock: every read and write happens on the main
+    /// thread. Backs `triggerBackgroundSyncIfDirty()`, which the app-level
+    /// timer calls instead of unconditionally syncing every tick.
+    private var hasDirtyLocalChanges = false
+
     /// `true` while a debounced `touchAccess` persist is still waiting to run.
     /// Exposed so tests can assert that starting a migration cancels it.
     var hasPendingTouchAccessPersist: Bool {
@@ -97,6 +118,7 @@ final class VaultSession: ObservableObject {
             let db = try KdbxDatabase.open(data: existingData, password: password)
             state = .unlocked(db)
             sessionPassword = password
+            recordSuccessfulWrite(existingData)
             state = .unlocked(syncOnUnlock(db, password: password))
         } else {
             let now = Date()
@@ -178,13 +200,27 @@ final class VaultSession: ObservableObject {
         }
         let data = try db.save(password: password, cipher: .aes256, compression: .gzip)
         try fileStore.save(data: data)
+        recordSuccessfulWrite(data)
     }
 
     func mutate(_ body: (inout KdbxDatabase) -> Void) {
         guard case .unlocked(var db) = state else { return }
         body(&db)
         state = .unlocked(db)
+        hasDirtyLocalChanges = true
         persist(db)
+    }
+
+    /// Runs `triggerBackgroundSync()` only when there are unwritten local
+    /// changes — called by the app-level background sync timer so a tick
+    /// that finds nothing dirty doesn't pay for a KDF derivation and a
+    /// same-bytes disk write just to discover there was nothing to do.
+    /// Callers that need an unconditional resync regardless of local dirty
+    /// state (e.g. an external-change notification from iCloud or a local
+    /// folder watcher) should keep calling `triggerBackgroundSync()` directly.
+    func triggerBackgroundSyncIfDirty() {
+        guard hasDirtyLocalChanges else { return }
+        triggerBackgroundSync()
     }
 
     /// Bumps `lastAccessTime` for the entry in the live group tree and
@@ -319,10 +355,23 @@ final class VaultSession: ObservableObject {
         do {
             let data = try mergedDatabase.save(password: password, cipher: .aes256, compression: .gzip)
             try fileStore.save(data: data)
+            recordSuccessfulWrite(data)
         } catch {
             lastSaveError = "Failed to save merged changes locally: \(error)"
         }
         return mergedDatabase
+    }
+
+    /// Seeds/updates `lastSuccessfullyWrittenBytes` from a write that just
+    /// succeeded on the *main* thread (`unlock`, `save(password:)`,
+    /// `syncOnUnlock`). Hops onto `persistQueue` synchronously so every
+    /// read/write of `lastSuccessfullyWrittenBytes` — whether from here or
+    /// from `persist(_:)`'s background closure — happens on that one serial
+    /// queue, with no lock required.
+    private func recordSuccessfulWrite(_ data: Data) {
+        persistQueue.sync {
+            self.lastSuccessfullyWrittenBytes = data
+        }
     }
 
     private func persist(_ db: KdbxDatabase) {
@@ -335,9 +384,31 @@ final class VaultSession: ObservableObject {
             deletedObjects: db.deletedObjects,
             recycleBinGroupUUID: db.recycleBinGroupUUID
         )
-        persistQueue.async { [fileStore, syncEngine] in
+        persistQueue.async { [weak self, fileStore, syncEngine] in
+            guard let self else { return }
+            let data: Data
             do {
-                let data = try snapshot.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
+                data = try snapshot.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
+            } catch {
+                DispatchQueue.main.async { [weak self] in
+                    self?.lastSaveError = "Failed to save changes: \(error)"
+                }
+                return
+            }
+
+            // Identical to what's already on disk (and, if attached, already
+            // synced) — skip both the write and the sync round-trip. Safe to
+            // read `lastSuccessfullyWrittenBytes` here: we're on `persistQueue`,
+            // the only queue that ever touches it.
+            if data == self.lastSuccessfullyWrittenBytes {
+                DispatchQueue.main.async { [weak self] in
+                    self?.hasDirtyLocalChanges = false
+                    self?.lastSaveError = nil
+                }
+                return
+            }
+
+            do {
                 try fileStore.save(data: data)
             } catch {
                 DispatchQueue.main.async { [weak self] in
@@ -345,8 +416,11 @@ final class VaultSession: ObservableObject {
                 }
                 return
             }
+            self.lastSuccessfullyWrittenBytes = data
+
             guard let syncEngine else {
                 DispatchQueue.main.async { [weak self] in
+                    self?.hasDirtyLocalChanges = false
                     self?.lastSaveError = nil
                 }
                 return
@@ -354,10 +428,12 @@ final class VaultSession: ObservableObject {
             do {
                 _ = try syncEngine.sync(local: snapshot, password: sessionPassword, cipher: .aes256, compression: .gzip)
                 DispatchQueue.main.async { [weak self] in
+                    self?.hasDirtyLocalChanges = false
                     self?.lastSaveError = nil
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
+                    self?.hasDirtyLocalChanges = false
                     self?.lastSaveError = "Local save completed, but sync failed: \(error)"
                 }
             }
