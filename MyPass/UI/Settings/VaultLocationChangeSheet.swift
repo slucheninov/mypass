@@ -70,7 +70,18 @@ struct VaultLocationChangeSheet: View {
         .padding(20)
         .frame(width: 460)
         .onAppear {
-            vaultExistedAtOpen = (try? vaultSession.loadVaultData()) != nil
+            do {
+                vaultExistedAtOpen = try vaultSession.loadVaultData() != nil
+            } catch {
+                // Could not determine whether a vault exists (e.g. a
+                // transient iCloud read failure on an evicted placeholder) —
+                // assume it does, so this falls through to the normal
+                // confirm/probe/migrate flow (which surfaces the real error
+                // there) instead of treating a temporarily-unreadable vault
+                // as a fresh install and silently switching location with
+                // nothing confirmed and nothing migrated.
+                vaultExistedAtOpen = true
+            }
             guard vaultExistedAtOpen else {
                 // Nothing exists anywhere yet, so there is nothing to
                 // authorize and nothing to migrate — set the location
