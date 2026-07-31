@@ -76,4 +76,49 @@ final class VaultLocationMoveSupportTests: XCTestCase {
         XCTAssertNil(try sourceStore.load())
         XCTAssertNotNil(try destStore.load())
     }
+
+    /// Covers the non-`.seedRemote` case: `.adoptRemote` writes the remote's
+    /// existing content into the SOURCE store (not the destination — see
+    /// `VaultMigrationService.adoptRemote`), so after migrate the source and
+    /// destination hold byte-identical content and it's still correct for
+    /// the move flow to verify the destination, then delete the source.
+    func testMoveFlowAfterAdoptRemoteLeavesSourceAbsent() throws {
+        let sourceStore = VaultFileStore(directory: sourceDir)
+        let destStore = VaultFileStore(directory: destDir)
+
+        let localDB = try makeDatabase()
+        var localEntry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: Date(), lastModificationTime: Date(),
+            lastAccessTime: Date(), locationChanged: Date(), history: []
+        )
+        localEntry.title = "Local Entry"
+        localDB.rootGroup.entries.append(localEntry)
+        try sourceStore.save(data: try localDB.save(password: password, cipher: .aes256, compression: .gzip))
+
+        let remoteDB = try makeDatabase()
+        var remoteEntry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: Date(), lastModificationTime: Date(),
+            lastAccessTime: Date(), locationChanged: Date(), history: []
+        )
+        remoteEntry.title = "Remote Entry"
+        remoteDB.rootGroup.entries.append(remoteEntry)
+        try destStore.save(data: try remoteDB.save(password: password, cipher: .aes256, compression: .gzip))
+
+        let service = VaultMigrationService(fileStore: sourceStore)
+        let outcome = try service.migrate(local: localDB, password: password, remote: destStore, strategy: .adoptRemote)
+        XCTAssertEqual(outcome.strategy, .adoptRemote)
+        XCTAssertTrue(outcome.localReplaced)
+        XCTAssertFalse(outcome.remoteWritten)
+
+        let destData = try XCTUnwrap(try destStore.load())
+        try VaultLocationMoveSupport.verifyDestinationOpens(data: destData, password: password)
+        _ = try VaultLocationMoveSupport.deleteSourceVault(at: sourceStore)
+
+        XCTAssertNil(try sourceStore.load())
+        let remainingDestData = try XCTUnwrap(try destStore.load())
+        let remainingDestDB = try KdbxDatabase.open(data: remainingDestData, password: password)
+        XCTAssertEqual(remainingDestDB.rootGroup.entries.first?.title, "Remote Entry")
+    }
 }

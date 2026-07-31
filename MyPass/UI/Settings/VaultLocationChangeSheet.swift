@@ -359,20 +359,12 @@ struct VaultLocationChangeSheet: View {
             return
         }
 
-        var sourceDeleteWarning: String?
-        if let sourceStore = sourceStoreBeforeMigration {
-            do {
-                try VaultLocationMoveSupport.deleteSourceVault(at: sourceStore)
-            } catch {
-                if let path = sourceStore.primaryVaultFileURL?.path {
-                    sourceDeleteWarning = "The vault was moved, but an old copy could not be removed at \(path)."
-                } else {
-                    sourceDeleteWarning = "The vault was moved, but the previous copy could not be removed."
-                }
-            }
-        }
-        sourceStoreBeforeMigration = nil
-
+        // Everything from here down that can still fail (re-resolving the
+        // iCloud folder bookmark, constructing the new store) must run BEFORE
+        // the source is deleted — never destroy a copy before its
+        // replacement is not just verified-readable but actually live as the
+        // new primary. Source deletion below is therefore the last step and
+        // is warning-only: once reached, nothing after it can fail.
         switch targetLocation {
         case .iCloudDrive:
             guard let chosenFolderBookmark,
@@ -391,6 +383,21 @@ struct VaultLocationChangeSheet: View {
         vaultLocationRawValue = targetLocation.rawValue
         SyncBackendResolver.clearCheckpoint(for: .folder)
         SyncBackendResolver.clearCheckpoint(for: .sftp)
+
+        var sourceDeleteWarning: String?
+        if let sourceStore = sourceStoreBeforeMigration {
+            do {
+                try VaultLocationMoveSupport.deleteSourceVault(at: sourceStore)
+            } catch {
+                if let path = sourceStore.primaryVaultFileURL?.path {
+                    sourceDeleteWarning = "The vault was moved, but an old copy could not be removed at \(path)."
+                } else {
+                    sourceDeleteWarning = "The vault was moved, but the previous copy could not be removed."
+                }
+            }
+        }
+        sourceStoreBeforeMigration = nil
+
         successMessage = sourceDeleteWarning ?? Self.successMessage(for: outcome)
         step = .finished
     }
