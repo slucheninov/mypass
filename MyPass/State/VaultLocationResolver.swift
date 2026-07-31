@@ -19,20 +19,6 @@ enum VaultLocationResolver {
         VaultLocationOption(rawValue: rawValue ?? "") ?? .local
     }
 
-    /// `true` only for a genuinely fresh install: no new-model `"vaultLocation"`
-    /// key, no legacy `"syncBackend"` key, and no vault file already sitting in
-    /// Application Support from a pre-redesign install. Any of those three
-    /// existing means the location is already decided and the wizard must not
-    /// interrupt the user.
-    static func shouldShowFirstRunWizard(
-        vaultLocationRawValue: String?,
-        legacySyncBackendRawValue: String?,
-        applicationSupportVaultExists: Bool
-    ) -> Bool {
-        guard vaultLocationRawValue == nil, legacySyncBackendRawValue == nil else { return false }
-        return !applicationSupportVaultExists
-    }
-
     /// Maps a pre-redesign `"syncBackend"` value (`SyncBackendOption`'s old
     /// rawValues: "Local File" / "iCloud Drive" / "SFTP") onto the new
     /// two-picker model, so an existing install upgrades without losing its

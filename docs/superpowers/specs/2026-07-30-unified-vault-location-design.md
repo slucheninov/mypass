@@ -92,20 +92,16 @@ kept as the standing behavior rather than a side effect of "mirror sync."
 
 ### First run (no vault exists anywhere yet)
 
-Pre-auth wizard, matching the approved mockup:
+No wizard, no dialogs: MyPass silently creates the vault on `.local`
+(Application Support), exactly as every existing install already works. This
+mirrors `.local`'s existing dedicated `MyPass` subfolder under Application
+Support with no prompt at all.
 
-- **Use iCloud Drive** (default) — opens the folder picker pre-navigated to
-  the iCloud Drive root, requesting the one-time grant. Whatever folder the
-  grant is made on, MyPass creates (or reuses) a "MyPass" subfolder inside it
-  and stores the vault there — never loose in the granted folder's root. This
-  mirrors `.local`, which already gets its own dedicated `MyPass` subfolder
-  under Application Support with no prompt at all.
-- **Skip for now (local only)** — silently proceeds with `.local`.
+Choosing iCloud Drive is only available afterward, as an explicit action from
+Settings → Vault Location → "Switch to iCloud Drive…" — see "Changing the
+primary location later" below. It is never offered or forced on first run.
 
-(Custom Folder is not offered here, since it's secondary-destination-only in
-this design — it remains available afterward from the "Also Sync To" picker.)
-
-Whichever is chosen, the normal first-unlock flow proceeds unchanged
+Whichever location is active, the normal first-unlock flow proceeds unchanged
 (`VaultSession.unlock` with `fileStore.load() == nil` creates the new
 database and sets the master password). No separate verification step is
 needed here — there is nothing yet to verify against.
@@ -122,7 +118,10 @@ Reachable from a new **Vault Location** settings pane, regardless of whether
 the app is currently locked or unlocked:
 
 1. User picks Local ↔ iCloud Drive (granting folder access if switching to
-   iCloud and not already granted).
+   iCloud and not already granted). Whatever folder the grant is made on,
+   MyPass creates (or reuses) a "MyPass" subfolder inside it and stores the
+   vault there — never loose in the granted folder's root. This is the only
+   place in the app a user picks an iCloud folder.
 2. This *stages* the change — nothing is persisted yet, no I/O against the
    target happens yet.
 3. The pane prompts for the master password inline ("Enter your password to
@@ -160,7 +159,7 @@ verbatim, just surfaced from the new pane:
   (fresh install vs. pre-existing Application-Support vault vs. previously
   granted iCloud bookmark), and confirm-password gating (success persists +
   migrates; failure leaves settings and session state untouched).
-- Manual verification via the `run` skill: first-run wizard end-to-end,
+- Manual verification via the `run` skill: silent local-only first run,
   changing location both pre-auth and post-auth, wrong-password rejection,
   and that an existing pre-redesign install keeps working unchanged on
   Local.

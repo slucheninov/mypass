@@ -8,21 +8,6 @@ final class VaultLocationResolverTests: XCTestCase {
         XCTAssertEqual(VaultLocationResolver.resolveVaultLocation(rawValue: "iCloud Drive"), .iCloudDrive)
     }
 
-    func testShouldShowFirstRunWizardOnlyForTrulyFreshInstall() {
-        XCTAssertTrue(VaultLocationResolver.shouldShowFirstRunWizard(
-            vaultLocationRawValue: nil, legacySyncBackendRawValue: nil, applicationSupportVaultExists: false
-        ))
-        XCTAssertFalse(VaultLocationResolver.shouldShowFirstRunWizard(
-            vaultLocationRawValue: "Local File", legacySyncBackendRawValue: nil, applicationSupportVaultExists: false
-        ))
-        XCTAssertFalse(VaultLocationResolver.shouldShowFirstRunWizard(
-            vaultLocationRawValue: nil, legacySyncBackendRawValue: "iCloud Drive", applicationSupportVaultExists: false
-        ))
-        XCTAssertFalse(VaultLocationResolver.shouldShowFirstRunWizard(
-            vaultLocationRawValue: nil, legacySyncBackendRawValue: nil, applicationSupportVaultExists: true
-        ))
-    }
-
     func testMigrateLegacyBackendReturnsNilWhenNothingLegacyIsConfigured() {
         XCTAssertNil(VaultLocationResolver.migrateLegacyBackendIfNeeded(
             legacySyncBackendRawValue: nil, legacyLocalFolderBookmark: nil

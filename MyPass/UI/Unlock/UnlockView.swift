@@ -13,7 +13,6 @@ struct UnlockView: View {
     @State private var errorMessage: String?
     @State private var isFirstRun = false
     @State private var didAutoPromptDeviceUnlock = false
-    @State private var showingLocationWizard = false
 
     let biometricKeyStore: BiometricKeyStoring
 
@@ -110,24 +109,10 @@ struct UnlockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             isFirstRun = (try? vaultSession.loadVaultData()) == nil
-            if isFirstRun {
-                let defaults = UserDefaults.standard
-                showingLocationWizard = VaultLocationResolver.shouldShowFirstRunWizard(
-                    vaultLocationRawValue: defaults.string(forKey: "vaultLocation"),
-                    legacySyncBackendRawValue: defaults.string(forKey: "syncBackend"),
-                    applicationSupportVaultExists: (try? vaultSession.loadVaultData()) != nil
-                )
-            }
             if !isFirstRun, canShowDeviceUnlockButton, !didAutoPromptDeviceUnlock {
                 didAutoPromptDeviceUnlock = true
                 attemptDeviceUnlock(silentCancel: true)
             }
-        }
-        .sheet(isPresented: $showingLocationWizard) {
-            VaultLocationFirstRunSheet(onFinished: {
-                showingLocationWizard = false
-                isFirstRun = (try? vaultSession.loadVaultData()) == nil
-            })
         }
     }
 

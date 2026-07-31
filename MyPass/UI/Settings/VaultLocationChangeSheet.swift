@@ -228,12 +228,17 @@ struct VaultLocationChangeSheet: View {
         guard panel.runModal() == .OK, let folderURL = panel.url else { return }
 
         errorMessage = nil
-        chosenFolderURL = folderURL
-        outsideICloudDriveWarning = ICloudDriveLocation.isInsideICloudDrive(folderURL)
-            ? nil
-            : "This folder is not inside iCloud Drive, so iCloud will not sync it. MyPass will still keep the vault there."
         do {
-            chosenFolderBookmark = try iCloudBackend.createFolderBookmark(for: folderURL)
+            // Wherever the user grants access, keep the vault in its own
+            // "MyPass" subfolder rather than dropping it loose into whatever
+            // folder they picked (which defaults to the iCloud Drive root).
+            let vaultFolderURL = folderURL.appendingPathComponent("MyPass", isDirectory: true)
+            try FileManager.default.createDirectory(at: vaultFolderURL, withIntermediateDirectories: true)
+            chosenFolderURL = vaultFolderURL
+            outsideICloudDriveWarning = ICloudDriveLocation.isInsideICloudDrive(vaultFolderURL)
+                ? nil
+                : "This folder is not inside iCloud Drive, so iCloud will not sync it. MyPass will still keep the vault there."
+            chosenFolderBookmark = try iCloudBackend.createFolderBookmark(for: vaultFolderURL)
         } catch {
             chosenFolderBookmark = nil
             errorMessage = "MyPass could not keep access to that folder: \(error)"
