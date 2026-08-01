@@ -81,7 +81,10 @@ struct MyPassApp: App {
                 )
             },
             makeLocalFileStore: { bookmarkData in
-                try? LocalFileVaultStore(bookmarkData: bookmarkData)
+                try? LocalFileVaultStore(
+                    bookmarkData: bookmarkData,
+                    localBackupDirectory: applicationSupportDirectory.appendingPathComponent("backups")
+                )
             }
         )
         let primaryStore = resolution.primaryStore
@@ -138,7 +141,8 @@ struct MyPassApp: App {
         let session = VaultSession(
             fileStore: primaryStore,
             syncEngine: syncEngine,
-            iCloudPrimaryFallbackActive: resolution.iCloudFallbackToLocal
+            iCloudPrimaryFallbackActive: resolution.iCloudFallbackToLocal,
+            localFileFallbackActive: resolution.localFileFallbackActive
         )
         _vaultSession = StateObject(wrappedValue: session)
 

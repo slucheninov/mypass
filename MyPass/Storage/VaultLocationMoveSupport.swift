@@ -36,4 +36,18 @@ enum VaultLocationMoveSupport {
         try store.deleteVaultFileIfPresent()
         return existed
     }
+
+    /// `true` when `lhs` and `rhs` resolve to the same file on disk, after
+    /// standardizing and resolving symlinks — used to refuse a "move" whose
+    /// destination is actually the same file as the source (e.g. the app is
+    /// silently running in iCloud-fallback-to-local mode, so "Move to
+    /// Local…" would otherwise verify-open the SAME Application Support file
+    /// it is about to delete, destroying the only copy of the vault). `nil`
+    /// on either side never counts as a match — an unresolvable URL is not
+    /// proof of sameness.
+    static func isSameVaultFile(_ lhs: URL?, _ rhs: URL?) -> Bool {
+        guard let lhs, let rhs else { return false }
+        return lhs.standardizedFileURL.resolvingSymlinksInPath()
+            == rhs.standardizedFileURL.resolvingSymlinksInPath()
+    }
 }

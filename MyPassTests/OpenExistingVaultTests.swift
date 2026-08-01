@@ -116,7 +116,10 @@ final class OpenExistingVaultTests: XCTestCase {
         let firstDB = try makeDatabase(title: "First")
         try firstDB.save(password: password, cipher: .aes256, compression: .gzip).write(to: firstVaultURL)
         let firstBookmark = try LocalFileVaultStore.createFileBookmark(for: firstVaultURL)
-        let firstStore = try LocalFileVaultStore(bookmarkData: firstBookmark)
+        let firstStore = try LocalFileVaultStore(
+            bookmarkData: firstBookmark,
+            localBackupDirectory: appSupportDir.appendingPathComponent("backups")
+        )
 
         defaults.set(VaultLocationOption.local.rawValue, forKey: "vaultLocation")
         defaults.set(firstBookmark, forKey: SyncBackendResolver.localVaultFileBookmarkKey)
@@ -183,5 +186,62 @@ final class OpenExistingVaultTests: XCTestCase {
         XCTAssertEqual(session.currentDatabase?.rootGroup.entries.first?.title, "External")
         XCTAssertTrue(session.currentPrimaryStore is LocalFileVaultStore)
         XCTAssertNotNil(session.currentDatabase)
+    }
+
+    /// Finding 3: retargeting to a completely unrelated `.kdbx` (Open
+    /// Existing) must clear any secondary `.folder`/`.sftp` `SyncEngine`
+    /// checkpoint, the same way the regular Move flow already does — a
+    /// checkpoint taken against the previous vault must never be trusted
+    /// once the primary points at unrelated content, or the next secondary
+    /// sync pass risks overwriting the remote with this vault's data, or
+    /// merging the OLD vault's entries into it. `SyncBackendResolver.
+    /// clearCheckpoint` always targets `UserDefaults.standard` (matching the
+    /// Move flow's own unconditional use of it), independent of whichever
+    /// `defaults` instance is passed to `retargetToOpenExistingVault` for
+    /// the vault-location bookkeeping — so this test seeds/restores
+    /// `.standard` directly rather than the test's own `defaults` suite.
+    func testRetargetClearsSecondarySyncCheckpoints() throws {
+        let folderKey = SyncBackendResolver.checkpointKey(for: .folder)
+        let sftpKey = SyncBackendResolver.checkpointKey(for: .sftp)
+        let priorFolderValue = UserDefaults.standard.object(forKey: folderKey)
+        let priorSFTPValue = UserDefaults.standard.object(forKey: sftpKey)
+        UserDefaults.standard.set(123.0, forKey: folderKey)
+        UserDefaults.standard.set(456.0, forKey: sftpKey)
+        addTeardownBlock {
+            if let priorFolderValue {
+                UserDefaults.standard.set(priorFolderValue, forKey: folderKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: folderKey)
+            }
+            if let priorSFTPValue {
+                UserDefaults.standard.set(priorSFTPValue, forKey: sftpKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: sftpKey)
+            }
+        }
+
+        let defaultStore = VaultFileStore(directory: appSupportDir)
+        let session = VaultSession(fileStore: defaultStore)
+        let oldDB = try makeDatabase(title: "Old")
+        try defaultStore.save(data: try oldDB.save(password: password, cipher: .aes256, compression: .gzip))
+
+        let newDB = try makeDatabase(title: "External")
+        let newData = try newDB.save(password: password, cipher: .aes256, compression: .gzip)
+        try newData.write(to: externalVaultURL)
+        let bookmark = try LocalFileVaultStore.createFileBookmark(for: externalVaultURL)
+
+        try session.retargetToOpenExistingVault(
+            fileURL: externalVaultURL,
+            bookmarkData: bookmark,
+            password: password,
+            database: newDB,
+            defaults: defaults
+        )
+
+        XCTAssertNil(
+            UserDefaults.standard.object(forKey: folderKey),
+            "a checkpoint taken against the previous vault must not survive a retarget to an unrelated vault"
+        )
+        XCTAssertNil(UserDefaults.standard.object(forKey: sftpKey))
     }
 }

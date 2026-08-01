@@ -136,4 +136,41 @@ final class VaultLocationChangeSheetMessageTests: XCTestCase {
     func testConfirmStepIsRequiredWhenLocked() {
         XCTAssertTrue(VaultLocationChangeSheet.needsPasswordConfirmation(currentState: .locked))
     }
+
+    // MARK: - destinationIsSameFileAsSource (Finding 1: self-move guard)
+
+    /// The scenario the finding describes: the app silently fell back to the
+    /// Application Support `VaultFileStore` (e.g. an unresolvable iCloud
+    /// bookmark at launch) while Settings still offers "Move to Local…" —
+    /// pressing it would otherwise construct the SAME file as both source
+    /// and destination.
+    func testDestinationIsSameFileAsSourceWhenBothResolveToTheSameFile() throws {
+        let dir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VaultLocationChangeSheetMessageTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+
+        let sourceStore = VaultFileStore(directory: dir)
+        let destinationBackend = VaultFileStore(directory: dir)
+
+        XCTAssertTrue(VaultLocationChangeSheet.destinationIsSameFileAsSource(
+            sourceStore: sourceStore,
+            destinationBackend: destinationBackend
+        ))
+    }
+
+    func testDestinationIsNotSameFileAsSourceForDifferentDirectories() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("VaultLocationChangeSheetMessageTests-\(UUID().uuidString)")
+        let sourceDir = base.appendingPathComponent("source")
+        let destDir = base.appendingPathComponent("dest")
+        try FileManager.default.createDirectory(at: sourceDir, withIntermediateDirectories: true)
+        try FileManager.default.createDirectory(at: destDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        XCTAssertFalse(VaultLocationChangeSheet.destinationIsSameFileAsSource(
+            sourceStore: VaultFileStore(directory: sourceDir),
+            destinationBackend: VaultFileStore(directory: destDir)
+        ))
+    }
 }

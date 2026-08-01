@@ -121,4 +121,36 @@ final class VaultLocationMoveSupportTests: XCTestCase {
         let remainingDestDB = try KdbxDatabase.open(data: remainingDestData, password: password)
         XCTAssertEqual(remainingDestDB.rootGroup.entries.first?.title, "Remote Entry")
     }
+
+    // MARK: - isSameVaultFile (Finding 1: self-move guard)
+
+    func testIsSameVaultFileTrueForIdenticalURLs() {
+        let url = sourceDir.appendingPathComponent("vault.kdbx")
+        XCTAssertTrue(VaultLocationMoveSupport.isSameVaultFile(url, url))
+    }
+
+    func testIsSameVaultFileTrueForEquivalentUnstandardizedURLs() {
+        // Same file reached via a redundant "./" path component — must still
+        // compare equal once standardized, the same way a real bookmark
+        // resolution and a freshly-constructed directory URL could disagree
+        // syntactically while pointing at the identical file.
+        let plain = sourceDir.appendingPathComponent("vault.kdbx")
+        let viaRedundantComponent = sourceDir
+            .appendingPathComponent(".")
+            .appendingPathComponent("vault.kdbx")
+        XCTAssertTrue(VaultLocationMoveSupport.isSameVaultFile(plain, viaRedundantComponent))
+    }
+
+    func testIsSameVaultFileFalseForDifferentURLs() {
+        let lhs = sourceDir.appendingPathComponent("vault.kdbx")
+        let rhs = destDir.appendingPathComponent("vault.kdbx")
+        XCTAssertFalse(VaultLocationMoveSupport.isSameVaultFile(lhs, rhs))
+    }
+
+    func testIsSameVaultFileFalseWhenEitherSideIsNil() {
+        let url = sourceDir.appendingPathComponent("vault.kdbx")
+        XCTAssertFalse(VaultLocationMoveSupport.isSameVaultFile(url, nil))
+        XCTAssertFalse(VaultLocationMoveSupport.isSameVaultFile(nil, url))
+        XCTAssertFalse(VaultLocationMoveSupport.isSameVaultFile(nil, nil))
+    }
 }

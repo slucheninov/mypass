@@ -678,6 +678,61 @@ final class VaultSessionTests: XCTestCase {
         XCTAssertNil(session.lastSaveError)
     }
 
+    /// Finding 7: the logical-equality no-op check
+    /// (`decodedDatabase == lastSuccessfullyWrittenDatabase`) was effectively
+    /// dead in the common case, because KDBX serializes dates at whole-second
+    /// precision (`KdbxXmlCoder`'s `Int64(date.timeIntervalSince1970.rounded())`)
+    /// while `lastSuccessfullyWrittenDatabase` is seeded from a full-precision
+    /// in-memory snapshot taken right after `mutate` stamps `Date()`. A
+    /// reload that finds nothing byte-different on disk (the common "same
+    /// file re-notified" case) must short-circuit BEFORE decoding, or it
+    /// would decode the whole-second-truncated bytes, see them as "different"
+    /// from the full-precision snapshot due to the precision mismatch alone,
+    /// and wrongly replace `state` — losing the sub-second precision on
+    /// every timestamp in the process. This test stamps a full-precision
+    /// timestamp, persists, then reloads with nothing else touching the
+    /// store: only a byte-identical short-circuit (skipping decode entirely)
+    /// can preserve the fractional-second component across that reload.
+    func testRemoteChangeSkipsDecodeWhenBytesByteIdenticalPreservingSubSecondPrecision() throws {
+        let folder = tempDir.appendingPathComponent("icloud-primary-byte-identical")
+        let backups = tempDir.appendingPathComponent("icloud-backups-byte-identical")
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let bookmark = try iCloudBackend.createFolderBookmark(for: folder)
+        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backups)
+        let session = VaultSession(fileStore: store)
+        try session.unlock(password: "correct-horse")
+        waitForPersist(on: session)
+
+        let stampedDate = Date()
+        session.mutate { db in
+            var entry = KdbxEntry(
+                uuid: UUID(), iconID: 0, fields: [],
+                creationTime: stampedDate, lastModificationTime: stampedDate,
+                lastAccessTime: stampedDate, locationChanged: stampedDate, history: []
+            )
+            entry.title = "Precision Probe"
+            db.rootGroup.entries.append(entry)
+        }
+        waitForPersist(on: session)
+
+        // Nothing touches the store between the persist above and this
+        // reload — `iCloudStore.loadNewestBytes()` must read back exactly
+        // what `persist(_:)` just wrote, so the byte-identical short-circuit
+        // fires and `state` is never replaced with a freshly-decoded (and
+        // therefore whole-second-truncated) copy.
+        session.reloadPrimaryFromRemoteIfChanged()
+        waitForBackgroundWork()
+
+        let reloadedEntry = session.currentDatabase?.rootGroup.entries.first { $0.title == "Precision Probe" }
+        let fractionalSeconds = (reloadedEntry?.lastModificationTime.timeIntervalSince1970 ?? 0)
+            .truncatingRemainder(dividingBy: 1)
+        XCTAssertNotEqual(
+            fractionalSeconds, 0,
+            "reload found nothing byte-different and must not have decoded+replaced state, which would truncate sub-second precision to whole seconds"
+        )
+        XCTAssertNil(session.lastSaveError)
+    }
+
     func testPrimaryVaultPathDisplayReturnsVaultURLPath() throws {
         let session = VaultSession(fileStore: fileStore)
         XCTAssertEqual(session.primaryVaultPathDisplay, fileStore.primaryVaultFileURL?.path)

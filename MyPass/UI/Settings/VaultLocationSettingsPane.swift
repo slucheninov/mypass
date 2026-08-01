@@ -31,6 +31,13 @@ struct VaultLocationSettingsPane: View {
                         pendingTargetLocation = .iCloudDrive
                     }
                 }
+                if vaultSession.localFileFallbackActive {
+                    Label(
+                        "MyPass could not reach your previously opened vault file and is using a local copy instead.",
+                        systemImage: "exclamationmark.triangle.fill"
+                    )
+                    .foregroundStyle(.orange)
+                }
                 Button(currentLocation == .local ? "Move to iCloud Drive…" : "Move to Local…") {
                     pendingTargetLocation = currentLocation == .local ? .iCloudDrive : .local
                 }

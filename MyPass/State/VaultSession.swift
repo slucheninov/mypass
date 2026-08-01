@@ -36,6 +36,18 @@ final class VaultSession: ObservableObject {
     /// happens with a store that already resolved successfully.
     @Published private(set) var iCloudPrimaryFallbackActive: Bool
 
+    /// `true` when the configured primary is a bookmarked local `.kdbx` file
+    /// (`localVaultFileBookmark`, set by "Open Existing…") but its bookmark
+    /// could not be resolved at launch (see `VaultPrimaryStoreResolver`), so
+    /// `fileStore` is actually the Application Support default rather than
+    /// the file the user actually opened. The local-bookmark counterpart to
+    /// `iCloudPrimaryFallbackActive` — kept as a separate flag (rather than
+    /// folding into that one) since the user-facing warning text differs and
+    /// the two failure modes are unrelated. Cleared whenever
+    /// `updatePrimaryStore` runs, for the same reason
+    /// `iCloudPrimaryFallbackActive` is.
+    @Published private(set) var localFileFallbackActive: Bool
+
     private var fileStore: VaultPrimaryStorage
 
     /// Optional remote sync orchestrator (Phase 3). `nil` for sessions that
@@ -104,10 +116,16 @@ final class VaultSession: ObservableObject {
         return !touchAccessPersistWorkItem.isCancelled
     }
 
-    init(fileStore: VaultPrimaryStorage, syncEngine: SyncEngine? = nil, iCloudPrimaryFallbackActive: Bool = false) {
+    init(
+        fileStore: VaultPrimaryStorage,
+        syncEngine: SyncEngine? = nil,
+        iCloudPrimaryFallbackActive: Bool = false,
+        localFileFallbackActive: Bool = false
+    ) {
         self.fileStore = fileStore
         self.syncEngine = syncEngine
         self.iCloudPrimaryFallbackActive = iCloudPrimaryFallbackActive
+        self.localFileFallbackActive = localFileFallbackActive
         wireRemoteChangeHandler(on: fileStore)
     }
 
@@ -178,14 +196,34 @@ final class VaultSession: ObservableObject {
     /// content (the common case) would still compare the next persist's
     /// snapshot against the stale "already written" record, see them as
     /// logically equal, and wrongly skip writing to the new store entirely.
+    ///
+    /// Also clears the secondary `.folder`/`.sftp` `SyncEngine` checkpoints
+    /// (see `SyncBackendResolver.clearCheckpoint`): a checkpoint records the
+    /// remote's last-known modification date for whatever vault was
+    /// previously primary, and every call site that swaps the primary store
+    /// — the regular Move flow, and `retargetToOpenExistingVault`'s switch to
+    /// a completely unrelated `.kdbx` — points `fileStore` at content that
+    /// may be entirely different from what the checkpoint was taken against.
+    /// Trusting a stale checkpoint after a primary swap risks `SyncEngine`
+    /// either overwriting the secondary remote with the newly-primary vault's
+    /// unrelated data, or merging the OLD vault's entries into the new one.
+    /// Centralized here (rather than left to each call site to remember)
+    /// specifically so every future primary-swap site inherits the guard
+    /// automatically. Never runs during normal app-launch resolution — the
+    /// resolver builds `VaultSession` directly via `init`, not this method —
+    /// so a checkpoint that's still valid at launch is never needlessly
+    /// cleared.
     func updatePrimaryStore(_ newStore: VaultPrimaryStorage) {
         fileStore = newStore
         iCloudPrimaryFallbackActive = false
+        localFileFallbackActive = false
         wireRemoteChangeHandler(on: newStore)
         persistQueue.sync {
             self.lastSuccessfullyWrittenBytes = nil
             self.lastSuccessfullyWrittenDatabase = nil
         }
+        SyncBackendResolver.clearCheckpoint(for: .folder)
+        SyncBackendResolver.clearCheckpoint(for: .sftp)
     }
 
     /// Design spec's external-change handling: reload (Last-Writer-Wins, not
@@ -218,9 +256,33 @@ final class VaultSession: ObservableObject {
             guard let self else { return }
             do {
                 guard let remoteBytes = try iCloudStore.loadNewestBytes() else { return }
+
+                // Cheap short-circuit BEFORE paying for a KDF derivation:
+                // if the remote bytes are byte-identical to what this
+                // session itself last wrote, this notification is just an
+                // echo of our own write (or a re-notification of a file
+                // nothing has touched) — skip decode and `state` replacement
+                // entirely. This matters beyond performance: KDBX dates
+                // round-trip at whole-second precision (see
+                // `KdbxXmlCoder`'s `Int64(date.timeIntervalSince1970.rounded())`),
+                // while `lastSuccessfullyWrittenDatabase` below is seeded
+                // from a full-precision in-memory snapshot (`Date()` at
+                // `mutate`/`touchAccess` time) — so the logical-equality
+                // check further down essentially never matches even when
+                // content is genuinely unchanged, and without this
+                // byte-level check first, every remote-change notification
+                // would decode and republish `state`. Safe to read
+                // `lastSuccessfullyWrittenBytes` here: we're on
+                // `persistQueue`, the only queue that ever touches it.
+                if remoteBytes == self.lastSuccessfullyWrittenBytes { return }
+
                 let decodedDatabase = try KdbxDatabase.open(data: remoteBytes, password: password)
 
-                // Compared as `KdbxDatabase` values (logical content), NOT as
+                // Fallback for when bytes differ but content doesn't — e.g.
+                // iCloud re-uploaded/re-synced the file (fresh KDF salt/IV),
+                // or the precision mismatch described above happens to
+                // matter for this particular comparison. Compared as
+                // `KdbxDatabase` values (logical content), NOT as
                 // serialized bytes: `save(password:cipher:compression:)`
                 // mints fresh random KDF salt/IV/inner-stream-key material on
                 // every call, so two serializations of identical content are
@@ -484,9 +546,13 @@ final class VaultSession: ObservableObject {
         bookmarkData: Data,
         password: String,
         database: KdbxDatabase,
-        defaults: UserDefaults = .standard
+        defaults: UserDefaults = .standard,
+        localBackupDirectory: URL = FileManager.default
+            .urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("MyPass")
+            .appendingPathComponent("backups")
     ) throws -> String? {
-        let newStore = try LocalFileVaultStore(bookmarkData: bookmarkData)
+        let newStore = try LocalFileVaultStore(bookmarkData: bookmarkData, localBackupDirectory: localBackupDirectory)
         // A missing `"vaultLocation"` value (fresh install, never touched
         // Settings) counts as default local too — `VaultLocationResolver`
         // resolves a `nil` raw value to `.local`, and this check needs the
@@ -516,8 +582,19 @@ final class VaultSession: ObservableObject {
         // these bytes to `newStore`: the file the user picked already
         // contains content that opened successfully with `password`, so
         // there is nothing to persist yet, only tracking state to seed.
-        let data = try database.save(password: password, cipher: .aes256, compression: .gzip)
-        recordSuccessfulWrite(data, database: database)
+        //
+        // `try?`, not `try`: everything above this point has already
+        // unconditionally committed the retarget (`updatePrimaryStore`,
+        // `defaults`, `state`, `sessionPassword`), so a failure here — e.g.
+        // an unrelated serialization error — must not make the whole method
+        // throw and mislead the caller into showing "could not switch to
+        // this vault" for a switch that already fully succeeded. Losing this
+        // seed is a safe, minor degradation: the next real persist just does
+        // an actual write instead of skipping one that would have been a
+        // no-op anyway.
+        if let data = try? database.save(password: password, cipher: .aes256, compression: .gzip) {
+            recordSuccessfulWrite(data, database: database)
+        }
 
         guard wasDefaultLocal else { return nil }
 

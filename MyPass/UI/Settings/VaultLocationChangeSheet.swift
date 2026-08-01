@@ -333,7 +333,25 @@ struct VaultLocationChangeSheet: View {
         }
         guard let backend else { return }
 
-        sourceStoreBeforeMigration = vaultSession.currentPrimaryStore
+        let sourceStore = vaultSession.currentPrimaryStore
+        // Refuse a "move" whose destination is the SAME file as the source —
+        // most commonly reachable when the app silently fell back to Local
+        // storage (`iCloudPrimaryFallbackActive`, e.g. an unresolvable
+        // iCloud bookmark at launch) while `vaultLocation` still reads
+        // `.iCloudDrive`, so this sheet still offers "Move to Local…" even
+        // though the current primary already IS the Application Support
+        // file. Without this guard, the move would trivially "verify" (the
+        // destination is the source, so of course it opens with the
+        // password) and then delete the only copy of the vault. Checked here
+        // — before migration even starts — rather than only at the delete
+        // step, so the user sees an explanatory error instead of a
+        // migration that silently no-ops before destroying data.
+        if Self.destinationIsSameFileAsSource(sourceStore: sourceStore, destinationBackend: backend) {
+            errorMessage = "The vault is already at that location. Nothing was changed."
+            return
+        }
+
+        sourceStoreBeforeMigration = sourceStore
         errorMessage = nil
         step = .migrating
         vaultSession.performMigration(to: backend, strategy: strategy) { result in
@@ -385,6 +403,7 @@ struct VaultLocationChangeSheet: View {
         // replacement is not just verified-readable but actually live as the
         // new primary. Source deletion below is therefore the last step and
         // is warning-only: once reached, nothing after it can fail.
+        let destinationStore: VaultPrimaryStorage
         switch targetLocation {
         case .iCloudDrive:
             guard let chosenFolderBookmark,
@@ -392,13 +411,15 @@ struct VaultLocationChangeSheet: View {
                       bookmarkData: chosenFolderBookmark,
                       localBackupDirectory: applicationSupportBackupsDirectory
                   ) else {
-                errorMessage = "The vault was moved, but MyPass could not switch to it. Choose the folder again and retry."
+                errorMessage = "MyPass could not switch to the new location. Nothing was changed. Choose the folder again and retry."
+                step = .confirmStrategy
                 return
             }
-            vaultSession.updatePrimaryStore(newStore)
+            destinationStore = newStore
         case .local:
-            vaultSession.updatePrimaryStore(VaultFileStore(directory: applicationSupportDirectory))
+            destinationStore = VaultFileStore(directory: applicationSupportDirectory)
         }
+        vaultSession.updatePrimaryStore(destinationStore)
         // Apply bookmark bookkeeping: set/clear the appropriate UserDefaults keys
         // based on the target location, using the pure testable helper.
         Self.applyBookmarkChanges(
@@ -408,18 +429,36 @@ struct VaultLocationChangeSheet: View {
             iCloudFolderBookmark: &syncICloudFolderBookmarkData
         )
         vaultLocationRawValue = targetLocation.rawValue
-        SyncBackendResolver.clearCheckpoint(for: .folder)
-        SyncBackendResolver.clearCheckpoint(for: .sftp)
+        // Secondary `.folder`/`.sftp` checkpoint clearing now happens inside
+        // `VaultSession.updatePrimaryStore` itself (see its doc comment), so
+        // every primary-swap call site — including
+        // `retargetToOpenExistingVault` — inherits it automatically instead
+        // of each one needing to remember to call it here.
 
         var sourceDeleteWarning: String?
         if let sourceStore = sourceStoreBeforeMigration {
-            do {
-                try VaultLocationMoveSupport.deleteSourceVault(at: sourceStore)
-            } catch {
-                if let path = sourceStore.primaryVaultFileURL?.path {
-                    sourceDeleteWarning = "The vault was moved, but an old copy could not be removed at \(path)."
-                } else {
-                    sourceDeleteWarning = "The vault was moved, but the previous copy could not be removed."
+            // Defensive, independent re-check right at the point of deletion
+            // (in addition to `startMigration`'s earlier guard): never delete
+            // a file that is also the one we just switched primary to. This
+            // should be unreachable given that earlier guard, but this is
+            // the actual line that would destroy the vault's only copy if
+            // source and destination ever did turn out to be the same file,
+            // so it stays defended on its own rather than only trusting a
+            // check made several steps — and one full migration — earlier.
+            if VaultLocationMoveSupport.isSameVaultFile(
+                sourceStore.primaryVaultFileURL,
+                destinationStore.primaryVaultFileURL
+            ) {
+                sourceDeleteWarning = "The vault was moved, but MyPass detected the old location was the same file as the new one and left it in place."
+            } else {
+                do {
+                    try VaultLocationMoveSupport.deleteSourceVault(at: sourceStore)
+                } catch {
+                    if let path = sourceStore.primaryVaultFileURL?.path {
+                        sourceDeleteWarning = "The vault was moved, but an old copy could not be removed at \(path)."
+                    } else {
+                        sourceDeleteWarning = "The vault was moved, but the previous copy could not be removed."
+                    }
                 }
             }
         }
@@ -427,6 +466,28 @@ struct VaultLocationChangeSheet: View {
 
         successMessage = sourceDeleteWarning ?? Self.successMessage(for: outcome)
         step = .finished
+    }
+
+    /// `true` when `sourceStore`'s current vault file and `destinationBackend`
+    /// (about to become the new primary) resolve to the same file on disk —
+    /// see Finding 1's doc comment on `startMigration` for why this matters.
+    /// `destinationBackend` is a `StorageBackend`, not a `VaultPrimaryStorage`,
+    /// so its file URL is recovered by concrete type rather than through the
+    /// `VaultPrimaryStorage` protocol.
+    static func destinationIsSameFileAsSource(
+        sourceStore: VaultPrimaryStorage,
+        destinationBackend: StorageBackend
+    ) -> Bool {
+        let destinationURL: URL?
+        switch destinationBackend {
+        case let iCloud as iCloudBackend:
+            destinationURL = iCloud.vaultFileURL
+        case let local as VaultFileStore:
+            destinationURL = local.primaryVaultFileURL
+        default:
+            destinationURL = nil
+        }
+        return VaultLocationMoveSupport.isSameVaultFile(sourceStore.primaryVaultFileURL, destinationURL)
     }
 
     /// Reached only when `vaultExistedAtOpen` is `false`: nothing exists
