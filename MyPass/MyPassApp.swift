@@ -185,7 +185,6 @@ struct MyPassApp: App {
         pairingManager.onCodeGenerated = { [weak navigationState] code in
             DispatchQueue.main.async {
                 navigationState?.pendingPairingCode = code
-                MainWindowActivator.request()
             }
         }
         pairingManager.onPairingFinished = { [weak navigationState] in
