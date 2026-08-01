@@ -188,6 +188,41 @@ final class OpenExistingVaultTests: XCTestCase {
         XCTAssertNotNil(session.currentDatabase)
     }
 
+    /// Bug fix: when the user picks the exact file that is already their
+    /// default local vault (e.g. the App Support `vault.kdbx`) via "Open
+    /// Existing…", the code must NOT delete it after opening. This test
+    /// verifies that the same-file check prevents the data loss.
+    func testRetargetToSameFileDoesNotDeleteIt() throws {
+        let defaultStore = VaultFileStore(directory: appSupportDir)
+        let session = VaultSession(fileStore: defaultStore)
+        let db = try makeDatabase(title: "Vault")
+        let dbData = try db.save(password: password, cipher: .aes256, compression: .gzip)
+        try defaultStore.save(data: dbData)
+
+        // The user picks the same file via "Open Existing…"
+        let defaultVaultURL = defaultStore.primaryVaultFileURL!
+        XCTAssertTrue(FileManager.default.fileExists(atPath: defaultVaultURL.path), "Vault file should exist initially")
+
+        // Create a bookmark for the same file
+        let bookmark = try LocalFileVaultStore.createFileBookmark(for: defaultVaultURL)
+
+        // Retarget to the same file
+        try session.retargetToOpenExistingVault(
+            fileURL: defaultVaultURL,
+            bookmarkData: bookmark,
+            password: password,
+            database: db,
+            defaults: defaults
+        )
+
+        // The file must still exist — this is the critical assertion that
+        // verifies the bug fix
+        XCTAssertTrue(
+            FileManager.default.fileExists(atPath: defaultVaultURL.path),
+            "Vault file must still exist after retargeting to the same file"
+        )
+    }
+
     /// Finding 3: retargeting to a completely unrelated `.kdbx` (Open
     /// Existing) must clear any secondary `.folder`/`.sftp` `SyncEngine`
     /// checkpoint, the same way the regular Move flow already does — a

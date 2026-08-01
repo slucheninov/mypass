@@ -598,6 +598,14 @@ final class VaultSession: ObservableObject {
 
         guard wasDefaultLocal else { return nil }
 
+        // Safety check: if the old and new files are actually the same file
+        // (e.g. user picked the default App Support vault via Open Existing),
+        // skip deletion entirely — there's nothing to clean up, the locations
+        // are just identical.
+        if VaultLocationMoveSupport.isSameVaultFile(oldStore.primaryVaultFileURL, newStore.primaryVaultFileURL) {
+            return nil
+        }
+
         // Last step, warning-only: everything above has already committed,
         // so a failure here must never be allowed to make this method throw
         // and leave the caller thinking the retarget itself failed.
