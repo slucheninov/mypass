@@ -167,6 +167,9 @@ if (typeof document !== 'undefined') {
   function hideAppUnavailableActions() {
     appUnavailableActions.hidden = true;
     openMypassHelper.hidden = true;
+    if (pairingPanel.hidden) {
+      listEl.hidden = false;
+    }
   }
 
   function retryCredentialsForActiveTab() {
