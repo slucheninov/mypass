@@ -17,6 +17,7 @@ struct VaultLocationChangeSheet: View {
     @Environment(\.dismiss) private var dismiss
     @AppStorage("vaultLocation") private var vaultLocationRawValue: String = VaultLocationOption.local.rawValue
     @AppStorage(SyncBackendResolver.iCloudFolderBookmarkKey) private var syncICloudFolderBookmarkData: Data?
+    @AppStorage(SyncBackendResolver.localVaultFileBookmarkKey) private var localVaultFileBookmarkData: Data?
 
     @State private var step: Step
     @State private var vaultExistedAtOpen = true
@@ -55,6 +56,25 @@ struct VaultLocationChangeSheet: View {
     enum LockStateSnapshot { case locked, unlocked }
     static func needsPasswordConfirmation(currentState: LockStateSnapshot) -> Bool {
         currentState == .locked
+    }
+
+    /// Pure, testable helper to compute bookmark mutations when changing vault location.
+    /// When moving to iCloud, sets the iCloud folder bookmark and clears the local file bookmark.
+    /// When moving to local, clears both bookmarks.
+    static func applyBookmarkChanges(
+        targetLocation: VaultLocationOption,
+        chosenICloudFolderBookmark: Data?,
+        localVaultFileBookmark: inout Data?,
+        iCloudFolderBookmark: inout Data?
+    ) {
+        switch targetLocation {
+        case .iCloudDrive:
+            iCloudFolderBookmark = chosenICloudFolderBookmark
+            localVaultFileBookmark = nil
+        case .local:
+            iCloudFolderBookmark = nil
+            localVaultFileBookmark = nil
+        }
     }
 
     var body: some View {
@@ -376,10 +396,17 @@ struct VaultLocationChangeSheet: View {
                 return
             }
             vaultSession.updatePrimaryStore(newStore)
-            syncICloudFolderBookmarkData = chosenFolderBookmark
         case .local:
             vaultSession.updatePrimaryStore(VaultFileStore(directory: applicationSupportDirectory))
         }
+        // Apply bookmark bookkeeping: set/clear the appropriate UserDefaults keys
+        // based on the target location, using the pure testable helper.
+        Self.applyBookmarkChanges(
+            targetLocation: targetLocation,
+            chosenICloudFolderBookmark: chosenFolderBookmark,
+            localVaultFileBookmark: &localVaultFileBookmarkData,
+            iCloudFolderBookmark: &syncICloudFolderBookmarkData
+        )
         vaultLocationRawValue = targetLocation.rawValue
         SyncBackendResolver.clearCheckpoint(for: .folder)
         SyncBackendResolver.clearCheckpoint(for: .sftp)
@@ -418,10 +445,17 @@ struct VaultLocationChangeSheet: View {
                 return
             }
             vaultSession.updatePrimaryStore(newStore)
-            syncICloudFolderBookmarkData = chosenFolderBookmark
         case .local:
             vaultSession.updatePrimaryStore(VaultFileStore(directory: applicationSupportDirectory))
         }
+        // Apply bookmark bookkeeping: set/clear the appropriate UserDefaults keys
+        // based on the target location, using the pure testable helper.
+        Self.applyBookmarkChanges(
+            targetLocation: targetLocation,
+            chosenICloudFolderBookmark: chosenFolderBookmark,
+            localVaultFileBookmark: &localVaultFileBookmarkData,
+            iCloudFolderBookmark: &syncICloudFolderBookmarkData
+        )
         vaultLocationRawValue = targetLocation.rawValue
         successMessage = "Vault location set. Choose a master password to finish setting up your vault."
         step = .finished
