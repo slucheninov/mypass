@@ -1,6 +1,15 @@
 const PAIRING_STARTED_AT_KEY = 'pairingStartedAt';
 const PAIRING_CHALLENGE_TTL_MS = 120_000;
 
+const APP_UNAVAILABLE_STATUS_TEXT =
+  'MyPass not found. Make sure the app is installed and has been launched at least once (to register the native messaging host).';
+const APP_UNAVAILABLE_OPEN_HELPER_TEXT =
+  'Open MyPass from Applications or the Dock. Unlock your vault if needed, then tap Retry.';
+
+function shouldShowAppUnavailableActions(kind) {
+  return kind === 'error';
+}
+
 function classifyGetCredentialsResponse(response) {
   if (!response || response.type === 'error') return 'error';
   if (response.type === 'locked') return 'locked';
@@ -48,6 +57,11 @@ if (typeof document !== 'undefined') {
   const codeInput = document.getElementById('code-input');
   const submitCodeBtn = document.getElementById('submit-code-btn');
   const pairingErrorEl = document.getElementById('pairing-error');
+  const appUnavailableActions = document.getElementById('app-unavailable-actions');
+  const retryBtn = document.getElementById('retry-btn');
+  const openMypassBtn = document.getElementById('open-mypass-btn');
+  const openMypassHelper = document.getElementById('open-mypass-helper');
+  openMypassHelper.textContent = APP_UNAVAILABLE_OPEN_HELPER_TEXT;
 
   function setStatus(text) {
     statusEl.textContent = text;
@@ -150,12 +164,54 @@ if (typeof document !== 'undefined') {
     });
   }
 
+  function hideAppUnavailableActions() {
+    appUnavailableActions.hidden = true;
+    openMypassHelper.hidden = true;
+  }
+
+  function retryCredentialsForActiveTab() {
+    hideAppUnavailableActions();
+    listEl.innerHTML = '';
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs[0];
+      if (!activeTab || !activeTab.url) {
+        setStatus(APP_UNAVAILABLE_STATUS_TEXT);
+        showAppUnavailableActions(null);
+        return;
+      }
+      queryCredentials(activeTab.url);
+    });
+  }
+
+  function showAppUnavailableActions(url) {
+    hidePairingPanel();
+    listEl.innerHTML = '';
+    listEl.hidden = true;
+    statusEl.hidden = false;
+    appUnavailableActions.hidden = false;
+    openMypassHelper.hidden = true;
+    retryBtn.onclick = () => {
+      if (url) {
+        hideAppUnavailableActions();
+        listEl.innerHTML = '';
+        queryCredentials(url);
+      } else {
+        retryCredentialsForActiveTab();
+      }
+    };
+    openMypassBtn.onclick = () => {
+      openMypassHelper.hidden = false;
+    };
+  }
+
   function handleCredentialsResponse(response, url) {
     const kind = classifyGetCredentialsResponse(response);
     if (kind === 'error') {
-      setStatus('MyPass not found. Make sure the app is installed and has been launched at least once (to register the native messaging host).');
+      setStatus(APP_UNAVAILABLE_STATUS_TEXT);
+      showAppUnavailableActions(url);
       return;
     }
+    hideAppUnavailableActions();
     if (kind === 'locked') {
       setStatus('Open MyPass and unlock the vault');
       return;
@@ -190,7 +246,8 @@ if (typeof document !== 'undefined') {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
     if (!activeTab || !activeTab.url) {
-      setStatus('MyPass not found. Make sure the app is installed and has been launched at least once (to register the native messaging host).');
+      setStatus(APP_UNAVAILABLE_STATUS_TEXT);
+      showAppUnavailableActions(null);
       return;
     }
     queryCredentials(activeTab.url);
@@ -202,6 +259,9 @@ if (typeof module !== 'undefined') {
     classifyGetCredentialsResponse,
     isPairingChallengeFresh,
     normalizePairingCode,
-    PAIRING_CHALLENGE_TTL_MS
+    PAIRING_CHALLENGE_TTL_MS,
+    APP_UNAVAILABLE_STATUS_TEXT,
+    APP_UNAVAILABLE_OPEN_HELPER_TEXT,
+    shouldShowAppUnavailableActions
   };
 }

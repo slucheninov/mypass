@@ -17,10 +17,18 @@
     #code-hint { margin: 0 0 6px; font-size: 12px; color: #666; }
     #code-input { width: 100%; box-sizing: border-box; font-size: 16px; letter-spacing: 2px; }
     #pairing-error { color: #c00; font-size: 12px; margin: 6px 0 0; }
+    #app-unavailable-actions { margin-top: 8px; }
+    #app-unavailable-actions button { margin-right: 8px; margin-top: 4px; cursor: pointer; }
+    #open-mypass-helper { margin: 8px 0 0; font-size: 12px; color: #666; }
   </style>
 </head>
 <body>
   <div id="status"></div>
+  <div id="app-unavailable-actions" hidden>
+    <button id="retry-btn" type="button">Retry</button>
+    <button id="open-mypass-btn" type="button">Open MyPass</button>
+    <p id="open-mypass-helper" hidden></p>
+  </div>
   <ul id="list"></ul>
   <div id="pairing-panel" hidden>
     <button id="connect-btn" type="button">Connect to MyPass</button>
