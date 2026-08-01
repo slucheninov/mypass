@@ -47,14 +47,20 @@ function letterFromTitle(title) {
 }
 
 function colorForTitle(title) {
-  let hash = 0;
+  const MASK64 = (1n << 64n) - 1n;
+  const SIGNBIT = 1n << 63n;
+  const wrap64 = (v) => {
+    v &= MASK64;
+    return v & SIGNBIT ? v - (1n << 64n) : v;
+  };
+  let hash = 0n;
   for (const byte of new TextEncoder().encode(title)) {
-    hash = ((hash + byte) * 31) >>> 0;
+    hash = wrap64(wrap64(hash + BigInt(byte)) * 31n);
   }
-  const index =
-    ((hash % LETTER_AVATAR_PALETTE.length) + LETTER_AVATAR_PALETTE.length) %
-    LETTER_AVATAR_PALETTE.length;
-  return LETTER_AVATAR_PALETTE[index];
+  const len = BigInt(LETTER_AVATAR_PALETTE.length);
+  let index = hash % len;
+  if (index < 0n) index += len;
+  return LETTER_AVATAR_PALETTE[Number(index)];
 }
 
 function getPairingStorageArea() {

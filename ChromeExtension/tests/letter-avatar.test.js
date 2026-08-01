@@ -13,9 +13,11 @@ assert.strictEqual(letterFromTitle('   '), '?');
 
 assert.strictEqual(colorForTitle('GitHub'), '#A2845E');
 assert.strictEqual(colorForTitle('amazon'), '#5856D6');
-assert.strictEqual(colorForTitle('Example Service'), '#00C7BE');
+assert.strictEqual(colorForTitle('Example Service'), '#30B0C7');
 assert.strictEqual(colorForTitle('Alpha'), '#5856D6');
 assert.strictEqual(colorForTitle('Beta'), '#007AFF');
+assert.strictEqual(colorForTitle('MyPass Vault Entry'), '#00C7BE');
+assert.strictEqual(colorForTitle('Very Long Service Name For Testing'), '#00C7BE');
 assert.notStrictEqual(colorForTitle('Alpha'), colorForTitle('Beta'));
 
 assert.strictEqual(LETTER_AVATAR_PALETTE.length, 10);
