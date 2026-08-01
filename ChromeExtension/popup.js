@@ -27,6 +27,36 @@ function normalizePairingCode(raw) {
   return String(raw).replace(/\D/g, '').slice(0, 6);
 }
 
+const LETTER_AVATAR_PALETTE = [
+  '#007AFF',
+  '#34C759',
+  '#FF9500',
+  '#AF52DE',
+  '#FF2D55',
+  '#30B0C7',
+  '#5856D6',
+  '#00C7BE',
+  '#32ADE6',
+  '#A2845E'
+];
+
+function letterFromTitle(title) {
+  const trimmed = title.trim();
+  if (!trimmed) return '?';
+  return trimmed[0].toUpperCase();
+}
+
+function colorForTitle(title) {
+  let hash = 0;
+  for (const byte of new TextEncoder().encode(title)) {
+    hash = ((hash + byte) * 31) >>> 0;
+  }
+  const index =
+    ((hash % LETTER_AVATAR_PALETTE.length) + LETTER_AVATAR_PALETTE.length) %
+    LETTER_AVATAR_PALETTE.length;
+  return LETTER_AVATAR_PALETTE[index];
+}
+
 function getPairingStorageArea() {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
     return chrome.storage.session;
@@ -265,6 +295,9 @@ if (typeof module !== 'undefined') {
     PAIRING_CHALLENGE_TTL_MS,
     APP_UNAVAILABLE_STATUS_TEXT,
     APP_UNAVAILABLE_OPEN_HELPER_TEXT,
-    shouldShowAppUnavailableActions
+    shouldShowAppUnavailableActions,
+    LETTER_AVATAR_PALETTE,
+    letterFromTitle,
+    colorForTitle
   };
 }
