@@ -6,3 +6,4 @@ MyPassTests/Info.plist
 Packages/*/.build/
 .superpowers/
 
+.worktrees/
