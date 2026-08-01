@@ -10,6 +10,12 @@ function shouldShowAppUnavailableActions(kind) {
   return kind === 'error';
 }
 
+const LOCKED_TITLE_TEXT = 'MyPass is locked';
+const LOCKED_HELPER_TEXT = 'Open MyPass and unlock the vault';
+const EMPTY_LIST_TITLE_TEXT = 'No saved logins for this site';
+const LIST_HEADER_TEXT = 'Select an entry to autofill:';
+const PAIRING_PANEL_TITLE_TEXT = 'Connect browser extension';
+
 function classifyGetCredentialsResponse(response) {
   if (!response || response.type === 'error') return 'error';
   if (response.type === 'locked') return 'locked';
@@ -85,22 +91,72 @@ function clearPairingStartedAt(cb) {
 }
 
 if (typeof document !== 'undefined') {
-  const statusEl = document.getElementById('status');
-  const listEl = document.getElementById('list');
-  const pairingPanel = document.getElementById('pairing-panel');
-  const connectBtn = document.getElementById('connect-btn');
-  const codeEntry = document.getElementById('code-entry');
-  const codeInput = document.getElementById('code-input');
-  const submitCodeBtn = document.getElementById('submit-code-btn');
-  const pairingErrorEl = document.getElementById('pairing-error');
+  const lockedPanel = document.getElementById('locked-panel');
+  const lockedTitleEl = document.getElementById('locked-title');
+  const lockedHelperEl = document.getElementById('locked-helper');
+  const lockedRetryBtn = document.getElementById('locked-retry-btn');
+
+  const appUnavailablePanel = document.getElementById('app-unavailable-panel');
+  const appUnavailableStatusEl = document.getElementById('app-unavailable-status');
   const appUnavailableActions = document.getElementById('app-unavailable-actions');
   const retryBtn = document.getElementById('retry-btn');
   const openMypassBtn = document.getElementById('open-mypass-btn');
   const openMypassHelper = document.getElementById('open-mypass-helper');
   openMypassHelper.textContent = APP_UNAVAILABLE_OPEN_HELPER_TEXT;
 
-  function setStatus(text) {
-    statusEl.textContent = text;
+  const emptyPanel = document.getElementById('empty-panel');
+  const emptyTitleEl = document.getElementById('empty-title');
+  emptyTitleEl.textContent = EMPTY_LIST_TITLE_TEXT;
+
+  const listPanel = document.getElementById('list-panel');
+  const listHeaderEl = document.getElementById('list-header');
+  listHeaderEl.textContent = LIST_HEADER_TEXT;
+  const listEl = document.getElementById('list');
+
+  const pairingPanel = document.getElementById('pairing-panel');
+  const pairingTitleEl = document.getElementById('pairing-title');
+  pairingTitleEl.textContent = PAIRING_PANEL_TITLE_TEXT;
+  const connectBtn = document.getElementById('connect-btn');
+  const codeEntry = document.getElementById('code-entry');
+  const codeInput = document.getElementById('code-input');
+  const submitCodeBtn = document.getElementById('submit-code-btn');
+  const pairingErrorEl = document.getElementById('pairing-error');
+
+  lockedTitleEl.textContent = LOCKED_TITLE_TEXT;
+  lockedHelperEl.textContent = LOCKED_HELPER_TEXT;
+
+  const PANEL_SECTIONS = [
+    lockedPanel,
+    appUnavailablePanel,
+    emptyPanel,
+    listPanel,
+    pairingPanel
+  ];
+
+  function showPanel(name) {
+    for (const section of PANEL_SECTIONS) {
+      section.hidden = true;
+    }
+    openMypassHelper.hidden = true;
+    switch (name) {
+      case 'locked':
+        lockedPanel.hidden = false;
+        break;
+      case 'app-unavailable':
+        appUnavailablePanel.hidden = false;
+        break;
+      case 'empty':
+        emptyPanel.hidden = false;
+        break;
+      case 'credential-list':
+        listPanel.hidden = false;
+        break;
+      case 'pairing':
+        pairingPanel.hidden = false;
+        break;
+      default:
+        break;
+    }
   }
 
   function setPairingError(text) {
@@ -114,15 +170,10 @@ if (typeof document !== 'undefined') {
   }
 
   function showPairingPanel() {
-    statusEl.hidden = true;
-    listEl.hidden = true;
-    pairingPanel.hidden = false;
+    showPanel('pairing');
   }
 
   function hidePairingPanel() {
-    pairingPanel.hidden = true;
-    statusEl.hidden = false;
-    listEl.hidden = false;
     codeEntry.hidden = true;
     codeInput.value = '';
     setPairingError('');
@@ -138,25 +189,53 @@ if (typeof document !== 'undefined') {
     codeEntry.hidden = false;
   }
 
+  function buildLetterAvatarElement(title) {
+    const avatar = document.createElement('div');
+    avatar.className = 'letter-avatar';
+    avatar.style.backgroundColor = colorForTitle(title);
+    avatar.setAttribute('role', 'img');
+    avatar.setAttribute(
+      'aria-label',
+      title.trim() ? `Icon for ${title}` : 'Icon for untitled entry'
+    );
+    const letter = document.createElement('span');
+    letter.className = 'letter-avatar-letter';
+    letter.textContent = letterFromTitle(title);
+    avatar.appendChild(letter);
+    return avatar;
+  }
+
   function renderCredentials(credentials, url) {
     listEl.innerHTML = '';
     credentials.forEach((credential) => {
       const item = document.createElement('li');
+      item.className = 'credential-row';
+
+      item.appendChild(buildLetterAvatarElement(credential.title));
+
+      const textCol = document.createElement('div');
+      textCol.className = 'credential-text';
 
       const title = document.createElement('div');
-      title.className = 'title';
+      title.className = 'credential-title';
       title.textContent = credential.title;
+      textCol.appendChild(title);
 
-      const username = document.createElement('div');
-      username.className = 'username';
-      username.textContent = credential.username;
+      if (credential.username) {
+        const username = document.createElement('div');
+        username.className = 'credential-username';
+        username.textContent = credential.username;
+        textCol.appendChild(username);
+      }
 
-      item.appendChild(title);
-      item.appendChild(username);
+      item.appendChild(textCol);
       item.addEventListener('click', () => {
-        chrome.runtime.sendMessage({ type: 'fillCredential', id: credential.id, url }, () => {
-          window.close();
-        });
+        chrome.runtime.sendMessage(
+          { type: 'fillCredential', id: credential.id, url },
+          () => {
+            window.close();
+          }
+        );
       });
       listEl.appendChild(item);
     });
@@ -201,20 +280,15 @@ if (typeof document !== 'undefined') {
   }
 
   function hideAppUnavailableActions() {
-    appUnavailableActions.hidden = true;
     openMypassHelper.hidden = true;
-    if (pairingPanel.hidden) {
-      listEl.hidden = false;
-    }
   }
 
   function retryCredentialsForActiveTab() {
-    hideAppUnavailableActions();
     listEl.innerHTML = '';
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       const activeTab = tabs[0];
       if (!activeTab || !activeTab.url) {
-        setStatus(APP_UNAVAILABLE_STATUS_TEXT);
+        appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
         showAppUnavailableActions(null);
         return;
       }
@@ -225,13 +299,11 @@ if (typeof document !== 'undefined') {
   function showAppUnavailableActions(url) {
     hidePairingPanel();
     listEl.innerHTML = '';
-    listEl.hidden = true;
-    statusEl.hidden = false;
-    appUnavailableActions.hidden = false;
+    appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
+    showPanel('app-unavailable');
     openMypassHelper.hidden = true;
     retryBtn.onclick = () => {
       if (url) {
-        hideAppUnavailableActions();
         listEl.innerHTML = '';
         queryCredentials(url);
       } else {
@@ -246,13 +318,15 @@ if (typeof document !== 'undefined') {
   function handleCredentialsResponse(response, url) {
     const kind = classifyGetCredentialsResponse(response);
     if (kind === 'error') {
-      setStatus(APP_UNAVAILABLE_STATUS_TEXT);
-      showAppUnavailableActions(url);
+      if (shouldShowAppUnavailableActions(kind)) {
+        showAppUnavailableActions(url);
+      }
       return;
     }
     hideAppUnavailableActions();
     if (kind === 'locked') {
-      setStatus('Open MyPass and unlock the vault');
+      showPanel('locked');
+      lockedRetryBtn.onclick = () => queryCredentials(url);
       return;
     }
     if (kind === 'pairingRequired') {
@@ -268,10 +342,10 @@ if (typeof document !== 'undefined') {
     }
     if (kind === 'credentialList') {
       if (response.credentials.length === 0) {
-        setStatus('No saved logins for this site');
+        showPanel('empty');
         return;
       }
-      setStatus('Select an entry to autofill:');
+      showPanel('credential-list');
       renderCredentials(response.credentials, url);
     }
   }
@@ -285,7 +359,7 @@ if (typeof document !== 'undefined') {
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
     if (!activeTab || !activeTab.url) {
-      setStatus(APP_UNAVAILABLE_STATUS_TEXT);
+      appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
       showAppUnavailableActions(null);
       return;
     }
@@ -304,6 +378,11 @@ if (typeof module !== 'undefined') {
     shouldShowAppUnavailableActions,
     LETTER_AVATAR_PALETTE,
     letterFromTitle,
-    colorForTitle
+    colorForTitle,
+    LOCKED_TITLE_TEXT,
+    LOCKED_HELPER_TEXT,
+    EMPTY_LIST_TITLE_TEXT,
+    LIST_HEADER_TEXT,
+    PAIRING_PANEL_TITLE_TEXT
   };
 }

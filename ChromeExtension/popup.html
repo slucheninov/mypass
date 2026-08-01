@@ -4,40 +4,185 @@
   <meta charset="utf-8">
   <title>MyPass</title>
   <style>
-    body { font-family: sans-serif; width: 280px; padding: 8px; margin: 0; }
-    #status { font-size: 13px; color: #444; margin-bottom: 8px; }
-    ul { list-style: none; margin: 0; padding: 0; }
-    li { padding: 6px 4px; cursor: pointer; border-radius: 4px; }
-    li:hover { background: #eee; }
-    .title { font-weight: 600; }
-    .username { font-size: 12px; color: #666; }
-    #pairing-panel { font-size: 13px; color: #444; }
-    #pairing-panel button { margin-top: 8px; cursor: pointer; }
-    #code-entry { margin-top: 8px; }
-    #code-hint { margin: 0 0 6px; font-size: 12px; color: #666; }
-    #code-input { width: 100%; box-sizing: border-box; font-size: 16px; letter-spacing: 2px; }
-    #pairing-error { color: #c00; font-size: 12px; margin: 6px 0 0; }
-    #app-unavailable-actions { margin-top: 8px; }
-    #app-unavailable-actions button { margin-right: 8px; margin-top: 4px; cursor: pointer; }
-    #open-mypass-helper { margin: 8px 0 0; font-size: 12px; color: #666; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      width: 280px;
+      margin: 0;
+      padding: 18px 16px;
+      box-sizing: border-box;
+      color: #1d1d1f;
+      background: #fff;
+    }
+    .brand-key {
+      display: block;
+      width: 32px;
+      height: 32px;
+      margin: 0 auto 12px;
+    }
+    .brand-key--leading {
+      margin: 0 0 12px;
+    }
+    h1.panel-title {
+      font-size: 15px;
+      font-weight: 600;
+      margin: 0 0 6px;
+      line-height: 1.3;
+    }
+    p.panel-helper {
+      font-size: 13px;
+      color: #6e6e73;
+      margin: 0 0 12px;
+      line-height: 1.35;
+    }
+    p.list-header {
+      font-size: 13px;
+      font-weight: 600;
+      color: #1d1d1f;
+      margin: 0 0 8px;
+    }
+    .btn-primary,
+    .btn-secondary {
+      font-size: 13px;
+      line-height: 1.2;
+      padding: 7px 12px;
+      border-radius: 6px;
+      cursor: pointer;
+      border: 1px solid transparent;
+    }
+    .btn-primary {
+      background: #007aff;
+      color: #fff;
+      border-color: #007aff;
+    }
+    .btn-secondary {
+      background: #f5f5f7;
+      color: #1d1d1f;
+      border-color: #d2d2d7;
+      margin-left: 8px;
+    }
+    .btn-row {
+      margin-top: 4px;
+    }
+    ul {
+      list-style: none;
+      margin: 0;
+      padding: 0;
+    }
+    li.credential-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      padding: 4px 6px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    li.credential-row:hover {
+      background: #f5f5f7;
+    }
+    .letter-avatar {
+      width: 36px;
+      height: 36px;
+      border-radius: 8px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .letter-avatar-letter {
+      color: #ffffff;
+      font-size: 15px;
+      font-weight: 600;
+      line-height: 1;
+    }
+    .credential-text {
+      min-width: 0;
+      flex: 1;
+    }
+    .credential-title {
+      font-size: 14px;
+      font-weight: 600;
+      line-height: 1.25;
+    }
+    .credential-username {
+      font-size: 12px;
+      color: #6e6e73;
+      line-height: 1.25;
+      margin-top: 2px;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    #pairing-panel .panel-title {
+      margin-bottom: 12px;
+    }
+    #code-entry {
+      margin-top: 12px;
+    }
+    #code-hint {
+      margin: 0 0 6px;
+      font-size: 12px;
+      color: #6e6e73;
+    }
+    #code-input {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 16px;
+      letter-spacing: 2px;
+      margin-bottom: 8px;
+    }
+    #pairing-error {
+      color: #c00;
+      font-size: 12px;
+      margin: 8px 0 0;
+    }
+    #open-mypass-helper {
+      margin: 8px 0 0;
+      font-size: 12px;
+      color: #6e6e73;
+    }
+    [hidden] {
+      display: none !important;
+    }
   </style>
 </head>
 <body>
-  <div id="status"></div>
-  <div id="app-unavailable-actions" hidden>
-    <button id="retry-btn" type="button">Retry</button>
-    <button id="open-mypass-btn" type="button">Open MyPass</button>
-    <p id="open-mypass-helper" hidden></p>
-  </div>
-  <ul id="list"></ul>
-  <div id="pairing-panel" hidden>
-    <button id="connect-btn" type="button">Connect to MyPass</button>
-    <div id="code-entry" hidden>
-      <p id="code-hint">Enter the code shown in MyPass</p>
-      <input id="code-input" type="text" inputmode="numeric" maxlength="7" pattern="[0-9]{6}" />
-      <button id="submit-code-btn" type="button">Submit</button>
-    </div>
-    <p id="pairing-error" hidden></p>
+  <div id="panel-shell">
+    <section id="locked-panel" hidden>
+      <img class="brand-key" src="icons/icon32.png" width="32" height="32" alt="">
+      <h1 class="panel-title" id="locked-title"></h1>
+      <p class="panel-helper" id="locked-helper"></p>
+      <button id="locked-retry-btn" type="button" class="btn-primary">Retry</button>
+    </section>
+
+    <section id="app-unavailable-panel" hidden>
+      <img class="brand-key" src="icons/icon32.png" width="32" height="32" alt="">
+      <p class="panel-helper" id="app-unavailable-status"></p>
+      <div id="app-unavailable-actions">
+        <button id="retry-btn" type="button" class="btn-primary">Retry</button>
+        <button id="open-mypass-btn" type="button" class="btn-secondary">Open MyPass</button>
+        <p id="open-mypass-helper" hidden></p>
+      </div>
+    </section>
+
+    <section id="empty-panel" hidden>
+      <h1 class="panel-title" id="empty-title"></h1>
+    </section>
+
+    <section id="list-panel" hidden>
+      <p class="list-header" id="list-header"></p>
+      <ul id="list"></ul>
+    </section>
+
+    <section id="pairing-panel" hidden>
+      <h1 class="panel-title" id="pairing-title"></h1>
+      <button id="connect-btn" type="button" class="btn-primary">Connect</button>
+      <div id="code-entry" hidden>
+        <p id="code-hint">Enter the code shown in MyPass</p>
+        <input id="code-input" type="text" inputmode="numeric" maxlength="7" pattern="[0-9]{6}" />
+        <button id="submit-code-btn" type="button" class="btn-primary">Submit</button>
+      </div>
+      <p id="pairing-error" hidden></p>
+    </section>
   </div>
   <script src="popup.js"></script>
 </body>

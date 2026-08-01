@@ -10,29 +10,43 @@ function makeEl(id) {
     value: '',
     onclick: null,
     className: '',
+    style: {},
     children: [],
     appendChild(child) {
       this.children.push(child);
     },
-    addEventListener() {}
+    addEventListener() {},
+    setAttribute(name, value) {
+      this[name] = value;
+    }
   };
   elements[id] = el;
   return el;
 }
 
 [
-  'status',
+  'locked-panel',
+  'locked-title',
+  'locked-helper',
+  'locked-retry-btn',
+  'app-unavailable-panel',
+  'app-unavailable-status',
+  'app-unavailable-actions',
+  'retry-btn',
+  'open-mypass-btn',
+  'open-mypass-helper',
+  'empty-panel',
+  'empty-title',
+  'list-panel',
+  'list-header',
   'list',
   'pairing-panel',
+  'pairing-title',
   'connect-btn',
   'code-entry',
   'code-input',
   'submit-code-btn',
-  'pairing-error',
-  'app-unavailable-actions',
-  'retry-btn',
-  'open-mypass-btn',
-  'open-mypass-helper'
+  'pairing-error'
 ].forEach((id) => makeEl(id));
 
 global.document = {
@@ -76,7 +90,12 @@ global.chrome = {
 const {
   APP_UNAVAILABLE_STATUS_TEXT,
   APP_UNAVAILABLE_OPEN_HELPER_TEXT,
-  shouldShowAppUnavailableActions
+  shouldShowAppUnavailableActions,
+  LOCKED_TITLE_TEXT,
+  LOCKED_HELPER_TEXT,
+  EMPTY_LIST_TITLE_TEXT,
+  LIST_HEADER_TEXT,
+  PAIRING_PANEL_TITLE_TEXT
 } = require('../popup.js');
 
 assert.strictEqual(
@@ -94,18 +113,23 @@ assert.strictEqual(shouldShowAppUnavailableActions('pairingRequired'), false);
 assert.strictEqual(shouldShowAppUnavailableActions('credentialList'), false);
 assert.strictEqual(shouldShowAppUnavailableActions('unknown'), false);
 
+assert.strictEqual(LOCKED_TITLE_TEXT, 'MyPass is locked');
+assert.strictEqual(LOCKED_HELPER_TEXT, 'Open MyPass and unlock the vault');
+assert.strictEqual(EMPTY_LIST_TITLE_TEXT, 'No saved logins for this site');
+assert.strictEqual(LIST_HEADER_TEXT, 'Select an entry to autofill:');
+assert.strictEqual(PAIRING_PANEL_TITLE_TEXT, 'Connect browser extension');
+
 const listEl = elements.list;
 const retryBtn = elements['retry-btn'];
-const appUnavailableActions = elements['app-unavailable-actions'];
 
 assert.strictEqual(sendMessageCall, 1, 'initial load should query credentials once');
-assert.strictEqual(listEl.hidden, true, 'list hidden while app-unavailable actions shown');
-assert.strictEqual(appUnavailableActions.hidden, false, 'action row visible on error');
+assert.strictEqual(elements['app-unavailable-panel'].hidden, false, 'app-unavailable panel visible on error');
+assert.strictEqual(elements['list-panel'].hidden, true, 'list panel hidden on error');
 
 retryBtn.onclick();
 assert.strictEqual(sendMessageCall, 2, 'retry should re-query credentials');
-assert.strictEqual(listEl.hidden, false, 'list visible after leaving app-unavailable error state');
-assert.strictEqual(appUnavailableActions.hidden, true, 'action row hidden after successful credentialList');
+assert.strictEqual(elements['list-panel'].hidden, false, 'list panel visible after credentialList');
+assert.strictEqual(elements['app-unavailable-panel'].hidden, true, 'app-unavailable panel hidden after success');
 assert.strictEqual(listEl.children.length, 1, 'credential rendered in list');
 
 console.log('popup-fallback.test.js OK');
