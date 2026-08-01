@@ -26,4 +26,18 @@ assert.strictEqual(manifest.content_scripts[0].js[0], 'content.js');
 assert.strictEqual(manifest.content_scripts[0].matches[0], '<all_urls>');
 assert.strictEqual(manifest.content_scripts[0].run_at, 'document_idle');
 
+const iconsDir = path.join(__dirname, '..', 'icons');
+const expectedSizes = ['16', '32', '48', '128'];
+assert.ok(manifest.icons, 'manifest must define top-level icons');
+assert.ok(manifest.action.default_icon, 'manifest.action must define default_icon');
+for (const size of expectedSizes) {
+  const relPath = `icons/icon${size}.png`;
+  assert.strictEqual(manifest.icons[size], relPath, `manifest.icons["${size}"] must be ${relPath}`);
+  assert.strictEqual(manifest.action.default_icon[size], relPath, `action.default_icon["${size}"] must be ${relPath}`);
+  const absPath = path.join(__dirname, '..', relPath);
+  assert.ok(fs.existsSync(absPath), `${relPath} must exist on disk`);
+  const stat = fs.statSync(absPath);
+  assert.ok(stat.size > 0, `${relPath} must be non-empty`);
+}
+
 console.log('manifest.json OK');
