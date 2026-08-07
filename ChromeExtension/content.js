@@ -1,4 +1,10 @@
 (function () {
+  // Minimum OTP field score threshold for selection. The weakest intentional OTP signal
+  // (inputmode=numeric + maxlength ∈ [6,7,8]) scores 4. A bare type=text input scores 1
+  // and must not be selected on a login-only page. Score >= 4 ensures only deliberate OTP
+  // candidates are picked.
+  const MIN_OTP_FIELD_SCORE = 4;
+
   function scoreUsernameLikeness(input) {
     let score = 0;
     const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
@@ -40,6 +46,8 @@
     let score = 0;
     const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
     if (autocomplete === 'one-time-code') {
+      // autocomplete=one-time-code is a decisive browser signal for OTP fields, not stacked
+      // with other bonuses. Scores 10 alone, not 11 (avoiding +1 type bonus).
       return 10;
     }
 
@@ -74,7 +82,7 @@
         best = candidate;
       }
     }
-    return bestScore >= 4 ? best : null;
+    return bestScore >= MIN_OTP_FIELD_SCORE ? best : null;
   }
 
   function findLoginForm() {

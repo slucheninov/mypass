@@ -115,4 +115,39 @@ const fakeOtpOnlyDoc = {
 };
 assert.notStrictEqual(findOtpField(fakeOtpOnlyDoc), null, 'OTP-only page (no password field) still finds the OTP input');
 
+// --- Boundary tests ---
+
+// Textarea with OTP-like attributes is scored and selected like inputs
+const fakeTextarea = fakeInput({ name: 'otp-code' });
+const fakeTextareaDoc = {
+  querySelectorAll: () => [
+    fakeInput({ type: 'text', name: 'regular-field' }),
+    fakeTextarea,
+  ],
+};
+const textareaResult = findOtpField(fakeTextareaDoc);
+assert.strictEqual(textareaResult, fakeTextarea, 'textarea with name=otp-code (score 7) is found over plain text (score 1)');
+
+// Score-exactly-4 boundary: inputmode=numeric + maxlength=6, no type bonus (type='number')
+const scoreOf4Input = fakeInput({ type: 'number', inputmode: 'numeric', maxlength: '6' });
+assert.strictEqual(scoreOtpLikeness(scoreOf4Input), 4, 'type=number with inputmode=numeric + maxlength=6 scores exactly 4 (no type bonus)');
+const fakeScoreOf4Doc = {
+  querySelectorAll: () => [
+    fakeInput({ type: 'text', name: 'username' }),
+    scoreOf4Input,
+  ],
+};
+assert.notStrictEqual(findOtpField(fakeScoreOf4Doc), null, 'score-of-4 field at MIN_OTP_FIELD_SCORE boundary is selected');
+
+// Higher combined signals beat a single strong signal: name + inputmode + maxlength + type (11) > autocomplete alone (10)
+const fakeCompetingDoc = {
+  querySelectorAll: () => [
+    fakeInput({ type: 'text', autocomplete: 'one-time-code', id: 'strong-signal' }),
+    fakeInput({ type: 'text', name: 'otp-code', inputmode: 'numeric', maxlength: '6', id: 'higher-score' }),
+  ],
+};
+const higherScoreWins = findOtpField(fakeCompetingDoc);
+assert.strictEqual(higherScoreWins.getAttribute('id'), 'higher-score', 'combined signals (name+inputmode+maxlength+type=11) beat autocomplete-alone (10); higher score always wins');
+
+console.log('formDetection.test.js: OTP boundary tests OK');
 console.log('formDetection.test.js: findOtpField OK');
