@@ -20,7 +20,7 @@ final class LoopbackServerTests: XCTestCase {
         let tokenStore = InMemoryExtensionBridgeTokenStore()
         let server = LoopbackServer(tokenStore: tokenStore) { request in
             guard case .getCredentials = request else { return .error("unexpected") }
-            return .credentialList([ExtensionCredentialSummary(id: "1", title: "Test", username: "u")])
+            return .credentialList([ExtensionCredentialSummary(id: "1", title: "Test", username: "u", hasTotp: false)])
         }
         try server.start()
         defer { server.stop() }
@@ -56,14 +56,14 @@ final class LoopbackServerTests: XCTestCase {
         connection.cancel()
         XCTAssertEqual(
             receivedResponse,
-            .credentialList([ExtensionCredentialSummary(id: "1", title: "Test", username: "u")])
+            .credentialList([ExtensionCredentialSummary(id: "1", title: "Test", username: "u", hasTotp: false)])
         )
     }
 
     func testServerRejectsInvalidToken() throws {
         let tokenStore = InMemoryExtensionBridgeTokenStore()
         let server = LoopbackServer(tokenStore: tokenStore) { _ in
-            .credentialList([ExtensionCredentialSummary(id: "1", title: "Should not be reached", username: "u")])
+            .credentialList([ExtensionCredentialSummary(id: "1", title: "Should not be reached", username: "u", hasTotp: false)])
         }
         try server.start()
         defer { server.stop() }
@@ -154,7 +154,7 @@ final class LoopbackServerTests: XCTestCase {
     func testServerClosesConnectionAndRespondsErrorWhenClaimedFrameLengthExceedsCap() throws {
         let tokenStore = InMemoryExtensionBridgeTokenStore()
         let server = LoopbackServer(tokenStore: tokenStore) { _ in
-            .credentialList([ExtensionCredentialSummary(id: "1", title: "Should not be reached", username: "u")])
+            .credentialList([ExtensionCredentialSummary(id: "1", title: "Should not be reached", username: "u", hasTotp: false)])
         }
         try server.start()
         defer { server.stop() }

@@ -229,6 +229,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         let gated: [ExtensionBridgeRequest] = [
             .getCredentials(token: "t", url: "https://example.com", pairing: nil),
             .fillCredential(token: "t", id: "e", url: "https://example.com", pairing: nil),
+            .getTotp(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .proposeSaveLogin(token: "t", url: "https://example.com", username: "u", password: "p", pairing: nil),
             .startPairing(token: "t", browser: nil),
             .completePairing(token: "t", code: "123456"),

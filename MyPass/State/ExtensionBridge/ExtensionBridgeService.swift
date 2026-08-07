@@ -58,7 +58,12 @@ final class ExtensionBridgeService {
             }
             let matches = ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
             let summaries = matches.map {
-                ExtensionCredentialSummary(id: $0.uuid.uuidString, title: $0.title, username: $0.login)
+                ExtensionCredentialSummary(
+                    id: $0.uuid.uuidString,
+                    title: $0.title,
+                    username: $0.login,
+                    hasTotp: $0.totpSecretBase32?.isEmpty == false
+                )
             }
             return .credentialList(summaries)
 
@@ -73,15 +78,33 @@ final class ExtensionBridgeService {
             guard let entry = matches.first(where: { $0.uuid.uuidString == id }) else {
                 return .error("entry not found or domain mismatch")
             }
-            // TOTP filling isn't implemented anywhere downstream (no consumer
-            // reads `.credential`'s totp field), so the raw base32 seed is
-            // never populated here — sending a long-lived secret into a web
-            // page's content-script world for a feature that doesn't exist
-            // would be a pure liability. Always `nil` until TOTP-filling is
-            // actually built.
+            // Only a live, time-boxed six-digit code crosses the bridge — the
+            // Base32 seed itself is never sent to the extension.
+            let liveTotp = entry.totpSecretBase32.flatMap {
+                TOTPCode.currentCode(secretBase32: $0, digits: 6, period: 30, algorithm: .sha1, now: Date())
+            }
             onCredentialFilled?(entry.uuid)
             vaultSession?.touchAccess(entryID: entry.uuid)
-            return .credential(username: entry.login, password: entry.password, totp: nil)
+            return .credential(username: entry.login, password: entry.password, totp: liveTotp)
+
+        case .getTotp(_, let id, let url, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let database = vaultSession?.currentDatabase else {
+                return .locked
+            }
+            let matches = ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
+            guard let entry = matches.first(where: { $0.uuid.uuidString == id }) else {
+                return .error("entry not found or domain mismatch")
+            }
+            guard let secret = entry.totpSecretBase32,
+                  let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: Date()) else {
+                return .error("entry has no TOTP secret")
+            }
+            // Deliberately no `onCredentialFilled?` / `vaultSession?.touchAccess` here:
+            // fetching a live code for on-demand display is not a "fill" event.
+            return .totp(code: code)
 
         case .proposeSaveLogin(_, let url, let username, let password, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {

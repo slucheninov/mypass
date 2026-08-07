@@ -155,23 +155,105 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(touchedIDs, [id])
     }
 
-    /// TOTP-filling isn't implemented anywhere downstream: the base32 seed
-    /// must never be echoed back into `.credential`'s totp field, even when
-    /// the matched entry has one set — sending a long-lived secret to a web
-    /// page's content-script world for a feature that doesn't exist is a
-    /// pure liability.
-    func testFillCredentialNeverReturnsTotpEvenWhenEntryHasOne() {
+    func testFillCredentialReturnsLiveTotpWhenEntryHasSecret() throws {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         session.mutate { db in
             if let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) {
-                db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DP"
+                db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DPEHPK3PXP"
             }
         }
         let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
         guard case .credential(_, _, let totp) = response else {
             return XCTFail("expected credential response, got \(response)")
         }
+        let code = try XCTUnwrap(totp, "expected a live TOTP code, got nil")
+        XCTAssertEqual(code.count, 6)
+        XCTAssertTrue(code.allSatisfy(\.isNumber), "TOTP code must be all digits")
+        XCTAssertNotEqual(code, "JBSWY3DPEHPK3PXP", "response must never echo the base32 seed")
+    }
+
+    func testFillCredentialReturnsNilTotpWhenEntryHasNoSecret() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
+        guard case .credential(_, _, let totp) = response else {
+            return XCTFail("expected credential response, got \(response)")
+        }
         XCTAssertNil(totp)
+    }
+
+    func testGetCredentialsSetsHasTotpTrueWhenSecretPresent() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        session.mutate { db in
+            if let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) {
+                db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DPEHPK3PXP"
+            }
+        }
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret))
+        guard case .credentialList(let summaries) = response else {
+            return XCTFail("expected credentialList, got \(response)")
+        }
+        XCTAssertEqual(summaries.first?.hasTotp, true)
+    }
+
+    func testGetCredentialsSetsHasTotpFalseWhenSecretAbsent() {
+        _ = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret))
+        guard case .credentialList(let summaries) = response else {
+            return XCTFail("expected credentialList, got \(response)")
+        }
+        XCTAssertEqual(summaries.first?.hasTotp, false)
+    }
+
+    func testGetTotpReturnsLiveCodeForMatchingEntry() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        session.mutate { db in
+            if let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) {
+                db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DPEHPK3PXP"
+            }
+        }
+        let response = service.handle(.getTotp(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
+        guard case .totp(let code) = response else {
+            return XCTFail("expected totp response, got \(response)")
+        }
+        XCTAssertEqual(code.count, 6)
+        XCTAssertTrue(code.allSatisfy(\.isNumber))
+    }
+
+    func testGetTotpRejectsDomainMismatch() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        session.mutate { db in
+            if let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) {
+                db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DPEHPK3PXP"
+            }
+        }
+        let response = service.handle(.getTotp(token: "t", id: id.uuidString, url: "https://not-example.com", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .error("entry not found or domain mismatch"))
+    }
+
+    func testGetTotpReturnsLockedWhenVaultIsLocked() {
+        session.lock()
+        let response = service.handle(.getTotp(token: "t", id: UUID().uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .locked)
+    }
+
+    func testGetTotpReturnsPairingRequiredWithoutSecret() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let (service, _, _) = makeServiceWithPairing()
+        let response = service.handle(.getTotp(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
+        XCTAssertEqual(response, .pairingRequired)
+    }
+
+    func testGetTotpDoesNotTouchAccess() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        session.mutate { db in
+            if let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) {
+                db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DPEHPK3PXP"
+            }
+        }
+        var touchedIDs: [UUID] = []
+        service.onCredentialFilled = { touchedIDs.append($0) }
+        _ = service.handle(.getTotp(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
+        XCTAssertTrue(touchedIDs.isEmpty, "getTotp must not fire onCredentialFilled/touchAccess")
     }
 
     func testFillCredentialReturnsErrorWhenDomainDoesNotMatch() {
