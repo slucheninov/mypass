@@ -212,4 +212,118 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(response, .locked)
         XCTAssertFalse(wasInvoked, "onSaveProposal must not fire while the vault is locked")
     }
+
+    // MARK: - requestUnlock
+
+    /// Builds a service whose clock the test drives, sharing this case's session and a
+    /// pairing manager authorising `authorizedPairingSecret`.
+    private func makeServiceWithControlledClock(now: @escaping () -> Date) throws -> ExtensionBridgeService {
+        let store = InMemoryExtensionPairingStore()
+        let hash = SHA256.hash(data: Data(authorizedPairingSecret.utf8))
+            .compactMap { String(format: "%02x", $0) }
+            .joined()
+        try store.add(PairedBrowser(id: UUID(), label: "Test", createdAt: Date(), secretHash: hash))
+        return ExtensionBridgeService(
+            vaultSession: session,
+            pairingManager: ExtensionPairingManager(store: store),
+            now: now
+        )
+    }
+
+    func testRequestUnlockIsAnsweredWhileLockedAndInvokesCallback() {
+        session.lock()
+        var callbackCount = 0
+        service.onUnlockRequested = { callbackCount += 1 }
+
+        let response = service.handle(.requestUnlock(token: "tok", pairing: authorizedPairingSecret))
+
+        XCTAssertEqual(response, .unlockPresented)
+        XCTAssertEqual(callbackCount, 1)
+    }
+
+    func testRequestUnlockWithoutPairingReturnsPairingRequiredAndDoesNotInvokeCallback() {
+        session.lock()
+        var callbackCount = 0
+        service.onUnlockRequested = { callbackCount += 1 }
+
+        let response = service.handle(.requestUnlock(token: "tok", pairing: nil))
+
+        XCTAssertEqual(response, .pairingRequired)
+        XCTAssertEqual(callbackCount, 0)
+    }
+
+    func testRequestUnlockWithWrongPairingSecretReturnsPairingRequired() {
+        session.lock()
+        var callbackCount = 0
+        service.onUnlockRequested = { callbackCount += 1 }
+
+        let response = service.handle(.requestUnlock(token: "tok", pairing: "not-the-secret"))
+
+        XCTAssertEqual(response, .pairingRequired)
+        XCTAssertEqual(callbackCount, 0)
+    }
+
+    func testRequestUnlockReturnsUnlockNotNeededWhenAlreadyUnlocked() {
+        // setUpWithError leaves the session unlocked.
+        var callbackCount = 0
+        service.onUnlockRequested = { callbackCount += 1 }
+
+        let response = service.handle(.requestUnlock(token: "tok", pairing: authorizedPairingSecret))
+
+        XCTAssertEqual(response, .unlockNotNeeded)
+        XCTAssertEqual(callbackCount, 0, "an unlocked vault must not raise the window")
+    }
+
+    func testRequestUnlockDebouncesRepeatsWithinTwoSeconds() throws {
+        session.lock()
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let debounced = try makeServiceWithControlledClock(now: { clock })
+        var callbackCount = 0
+        debounced.onUnlockRequested = { callbackCount += 1 }
+
+        XCTAssertEqual(debounced.handle(.requestUnlock(token: "t", pairing: authorizedPairingSecret)), .unlockPresented)
+        clock = clock.addingTimeInterval(1.0)
+        XCTAssertEqual(debounced.handle(.requestUnlock(token: "t", pairing: authorizedPairingSecret)), .unlockPresented)
+
+        XCTAssertEqual(callbackCount, 1, "a repeat inside the window must not raise a second prompt")
+    }
+
+    func testRequestUnlockAcceptsAgainAfterTheDebounceWindow() throws {
+        session.lock()
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let debounced = try makeServiceWithControlledClock(now: { clock })
+        var callbackCount = 0
+        debounced.onUnlockRequested = { callbackCount += 1 }
+
+        _ = debounced.handle(.requestUnlock(token: "t", pairing: authorizedPairingSecret))
+        clock = clock.addingTimeInterval(2.5)
+        _ = debounced.handle(.requestUnlock(token: "t", pairing: authorizedPairingSecret))
+
+        XCTAssertEqual(callbackCount, 2)
+    }
+
+    /// The spec's load-bearing ordering: already-unlocked is checked BEFORE the debounce,
+    /// so a click arriving right after a successful unlock tells the popup to re-query
+    /// instead of being swallowed as a repeat.
+    func testUnlockNotNeededWinsOverDebounce() throws {
+        session.lock()
+        var clock = Date(timeIntervalSince1970: 1_000)
+        let debounced = try makeServiceWithControlledClock(now: { clock })
+
+        XCTAssertEqual(debounced.handle(.requestUnlock(token: "t", pairing: authorizedPairingSecret)), .unlockPresented)
+
+        try session.unlock(password: "correct-horse")
+        clock = clock.addingTimeInterval(0.5) // still inside the debounce window
+
+        XCTAssertEqual(debounced.handle(.requestUnlock(token: "t", pairing: authorizedPairingSecret)), .unlockNotNeeded)
+    }
+
+    func testOtherRequestsStillReturnLockedWhenVaultIsLocked() {
+        session.lock()
+        XCTAssertEqual(
+            service.handle(.getCredentials(token: "tok", url: "https://example.com", pairing: authorizedPairingSecret)),
+            .locked
+        )
+        XCTAssertEqual(service.handle(.startPairing(token: "tok", browser: "Chrome")), .locked)
+    }
 }

@@ -189,6 +189,7 @@ final class LoopbackServer {
         case .proposeSaveLogin(let token, _, _, _, _): return token
         case .startPairing(let token, _): return token
         case .completePairing(let token, _): return token
+        case .requestUnlock(let token, _): return token
         }
     }
 

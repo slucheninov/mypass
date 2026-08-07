@@ -8,20 +8,36 @@ import ExtensionBridgeKit
 final class ExtensionBridgeService {
     weak var vaultSession: VaultSession?
     private let pairingManager: ExtensionPairingManager
+    /// Injectable so the debounce is testable without sleeping.
+    private let now: () -> Date
+    private var lastAcceptedUnlockRequestAt: Date?
+
+    /// Repeat `requestUnlock` calls inside this window are answered but produce no
+    /// second window activation or Touch ID prompt.
+    static let unlockRequestDebounceInterval: TimeInterval = 2
     /// Fired for `.proposeSaveLogin` requests. Wired to real window-activation +
     /// pre-filled create-entry UI in Task 13 (`MyPassApp.init()` sets this to a
     /// closure that populates `NavigationState.pendingSaveProposal` and brings
     /// `MyPass.app` to the foreground) — not left as a bare extension point.
     var onSaveProposal: ((_ url: String, _ username: String, _ password: String) -> Void)?
     var onCredentialFilled: ((UUID) -> Void)?
+    /// Fired for `.requestUnlock`. Wired in `MyPassApp.init()` to bring the window
+    /// forward and re-trigger the Touch ID prompt. The service itself never unlocks
+    /// anything — presenting the unlock UI is the app layer's job.
+    var onUnlockRequested: (() -> Void)?
 
-    init(vaultSession: VaultSession, pairingManager: ExtensionPairingManager) {
+    init(
+        vaultSession: VaultSession,
+        pairingManager: ExtensionPairingManager,
+        now: @escaping () -> Date = Date.init
+    ) {
         self.vaultSession = vaultSession
         self.pairingManager = pairingManager
+        self.now = now
     }
 
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
-        guard vaultSession?.currentDatabase != nil else {
+        guard vaultSession?.currentDatabase != nil || request.isAnswerableWhileLocked else {
             return .locked
         }
         switch request {
@@ -73,6 +89,25 @@ final class ExtensionBridgeService {
             }
             onSaveProposal?(url, username, password)
             return .saveProposalAccepted
+
+        case .requestUnlock(_, let pairing):
+            // Order is load-bearing — see the design spec's "Order of checks".
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            // Checked before the debounce so a click arriving just after a successful
+            // unlock always tells the popup to re-query rather than being swallowed.
+            guard vaultSession?.currentDatabase == nil else {
+                return .unlockNotNeeded
+            }
+            let timestamp = now()
+            if let last = lastAcceptedUnlockRequestAt,
+               timestamp.timeIntervalSince(last) < Self.unlockRequestDebounceInterval {
+                return .unlockPresented
+            }
+            lastAcceptedUnlockRequestAt = timestamp
+            onUnlockRequested?()
+            return .unlockPresented
         }
     }
 }
