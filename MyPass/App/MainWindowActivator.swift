@@ -21,6 +21,17 @@ enum MainWindowActivator {
         NotificationCenter.default.post(name: .requestMainWindow, object: nil)
     }
 
+    /// Keeps the main window above other applications while a pairing code is on screen.
+    /// The code is deliberately not sent to the extension, so the user has to read it here
+    /// while typing it into the browser — and a normal-level window drops behind Chrome the
+    /// moment they click the input field. Reset to `.normal` as soon as the code clears, so
+    /// the app does not permanently sit on top of everything.
+    static func setMainWindowFloating(_ floating: Bool) {
+        for window in NSApp.windows where isMainAppWindow(window) {
+            window.level = floating ? .floating : .normal
+        }
+    }
+
     /// Returns `true` when an existing main window was found and brought forward.
     private static func frontExistingMainWindowIfPresent() -> Bool {
         for window in NSApp.windows where isMainAppWindow(window) {

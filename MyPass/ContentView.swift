@@ -38,6 +38,9 @@ struct ContentView: View {
                     navigationState.presentBrowse()
                 }
             }
+            .onChange(of: navigationState.pendingPairingCode) { _, code in
+                MainWindowActivator.setMainWindowFloating(code != nil)
+            }
             .sheet(isPresented: Binding(
                 get: { navigationState.pendingPairingCode != nil },
                 set: { if !$0 { navigationState.pendingPairingCode = nil } }

@@ -103,6 +103,12 @@ that `requestUnlock` itself depends on, so it must stay in the app.
 Closing the popup costs nothing here: `popup.js` already reopens straight onto the code
 field while the challenge is fresh (`isPairingChallengeFresh`).
 
+Activation alone still was not enough. `PairingCodeSheet` is a sheet on the main window, so
+clicking the popup's code field sent the whole window — sheet included — behind Chrome, and
+the code became unreadable exactly when it was needed. The main window is therefore raised
+to `.floating` level while `pendingPairingCode` is non-nil and dropped back to `.normal` as
+soon as it clears, so the app never permanently sits above everything.
+
 ### Wire protocol
 
 New request:
