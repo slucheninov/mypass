@@ -212,15 +212,26 @@ Two brand-new files, no shared-file edits, no extension changes. Reviewed and fo
 correct on canonical CTAP2 CBOR key ordering, authenticator-data flags (`0x5D` create /
 `0x1D` get), and DER signatures over `authData + clientDataHash`.
 
-- [ ] **C2** — `KdbxEntry+Passkey.swift`: `KPEX_PASSKEY_*` accessors, `clearPasskey()`,
-      widen `setFieldValue`/`fieldValue` to `internal`
-- [ ] **C3** — `PasskeyCeremony.swift`: CBOR/COSE encoder, WebAuthn JSON parse/build,
-      ES256 key generation and signing
-  - [ ] Fixtures reconciled with the real payload captured in **S3**
-  - [ ] Attestation format resolved per **S8**
+- [x] **C2** — `KdbxEntry+Passkey.swift`: `KPEX_PASSKEY_*` accessors, `clearPasskey()`,
+      widen `setFieldValue`/`fieldValue` to `internal` *(shipped: `71dc857`)*
+  - [x] Adapted from the plan: `fieldValue(forKey:)` returns `String`, not `String?`, so the
+        passkey getters read `fields.first(where:)?.value` directly — otherwise an absent
+        passkey would read as `""` and `.flatMap` would not compile. Same idiom
+        `totpSecretBase32` already uses.
+- [x] **C3** — `PasskeyCeremony.swift`: CBOR/COSE encoder, WebAuthn JSON parse/build,
+      ES256 key generation and signing *(shipped: `80f2c27`)*
+  - [x] Fixtures reconciled with the real payload captured in **S3** — added coverage for
+        ES256 offered alongside `-257`, and for the `transports` array Chrome injects
+  - [x] Attestation format resolved per **S8** — two tests assert the real CBOR bytes
+        (`a3 63 "fmt" 64 "none"` vs `66 "packed"`), which was previously untested
 
-**⛳ Gate 2** — `MyPassTests/PasskeyCeremonyTests` and `KdbxEntryPasskeyTests` green,
-including the self-verifying signature assertions.
+**⛳ Gate 2 — PASSED (2026-08-07).** 16 + 9 tests green, including the signature assertions
+verified independently against CryptoKit. Full `./scripts/test.sh` also green, since C2
+touched the shared `KdbxEntry+Convenience.swift`. Branch: `feat/passkey-core`.
+
+Two typos in the plan's own test code were corrected while executing: an unbalanced paren
+in the get-ceremony fixture (which would have made the challenge undecodable) and doubled
+backslash escapes.
 
 ---
 
@@ -357,12 +368,12 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 |-------|-------|------|
 | 0 — Spike + plan C fixes | 8 | **8 — complete** |
 | 1 — Vault (V1–V9) | 9 | **9 — already shipped** |
-| 2 — Passkey core (C2–C3) | 2 | 0 |
+| 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
 | 3 — Unlock from popup (U1–U9) | 9 | 0 |
 | 4 — Piece A (A1–A7) | 7 | 0 |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **17** |
+| **Total** | **55** | **19** |
 
 ## Decisions
 
