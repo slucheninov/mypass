@@ -8,6 +8,7 @@ public enum ExtensionBridgeRequest: Equatable {
     case proposeSaveLogin(token: String, url: String, username: String, password: String, pairing: String?)
     case startPairing(token: String, browser: String?)
     case completePairing(token: String, code: String)
+    case requestUnlock(token: String, pairing: String?)
 }
 
 extension ExtensionBridgeRequest: Codable {
@@ -41,6 +42,9 @@ extension ExtensionBridgeRequest: Codable {
         case "completePairing":
             let code = try container.decode(String.self, forKey: .code)
             self = .completePairing(token: token, code: code)
+        case "requestUnlock":
+            let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
+            self = .requestUnlock(token: token, pairing: pairing)
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type, in: container, debugDescription: "Unknown ExtensionBridgeRequest type: \(type)"
@@ -77,6 +81,27 @@ extension ExtensionBridgeRequest: Codable {
             try container.encode("completePairing", forKey: .type)
             try container.encode(token, forKey: .token)
             try container.encode(code, forKey: .code)
+        case .requestUnlock(let token, let pairing):
+            try container.encode("requestUnlock", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encodeIfPresent(pairing, forKey: .pairing)
+        }
+    }
+}
+
+public extension ExtensionBridgeRequest {
+    /// The requests the app answers even while the vault is locked. Everything else is
+    /// rejected with `.locked` before it reaches a handler.
+    ///
+    /// The switch is deliberately exhaustive with no `default`: a new request case must
+    /// make an explicit decision here rather than silently inheriting an exemption.
+    /// Keep this list as short as the spec allows.
+    var isAnswerableWhileLocked: Bool {
+        switch self {
+        case .requestUnlock:
+            return true
+        case .getCredentials, .fillCredential, .proposeSaveLogin, .startPairing, .completePairing:
+            return false
         }
     }
 }
@@ -105,6 +130,8 @@ public enum ExtensionBridgeResponse: Equatable {
     case credentialList([ExtensionCredentialSummary])
     case credential(username: String, password: String, totp: String?)
     case saveProposalAccepted
+    case unlockPresented
+    case unlockNotNeeded
     case error(String)
 }
 
@@ -136,6 +163,10 @@ extension ExtensionBridgeResponse: Codable {
             self = .credential(username: username, password: password, totp: totp)
         case "saveProposalAccepted":
             self = .saveProposalAccepted
+        case "unlockPresented":
+            self = .unlockPresented
+        case "unlockNotNeeded":
+            self = .unlockNotNeeded
         case "error":
             let message = try container.decode(String.self, forKey: .message)
             self = .error(message)
@@ -168,6 +199,10 @@ extension ExtensionBridgeResponse: Codable {
             try container.encodeIfPresent(totp, forKey: .totp)
         case .saveProposalAccepted:
             try container.encode("saveProposalAccepted", forKey: .type)
+        case .unlockPresented:
+            try container.encode("unlockPresented", forKey: .type)
+        case .unlockNotNeeded:
+            try container.encode("unlockNotNeeded", forKey: .type)
         case .error(let message):
             try container.encode("error", forKey: .type)
             try container.encode(message, forKey: .message)

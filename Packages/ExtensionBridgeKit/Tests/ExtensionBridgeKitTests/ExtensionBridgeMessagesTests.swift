@@ -187,4 +187,54 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
         XCTAssertEqual(try jsonObject(from: data)["message"] as? String, "invalid_code")
     }
+
+    // MARK: - Unlock from popup
+
+    func testRequestUnlockRoundTripsAndHasExpectedShape() throws {
+        let request = ExtensionBridgeRequest.requestUnlock(token: "tok-9", pairing: "pair-secret")
+        let data = try JSONEncoder().encode(request)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["type"] as? String, "requestUnlock")
+        XCTAssertEqual(object["token"] as? String, "tok-9")
+        XCTAssertEqual(object["pairing"] as? String, "pair-secret")
+    }
+
+    func testRequestUnlockRoundTripsWithoutPairing() throws {
+        let request = ExtensionBridgeRequest.requestUnlock(token: "tok-10", pairing: nil)
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
+
+        let object = try jsonObject(from: data)
+        XCTAssertNil(object["pairing"])
+    }
+
+    func testUnlockResponsesRoundTrip() throws {
+        for response in [ExtensionBridgeResponse.unlockPresented, .unlockNotNeeded] {
+            let data = try JSONEncoder().encode(response)
+            XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
+        }
+
+        let presented = try jsonObject(from: try JSONEncoder().encode(ExtensionBridgeResponse.unlockPresented))
+        XCTAssertEqual(presented["type"] as? String, "unlockPresented")
+        let notNeeded = try jsonObject(from: try JSONEncoder().encode(ExtensionBridgeResponse.unlockNotNeeded))
+        XCTAssertEqual(notNeeded["type"] as? String, "unlockNotNeeded")
+    }
+
+    func testOnlyRequestUnlockIsAnswerableWhileLocked() {
+        XCTAssertTrue(ExtensionBridgeRequest.requestUnlock(token: "t", pairing: nil).isAnswerableWhileLocked)
+
+        let gated: [ExtensionBridgeRequest] = [
+            .getCredentials(token: "t", url: "https://example.com", pairing: nil),
+            .fillCredential(token: "t", id: "e", url: "https://example.com", pairing: nil),
+            .proposeSaveLogin(token: "t", url: "https://example.com", username: "u", password: "p", pairing: nil),
+            .startPairing(token: "t", browser: nil),
+            .completePairing(token: "t", code: "123456"),
+        ]
+        for request in gated {
+            XCTAssertFalse(request.isAnswerableWhileLocked, "\(request) must stay behind the locked gate")
+        }
+    }
 }
