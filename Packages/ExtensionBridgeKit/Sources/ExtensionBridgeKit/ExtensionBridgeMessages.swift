@@ -5,6 +5,7 @@ import Foundation
 public enum ExtensionBridgeRequest: Equatable {
     case getCredentials(token: String, url: String, pairing: String?)
     case fillCredential(token: String, id: String, url: String, pairing: String?)
+    case getTotp(token: String, id: String, url: String, pairing: String?)
     case proposeSaveLogin(token: String, url: String, username: String, password: String, pairing: String?)
     case startPairing(token: String, browser: String?)
     case completePairing(token: String, code: String)
@@ -30,6 +31,11 @@ extension ExtensionBridgeRequest: Codable {
             let url = try container.decode(String.self, forKey: .url)
             let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
             self = .fillCredential(token: token, id: id, url: url, pairing: pairing)
+        case "getTotp":
+            let id = try container.decode(String.self, forKey: .id)
+            let url = try container.decode(String.self, forKey: .url)
+            let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
+            self = .getTotp(token: token, id: id, url: url, pairing: pairing)
         case "proposeSaveLogin":
             let url = try container.decode(String.self, forKey: .url)
             let username = try container.decode(String.self, forKey: .username)
@@ -62,6 +68,12 @@ extension ExtensionBridgeRequest: Codable {
             try container.encodeIfPresent(pairing, forKey: .pairing)
         case .fillCredential(let token, let id, let url, let pairing):
             try container.encode("fillCredential", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encode(id, forKey: .id)
+            try container.encode(url, forKey: .url)
+            try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .getTotp(let token, let id, let url, let pairing):
+            try container.encode("getTotp", forKey: .type)
             try container.encode(token, forKey: .token)
             try container.encode(id, forKey: .id)
             try container.encode(url, forKey: .url)
@@ -100,7 +112,7 @@ public extension ExtensionBridgeRequest {
         switch self {
         case .requestUnlock:
             return true
-        case .getCredentials, .fillCredential, .proposeSaveLogin, .startPairing, .completePairing:
+        case .getCredentials, .fillCredential, .getTotp, .proposeSaveLogin, .startPairing, .completePairing:
             return false
         }
     }
@@ -112,11 +124,13 @@ public struct ExtensionCredentialSummary: Codable, Equatable {
     public let id: String
     public let title: String
     public let username: String
+    public let hasTotp: Bool
 
-    public init(id: String, title: String, username: String) {
+    public init(id: String, title: String, username: String, hasTotp: Bool) {
         self.id = id
         self.title = title
         self.username = username
+        self.hasTotp = hasTotp
     }
 }
 
@@ -129,6 +143,7 @@ public enum ExtensionBridgeResponse: Equatable {
     case paired(secret: String)
     case credentialList([ExtensionCredentialSummary])
     case credential(username: String, password: String, totp: String?)
+    case totp(code: String)
     case saveProposalAccepted
     case unlockPresented
     case unlockNotNeeded
@@ -137,7 +152,7 @@ public enum ExtensionBridgeResponse: Equatable {
 
 extension ExtensionBridgeResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, credentials, username, password, totp, message, secret
+        case type, credentials, username, password, totp, message, secret, code
     }
 
     public init(from decoder: Decoder) throws {
@@ -161,6 +176,9 @@ extension ExtensionBridgeResponse: Codable {
             let password = try container.decode(String.self, forKey: .password)
             let totp = try container.decodeIfPresent(String.self, forKey: .totp)
             self = .credential(username: username, password: password, totp: totp)
+        case "totp":
+            let code = try container.decode(String.self, forKey: .code)
+            self = .totp(code: code)
         case "saveProposalAccepted":
             self = .saveProposalAccepted
         case "unlockPresented":
@@ -197,6 +215,9 @@ extension ExtensionBridgeResponse: Codable {
             try container.encode(username, forKey: .username)
             try container.encode(password, forKey: .password)
             try container.encodeIfPresent(totp, forKey: .totp)
+        case .totp(let code):
+            try container.encode("totp", forKey: .type)
+            try container.encode(code, forKey: .code)
         case .saveProposalAccepted:
             try container.encode("saveProposalAccepted", forKey: .type)
         case .unlockPresented:

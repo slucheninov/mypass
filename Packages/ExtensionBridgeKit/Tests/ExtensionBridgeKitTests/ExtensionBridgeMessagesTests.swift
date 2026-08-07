@@ -107,7 +107,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
 
     func testCredentialListRoundTripsAndNeverIncludesAPasswordKey() throws {
         let response = ExtensionBridgeResponse.credentialList([
-            ExtensionCredentialSummary(id: "1", title: "Example", username: "alice")
+            ExtensionCredentialSummary(id: "1", title: "Example", username: "alice", hasTotp: false)
         ])
         let data = try JSONEncoder().encode(response)
         XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
@@ -236,5 +236,44 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         for request in gated {
             XCTAssertFalse(request.isAnswerableWhileLocked, "\(request) must stay behind the locked gate")
         }
+    }
+
+    func testGetTotpRoundTripsAndHasExpectedShape() throws {
+        let request = ExtensionBridgeRequest.getTotp(token: "tok", id: "entry-1", url: "https://example.com", pairing: "pair-secret")
+        let data = try JSONEncoder().encode(request)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+
+        let json = try jsonObject(from: data)
+        XCTAssertEqual(json["type"] as? String, "getTotp")
+        XCTAssertEqual(json["token"] as? String, "tok")
+        XCTAssertEqual(json["id"] as? String, "entry-1")
+        XCTAssertEqual(json["url"] as? String, "https://example.com")
+        XCTAssertEqual(json["pairing"] as? String, "pair-secret")
+    }
+
+    func testTotpResponseRoundTripsAndHasExpectedShape() throws {
+        let response = ExtensionBridgeResponse.totp(code: "123456")
+        let data = try JSONEncoder().encode(response)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data)
+        XCTAssertEqual(decoded, response)
+
+        let json = try jsonObject(from: data)
+        XCTAssertEqual(json["type"] as? String, "totp")
+        XCTAssertEqual(json["code"] as? String, "123456")
+        XCTAssertNil(json["username"])
+        XCTAssertNil(json["password"])
+    }
+
+    func testCredentialListIncludesHasTotpField() throws {
+        let summary = ExtensionCredentialSummary(id: "1", title: "Example", username: "alice", hasTotp: true)
+        let response = ExtensionBridgeResponse.credentialList([summary])
+        let data = try JSONEncoder().encode(response)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data)
+        XCTAssertEqual(decoded, response)
+
+        let json = try jsonObject(from: data)
+        let credentials = try XCTUnwrap(json["credentials"] as? [[String: Any]])
+        XCTAssertEqual(credentials.first?["hasTotp"] as? Bool, true)
     }
 }
