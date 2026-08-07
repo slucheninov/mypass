@@ -291,7 +291,17 @@ unlock" state that the user will never see.
 - [x] **U8** — `RUN.md` manual checklist (Ukrainian)
 - [ ] **U9** — Full verification run
 
-**⛳ Gate 3 — automated portion PASSED (2026-08-07); manual walk still owed.**
+**⛳ Gate 3 — automated PASSED; manual walk 11/12 confirmed (2026-08-07).**
+Blocks 1-3 of the checklist all pass: button visibility, waiting state, self-refresh
+without Retry, poll timeout, double-click debounce, no-biometrics path, and the
+unpaired path showing no button. Pairing-code visibility, the closed-window
+(Cmd+W) path and window non-duplication were confirmed live while debugging.
+
+One bullet outstanding: locking the vault (Cmd+L) *while a pairing code is displayed*
+must clear the code and drop the window off `.floating`. Only the normal completion
+path was exercised, and this is precisely the fail-open shape the security review
+flagged — an unverified failure here leaves a window above every application.
+
 `./scripts/test.sh` genuinely green (`EXIT=0` unpiped, `** TEST SUCCEEDED **`, 370 app
 tests, 42 ExtensionBridgeKit tests, all six JS suites). Acceptance criterion 7 verified
 mechanically: `grep` finds no `password` reference and no password input anywhere in
