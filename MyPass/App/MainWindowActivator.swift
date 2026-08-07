@@ -3,6 +3,11 @@ import SwiftUI
 
 extension Notification.Name {
     static let requestMainWindow = Notification.Name("com.mypass.requestMainWindow")
+
+    /// Posted when something outside the unlock screen wants the Touch ID prompt shown
+    /// again — currently only the browser extension's `requestUnlock`. `UnlockView`'s
+    /// own `.onAppear` auto-prompt does not re-fire when an open window is refocused.
+    static let requestDeviceUnlockPrompt = Notification.Name("com.mypass.requestDeviceUnlockPrompt")
 }
 
 enum MainWindowActivator {

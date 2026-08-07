@@ -208,6 +208,21 @@ struct MyPassApp: App {
             }
         }
 
+        // Stage 3 (U5): the popup's Unlock button. Activation alone is not enough —
+        // if the window was already open on the unlock screen, `UnlockView.onAppear`
+        // will not re-fire, so the Touch ID prompt has to be requested explicitly.
+        //
+        // When the window was closed instead, `MainWindowActivator.request()` opens it
+        // asynchronously and `UnlockView.onAppear` runs its own auto-prompt; this
+        // notification arrives before any observer exists and is harmlessly dropped, so
+        // exactly one prompt is shown in both paths.
+        extensionBridgeService.onUnlockRequested = {
+            DispatchQueue.main.async {
+                MainWindowActivator.request()
+                NotificationCenter.default.post(name: .requestDeviceUnlockPrompt, object: nil)
+            }
+        }
+
         // Best-effort cleanup of the pre-2026-07-28 Touch ID enrollment, which stored a
         // derived key under a fixed "master" account. Safe to call even if nothing is stored.
         try? BiometricKeyStore().remove(account: "master")

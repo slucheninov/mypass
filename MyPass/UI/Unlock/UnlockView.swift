@@ -120,6 +120,12 @@ struct UnlockView: View {
                 attemptDeviceUnlock(silentCancel: true)
             }
         }
+        .onReceive(NotificationCenter.default.publisher(for: .requestDeviceUnlockPrompt)) { _ in
+            // `silentCancel: true` matches the `.onAppear` auto-prompt: a user who
+            // dismisses the system sheet should not be shown an error.
+            guard canShowDeviceUnlockButton else { return }
+            attemptDeviceUnlock(silentCancel: true)
+        }
         .sheet(isPresented: Binding(
             get: { openExistingVaultURL != nil },
             set: { if !$0 { openExistingVaultURL = nil } }
