@@ -267,7 +267,11 @@ unlock" state that the user will never see.
         the unpaired+locked chicken-and-egg; no settings toggle.
   - [x] Found while writing: no app-side unlock UI is needed — `ContentView.swift:11`
         already shows `UnlockView` when locked, so `U5` reduces to raising the window.
-- [ ] **U2** — Implementation plan in `docs/superpowers/plans/`
+- [x] **U2** — Implementation plan in `docs/superpowers/plans/`
+      *(shipped: `ade4dda` — `2026-08-07-chrome-extension-unlock-from-popup.md`, 6 tasks)*
+  - [x] Found while planning: `letter-avatar.test.js` and `popup-fallback.test.js` exist but
+        were never wired into `scripts/test.sh`, so they have not run since they were added.
+        Both cover `popup.js`, which this stage edits — the plan wires them in at Task 4.
 - [ ] **U3** — `ExtensionBridgeKit`: `requestUnlock` request + `unlockPresented` response
 - [ ] **U4** — `ExtensionBridgeService`: `requestUnlock` handler
   - [ ] Exception to the blanket `guard vaultSession?.currentDatabase != nil` gate at
@@ -375,11 +379,11 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 0 — Spike + plan C fixes | 8 | **8 — complete** |
 | 1 — Vault (V1–V9) | 9 | **9 — already shipped** |
 | 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
-| 3 — Unlock from popup (U1–U9) | 9 | 1 |
+| 3 — Unlock from popup (U1–U9) | 9 | 2 |
 | 4 — Piece A (A1–A7) | 7 | 0 |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **20** |
+| **Total** | **55** | **21** |
 
 ## Decisions
 
