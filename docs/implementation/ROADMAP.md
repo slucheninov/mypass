@@ -272,28 +272,33 @@ unlock" state that the user will never see.
   - [x] Found while planning: `letter-avatar.test.js` and `popup-fallback.test.js` exist but
         were never wired into `scripts/test.sh`, so they have not run since they were added.
         Both cover `popup.js`, which this stage edits — the plan wires them in at Task 4.
-- [ ] **U3** — `ExtensionBridgeKit`: `requestUnlock` request + `unlockPresented` response
-- [ ] **U4** — `ExtensionBridgeService`: `requestUnlock` handler
-  - [ ] Exception to the blanket `guard vaultSession?.currentDatabase != nil` gate at
+- [x] **U3** — `ExtensionBridgeKit`: `requestUnlock` request + `unlockPresented` response
+- [x] **U4** — `ExtensionBridgeService`: `requestUnlock` handler
+  - [x] Exception to the blanket `guard vaultSession?.currentDatabase != nil` gate at
         `ExtensionBridgeService.swift:24` — the second such exception, alongside plan C's
         `getPasskeyProxyStatus`. Consider factoring the exception list rather than
         bolting on a second special case.
-  - [ ] Pairing still required; unpaired → `.pairingRequired`, no window activation
-  - [ ] Already-unlocked → respond without activating the window
-  - [ ] Rate limit / debounce so repeated requests cannot spam Touch ID prompts
-  - [ ] The service never unlocks the vault itself — it only fires `onUnlockRequested`
-- [ ] **U5** — `MyPassApp` wiring: activate the window and present the unlock UI,
+  - [x] Pairing still required; unpaired → `.pairingRequired`, no window activation
+  - [x] Already-unlocked → respond without activating the window
+  - [x] Rate limit / debounce so repeated requests cannot spam Touch ID prompts
+  - [x] The service never unlocks the vault itself — it only fires `onUnlockRequested`
+- [x] **U5** — `MyPassApp` wiring: activate the window and present the unlock UI,
       reusing the existing `MenuBarUnlockPanelView` / `UnlockView` path
       (`DeviceUnlockAuthenticator`, `BiometricKeyStore`) rather than a new surface
-- [ ] **U6** — `background.js`: route `requestUnlock`
-- [ ] **U7** — `popup.js` / `popup.html`: "Unlock MyPass" button on the locked panel,
+- [x] **U6** — `background.js`: route `requestUnlock`
+- [x] **U7** — `popup.js` / `popup.html`: "Unlock MyPass" button on the locked panel,
       alongside the existing Retry; fire-and-forget, no waiting state
-- [ ] **U8** — `RUN.md` manual checklist (Ukrainian)
+- [x] **U8** — `RUN.md` manual checklist (Ukrainian)
 - [ ] **U9** — Full verification run
 
-**⛳ Gate 3** — `./scripts/test.sh` green; manual: locked + paired → button unlocks via
-password and via Touch ID; locked + unpaired → no window activation; repeated clicks
-raise no prompt storm.
+**⛳ Gate 3 — automated portion PASSED (2026-08-07); manual walk still owed.**
+`./scripts/test.sh` genuinely green (`EXIT=0` unpiped, `** TEST SUCCEEDED **`, 370 app
+tests, 42 ExtensionBridgeKit tests, all six JS suites). Acceptance criterion 7 verified
+mechanically: `grep` finds no `password` reference and no password input anywhere in
+`popup.js` / `popup.html`, and `requestUnlock` sends only `{ type: 'requestUnlock' }`.
+
+`U9` stays open until the six-bullet checklist in `RUN.md` is walked against a real build
+— Touch ID and window activation are not reachable from any automated test.
 
 ---
 
@@ -379,11 +384,11 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 0 — Spike + plan C fixes | 8 | **8 — complete** |
 | 1 — Vault (V1–V9) | 9 | **9 — already shipped** |
 | 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
-| 3 — Unlock from popup (U1–U9) | 9 | 2 |
+| 3 — Unlock from popup (U1–U9) | 9 | 8 |
 | 4 — Piece A (A1–A7) | 7 | 0 |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **21** |
+| **Total** | **55** | **27** |
 
 ## Decisions
 
@@ -418,6 +423,10 @@ ssh-keygen -t ed25519 -N "correct-horse-battery-staple" -f /tmp/citadel_smoke_ke
 
 Worth fixing properly at some point — either gate it like its neighbours, or generate the
 key into the test's own temp directory in `setUp`. Not part of any current plan.
+
+**Flaky:** `LoopbackServerTests.testServerClosesConnectionAndRespondsErrorWhenClaimedFrameLengthExceedsCap`
+timed out once under full-suite load (5 s expectation) and passed both in isolation and on
+a full re-run. Treat a lone failure there as noise; two consecutive ones as real.
 
 Also: never judge a run by `./scripts/test.sh | tail`. The pipeline reports `tail`'s exit
 code, not the script's, which is how a 4-failure run first read as a pass here.
