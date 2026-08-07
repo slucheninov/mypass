@@ -28,6 +28,55 @@
     return best;
   }
 
+  function scoreOtpLikeness(input) {
+    if (!input) return 0;
+    const type = (input.getAttribute('type') || 'text').toLowerCase();
+    const isDisabled = input.getAttribute('disabled') !== null || input.disabled === true;
+    const isReadOnly = input.getAttribute('readonly') !== null || input.readOnly === true;
+    if (type === 'password' || type === 'hidden' || isDisabled || isReadOnly) {
+      return 0;
+    }
+
+    let score = 0;
+    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
+    if (autocomplete === 'one-time-code') {
+      return 10;
+    }
+
+    const nameOrId = `${input.getAttribute('name') || ''} ${input.getAttribute('id') || ''}`.toLowerCase();
+    if (/otp|totp|2fa|two.?factor|verification.?code|auth.?code|security.?code/.test(nameOrId)) {
+      score += 6;
+    }
+
+    const inputMode = (input.getAttribute('inputmode') || '').toLowerCase();
+    const maxLength = parseInt(input.getAttribute('maxlength') || '', 10);
+    if (inputMode === 'numeric' && [6, 7, 8].includes(maxLength)) {
+      score += 4;
+    }
+
+    if (type === 'tel' || type === 'text') {
+      score += 1;
+    }
+
+    return score;
+  }
+
+  function findOtpField(root) {
+    const scope = root || document;
+    const candidates = Array.from(scope.querySelectorAll('input, textarea'));
+    let best = null;
+    let bestScore = 0;
+    for (const candidate of candidates) {
+      if (candidate.offsetParent === null) continue;
+      const score = scoreOtpLikeness(candidate);
+      if (score > bestScore) {
+        bestScore = score;
+        best = candidate;
+      }
+    }
+    return bestScore >= 4 ? best : null;
+  }
+
   function findLoginForm() {
     const passwordInput = document.querySelector('input[type="password"]');
     if (!passwordInput) return null;
@@ -124,11 +173,20 @@
           return;
         }
         const loginForm = findLoginForm();
-        if (!loginForm) return;
-        if (loginForm.usernameInput && message.username) {
-          setNativeValue(loginForm.usernameInput, message.username);
+        if (loginForm) {
+          if (loginForm.usernameInput && message.username) {
+            setNativeValue(loginForm.usernameInput, message.username);
+          }
+          if (loginForm.passwordInput && message.password) {
+            setNativeValue(loginForm.passwordInput, message.password);
+          }
         }
-        setNativeValue(loginForm.passwordInput, message.password);
+        if (message.totp) {
+          const otpField = findOtpField();
+          if (otpField) {
+            setNativeValue(otpField, message.totp);
+          }
+        }
       }
     });
 
@@ -143,6 +201,6 @@
   }
 
   if (typeof module !== 'undefined') {
-    module.exports = { scoreUsernameLikeness, findBestUsernameInput, hostnameMatches };
+    module.exports = { scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField };
   }
 })();
