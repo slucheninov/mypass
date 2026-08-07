@@ -129,7 +129,7 @@ function stripCredentialSecrets(response) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const knownTypes = ["getCredentials", "fillCredential", "proposeSaveLogin", "startPairing", "completePairing"];
+  const knownTypes = ["getCredentials", "fillCredential", "proposeSaveLogin", "startPairing", "completePairing", "requestUnlock"];
   if (!message || !knownTypes.includes(message.type)) {
     return false;
   }

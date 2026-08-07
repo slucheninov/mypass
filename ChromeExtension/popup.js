@@ -15,6 +15,9 @@ const LOCKED_HELPER_TEXT = 'Open MyPass and unlock the vault';
 const EMPTY_LIST_TITLE_TEXT = 'No saved logins for this site';
 const LIST_HEADER_TEXT = 'Select an entry to autofill:';
 const PAIRING_PANEL_TITLE_TEXT = 'Connect browser extension';
+const UNLOCK_BUTTON_LABEL = 'Unlock MyPass';
+// Must match PAIRING_STORAGE_KEY in background.js — asserted by unlockButton.test.js.
+const POPUP_PAIRING_STORAGE_KEY = 'pairingSecret';
 
 function classifyGetCredentialsResponse(response) {
   if (!response || response.type === 'error') return 'error';
@@ -22,6 +25,17 @@ function classifyGetCredentialsResponse(response) {
   if (response.type === 'pairingRequired') return 'pairingRequired';
   if (response.type === 'credentialList') return 'credentialList';
   return 'unknown';
+}
+
+function shouldShowUnlockButton(pairingSecret) {
+  return typeof pairingSecret === 'string' && pairingSecret.length > 0;
+}
+
+function classifyRequestUnlockResponse(response) {
+  if (!response) return 'unavailable';
+  if (response.type === 'unlockPresented') return 'presented';
+  if (response.type === 'unlockNotNeeded') return 'notNeeded';
+  return 'unavailable';
 }
 
 function isPairingChallengeFresh(startedAt, now) {
@@ -95,6 +109,7 @@ if (typeof document !== 'undefined') {
   const lockedTitleEl = document.getElementById('locked-title');
   const lockedHelperEl = document.getElementById('locked-helper');
   const lockedRetryBtn = document.getElementById('locked-retry-btn');
+  const lockedUnlockBtn = document.getElementById('locked-unlock-btn');
 
   const appUnavailablePanel = document.getElementById('app-unavailable-panel');
   const appUnavailableStatusEl = document.getElementById('app-unavailable-status');
@@ -327,6 +342,11 @@ if (typeof document !== 'undefined') {
     if (kind === 'locked') {
       showPanel('locked');
       lockedRetryBtn.onclick = () => queryCredentials(url);
+      lockedUnlockBtn.textContent = UNLOCK_BUTTON_LABEL;
+      lockedUnlockBtn.onclick = () => requestUnlock(url);
+      chrome.storage.local.get(POPUP_PAIRING_STORAGE_KEY, (stored) => {
+        lockedUnlockBtn.hidden = !shouldShowUnlockButton(stored[POPUP_PAIRING_STORAGE_KEY]);
+      });
       return;
     }
     if (kind === 'pairingRequired') {
@@ -348,6 +368,15 @@ if (typeof document !== 'undefined') {
       showPanel('credential-list');
       renderCredentials(response.credentials, url);
     }
+  }
+
+  function requestUnlock(url) {
+    chrome.runtime.sendMessage({ type: 'requestUnlock' }, (response) => {
+      // 'presented' needs no handling: MyPass is taking focus, which closes this popup.
+      if (classifyRequestUnlockResponse(response) === 'notNeeded') {
+        queryCredentials(url);
+      }
+    });
   }
 
   function queryCredentials(url) {
@@ -383,6 +412,10 @@ if (typeof module !== 'undefined') {
     LOCKED_HELPER_TEXT,
     EMPTY_LIST_TITLE_TEXT,
     LIST_HEADER_TEXT,
-    PAIRING_PANEL_TITLE_TEXT
+    PAIRING_PANEL_TITLE_TEXT,
+    shouldShowUnlockButton,
+    classifyRequestUnlockResponse,
+    UNLOCK_BUTTON_LABEL,
+    POPUP_PAIRING_STORAGE_KEY
   };
 }
