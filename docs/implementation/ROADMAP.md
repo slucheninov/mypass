@@ -10,12 +10,13 @@ Last updated: 2026-08-07
 
 ## Scope
 
-Four written plans are pending implementation, plus one workstream (U) whose design
-and plan are written as its own first two items:
+Three written plans are pending implementation, plus one workstream (U) whose design
+and plan are written as its own first two items. A fourth (V) turned out to be already
+shipped — see the correction in Decisions:
 
 | ID | Plan | Tasks | Lines | Risk |
 |----|------|-------|-------|------|
-| **V** | [`2026-07-31-vault-location-move-sync-open`](../superpowers/plans/2026-07-31-vault-location-move-sync-open.md) | 9 | 1495 | Data safety (deletes source file after move) |
+| ~~**V**~~ | [`2026-07-31-vault-location-move-sync-open`](../superpowers/plans/2026-07-31-vault-location-move-sync-open.md) | 9 | 1495 | **Already shipped — see Stage 1** |
 | **A** | [`2026-08-01-chrome-extension-totp-autofill`](../superpowers/plans/2026-08-01-chrome-extension-totp-autofill.md) | 7 | 1303 | Low |
 | **B** | [`2026-08-01-chrome-extension-totp-setup`](../superpowers/plans/2026-08-01-chrome-extension-totp-setup.md) | 11 | 1780 | Medium (vendored `jsQR`, new navigation branch) |
 | **C** | [`2026-08-01-chrome-extension-passkeys`](../superpowers/plans/2026-08-01-chrome-extension-passkeys.md) | 11 | 2314 | High (hand-rolled CBOR/COSE, `webAuthenticationProxy` availability) |
@@ -32,7 +33,7 @@ Two tracks run in parallel because they are near-orthogonal — the vault plan t
 `MyPass/MyPassApp.swift`, in different regions.
 
 ```
-Track 1 (Swift/storage):   Stage 1 — V
+Track 1 (Swift/storage):   Stage 1 — V  (already shipped)
 Track 2 (Chrome):          Stage 0 — spike + plan C fixes
                            Stage 2 — C core (isolated new files)
                            Stage 3 — U (unlock from popup)
@@ -173,28 +174,35 @@ S3 is committed alongside this file as `s3-webauthn-capture-2026-08-07.json`.
 
 ---
 
-## Stage 1 — Vault location move, sync, and open existing (Track 1, parallel)
+## Stage 1 — Vault location move, sync, and open existing — COMPLETE
 
-Plan reviewed, no corrections needed. The move-delete gate is sound: destination bytes
-are opened with the master password via `KdbxDatabase.open` before the source is removed.
+**This stage was already implemented and merged before this roadmap was written.** It was
+listed as pending by mistake; see the correction in Decisions. Every task maps to a commit
+on `master`, and `e77878c` ("fix 8 findings from whole-branch review") shows it also went
+through review. Kept here with its commit trail rather than deleted, so the roadmap stays
+a faithful record.
 
-- [ ] **V1** — `LocalFileVaultStore` + `VaultPrimaryStorage` protocol extension
+The move-delete gate is sound as reviewed: destination bytes are opened with the master
+password via `KdbxDatabase.open` before the source is removed.
+
+- [x] **V1** *(shipped: `8ce3c1b`, `f4c2f4e`)* — `LocalFileVaultStore` + `VaultPrimaryStorage` protocol extension
       (`primaryVaultFileURL`, `deleteVaultFileIfPresent`)
-- [ ] **V2** — Resolver + `localVaultFileBookmark` UserDefaults key
-- [ ] **V3** — Case-insensitive `MyPass` folder guard (`VaultICloudFolderSelection`)
-- [ ] **V4** — Migration move: verify destination opens → delete source → swap
-  - [ ] Delete-failure path still swaps and surfaces a warning
-  - [ ] Failure before verify leaves the source file untouched
-- [ ] **V5** — Settings resolved-path display + Move wording
-- [ ] **V6** — Skip-identical-bytes persist, dirty-flag timer gating
-- [ ] **V7** — Remote change LWW reload, no push (`readNewestAvailableBytes` in `iCloudBackend`)
-  - [ ] Wrong password / corrupt remote on reload must not wipe local state
-- [ ] **V8** — Open Existing `.kdbx` (password sheet, bookmark, session retarget)
-  - [ ] App Support file deleted only when leaving the default local mode
-- [ ] **V9** — Bookmark bookkeeping on local ↔ iCloud location change
+- [x] **V2** *(shipped: `57ffe9c`)* — Resolver + `localVaultFileBookmark` UserDefaults key
+- [x] **V3** *(shipped: `9afecee`)* — Case-insensitive `MyPass` folder guard (`VaultICloudFolderSelection`)
+- [x] **V4** *(shipped: `965e3f8`, `3637f50`)* — Migration move: verify destination opens → delete source → swap
+  - [x] Delete-failure path still swaps and surfaces a warning
+  - [x] Failure before verify leaves the source file untouched
+- [x] **V5** *(shipped: `a55c2ea`)* — Settings resolved-path display + Move wording
+- [x] **V6** *(shipped: `a233358`, `0bd5bb7`)* — Skip-identical-bytes persist, dirty-flag timer gating
+- [x] **V7** *(shipped: `a4fb908`)* — Remote change LWW reload, no push (`readNewestAvailableBytes` in `iCloudBackend`)
+  - [x] Wrong password / corrupt remote on reload must not wipe local state
+- [x] **V8** *(shipped: `526af53`, `e623a23`, `44cee8a`)* — Open Existing `.kdbx` (password sheet, bookmark, session retarget)
+  - [x] App Support file deleted only when leaving the default local mode
+- [x] **V9** *(shipped: `ec72b61`)* — Bookmark bookkeeping on local ↔ iCloud location change
 
-**⛳ Gate 1** — `./scripts/test.sh` green; manual check of move, Open Existing, and an
-iCloud round trip on a real vault copy (never the primary one).
+**⛳ Gate 1 — PASSED (2026-08-07).** `./scripts/test.sh` re-run on `master` when this
+correction was made: `** TEST SUCCEEDED **` for the MyPass scheme, 0 failures across
+MyPassKit / SyncKit / ExtensionBridgeKit, all three JS suites OK.
 
 ---
 
@@ -348,13 +356,13 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | Stage | Items | Done |
 |-------|-------|------|
 | 0 — Spike + plan C fixes | 8 | **8 — complete** |
-| 1 — Vault (V1–V9) | 9 | 0 |
+| 1 — Vault (V1–V9) | 9 | **9 — already shipped** |
 | 2 — Passkey core (C2–C3) | 2 | 0 |
 | 3 — Unlock from popup (U1–U9) | 9 | 0 |
 | 4 — Piece A (A1–A7) | 7 | 0 |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **8** |
+| **Total** | **55** | **17** |
 
 ## Decisions
 
@@ -369,7 +377,29 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-07 | S1 | `webAuthenticationProxy` is available to unpacked extensions — no enterprise policy required. Verified against Chromium `_permission_features.json` and `_api_features.json` (no `location: "policy"`, no allowlist, `channel: stable`, `mac` supported). Stage 6 unblocked. |
 | 2026-08-07 | S2 | `chrome.action.openPopup()` needs **no** user gesture (no such check in `ActionOpenPopupFunction::Run()`), but requires the Chrome window to be OS-level focused (`IsActive()`, else `kOpenPopupInactiveWindow`). Normal passkey flow satisfies this. Effective Chrome floor is **127** (policy-only on 118–126), so `minimum_chrome_version` in C7 must move from 115 to 127. |
 | 2026-08-07 | S3 | Real create + get payloads captured from live Chrome. Both plan-C parsers match. Four amendments recorded on the S3 item: payload-supplied origin replaces `chrome.tabs.query` (C3/C4/C8), negative `requestId` test (C1), Chrome's 180 s timeout vs our 120 s watchdog (C8), unpadded base64url (C3). |
+| 2026-08-07 | Stage 1 correction | The vault plan was listed as pending **in error** — it was already implemented and merged (V1-V9 all map to commits, plus whole-branch review fix `e77878c`). Cause: the check run while drafting this roadmap was `grep -rl LocalFileVaultStore --include=*.swift .`, which zsh rejected with "no matches found: --include=*.swift"; the command never ran and its shell error was misread as "no results". A re-check of A, B, C and U with a working command confirms those four are genuinely unimplemented. |
 | 2026-08-07 | S8 | Honour the RP's requested attestation conveyance: `"none"` (the WebAuthn default, and what Chrome actually sends) now emits `fmt: "none"` with an empty `attStmt`; packed self-attestation is kept for `direct`/`indirect`/`enterprise`. Canonical CTAP2 key ordering preserved in both branches. |
+
+## Known trap when running the suite
+
+`Packages/SyncKit/Tests/SyncKitTests/CitadelDependencySmokeTests.swift` reads a hand-made
+ed25519 key from `/tmp/citadel_smoke_key`. macOS clears `/tmp`, and unlike its neighbours
+(`MYPASS_SFTP_INTEGRATION_TESTS`, `MYPASS_ICLOUD_INTEGRATION_TESTS`) this suite has **no
+env gate**, so it fails hard once the file is gone. Because `scripts/test.sh` runs under
+`set -e`, that failure aborts the script before `ExtensionBridgeKit` and the JS tests ever
+run — precisely the suites Stages 2-6 depend on.
+
+Regenerate the fixture with the command documented in the test's own header:
+
+```bash
+ssh-keygen -t ed25519 -N "correct-horse-battery-staple" -f /tmp/citadel_smoke_key -C "smoketest@mypass"
+```
+
+Worth fixing properly at some point — either gate it like its neighbours, or generate the
+key into the test's own temp directory in `setUp`. Not part of any current plan.
+
+Also: never judge a run by `./scripts/test.sh | tail`. The pipeline reports `tail`'s exit
+code, not the script's, which is how a 4-failure run first read as a pass here.
 
 ## Verification commands
 
