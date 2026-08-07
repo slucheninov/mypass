@@ -94,5 +94,11 @@ assert.strictEqual(detectBrowserName(), 'Chromium browser');
   assert.strictEqual(sentNativeMessages[0].pairing, undefined);
   assert.strictEqual(storage[PAIRING_STORAGE_KEY], 'newSecret');
 
+  {
+    const { knownTypes } = require('../background.js');
+    assert.ok(knownTypes.includes('getTotp'), 'getTotp must be a known routed message type');
+    console.log('pairing.test.js: getTotp knownTypes OK');
+  }
+
   console.log('pairing.test.js OK');
 })();

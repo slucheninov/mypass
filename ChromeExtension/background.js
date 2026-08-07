@@ -1,5 +1,6 @@
 const NATIVE_HOST_NAME = "com.mypass.chromehost";
 const PAIRING_STORAGE_KEY = "pairingSecret";
+const knownTypes = ["getCredentials", "fillCredential", "getTotp", "proposeSaveLogin", "startPairing", "completePairing", "requestUnlock"];
 
 function detectBrowserName() {
   const brands = (navigator.userAgentData && navigator.userAgentData.brands) || [];
@@ -129,7 +130,6 @@ function stripCredentialSecrets(response) {
 }
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  const knownTypes = ["getCredentials", "fillCredential", "proposeSaveLogin", "startPairing", "completePairing", "requestUnlock"];
   if (!message || !knownTypes.includes(message.type)) {
     return false;
   }
@@ -163,6 +163,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 if (typeof module !== "undefined") {
   module.exports = {
     PAIRING_STORAGE_KEY,
+    knownTypes,
     attachPairingField,
     persistPairingResponse,
     clearStaleSecretOnPairingRequired,
