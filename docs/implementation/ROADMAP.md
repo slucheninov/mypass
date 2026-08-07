@@ -331,16 +331,18 @@ mechanically: `grep` finds no `password` reference and no password input anywher
 First plan to touch the shared Chrome/bridge files. Establishes `hasTotp`, which B and C
 both build on.
 
-- [ ] **A1** — `ExtensionBridgeKit`: `.getTotp` request, `.totp` response, `hasTotp` on summary
-- [ ] **A2** — `ExtensionBridgeService`: populate `hasTotp`, live TOTP on fill, `getTotp` handler
-  - [ ] Verify the Base32 secret appears in no outbound message (plan's first global constraint)
-- [ ] **A3** — `content.js`: `scoreOtpLikeness` / `findOtpField`, OTP-aware `applyFill`
-- [ ] **A4** — `background.js`: `getTotp` in the known-types allowlist
-- [ ] **A5** — `popup.js` / `popup.html`: privacy circle, reveal/copy states
-- [ ] **A6** — Manual e2e fixtures + `RUN.md` checklist (Ukrainian)
-- [ ] **A7** — Full verification run; `totpCircle.test.js` wired into `scripts/test.sh`
+- [x] **A1** — `ExtensionBridgeKit`: `.getTotp` request, `.totp` response, `hasTotp` on summary
+- [x] **A2** — `ExtensionBridgeService`: populate `hasTotp`, live TOTP on fill, `getTotp` handler
+  - [x] Verify the Base32 secret appears in no outbound message (plan's first global constraint)
+- [x] **A3** — `content.js`: `scoreOtpLikeness` / `findOtpField`, OTP-aware `applyFill`
+- [x] **A4** — `background.js`: `getTotp` in the known-types allowlist
+- [x] **A5** — `popup.js` / `popup.html`: privacy circle, reveal/copy states
+- [x] **A6** — Manual e2e fixtures + `RUN.md` checklist (Ukrainian)
+- [x] **A7** — Full verification run; `totpCircle.test.js` wired into `scripts/test.sh`
 
 **⛳ Gate 4** — `./scripts/test.sh` green; manual e2e from `RUN.md` passes.
+
+Automated half of Gate 4 is green as of 2026-08-07: full `./scripts/test.sh` run (MyPass 378 tests, MyPassKit, SyncKit 86, ExtensionBridgeKit 45, all seven JS suites including the new `totpCircle.test.js`). The manual e2e walk of the new RUN.md bullets is still pending — the seven new checklist items under «Короткий чеклист» are unchecked until a human walks them.
 
 ---
 
@@ -409,10 +411,10 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 1 — Vault (V1–V9) | 9 | **9 — already shipped** |
 | 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
 | 3 — Unlock from popup (U1–U9) | 9 | **9 — complete** |
-| 4 — Piece A (A1–A7) | 7 | 0 |
+| 4 — Piece A (A1–A7) | 7 | **7 — code complete, Gate 4 manual walk pending** |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **28** |
+| **Total** | **55** | **35** |
 
 ## Decisions
 
@@ -429,6 +431,8 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-07 | S3 | Real create + get payloads captured from live Chrome. Both plan-C parsers match. Four amendments recorded on the S3 item: payload-supplied origin replaces `chrome.tabs.query` (C3/C4/C8), negative `requestId` test (C1), Chrome's 180 s timeout vs our 120 s watchdog (C8), unpadded base64url (C3). |
 | 2026-08-07 | Stage 1 correction | The vault plan was listed as pending **in error** — it was already implemented and merged (V1-V9 all map to commits, plus whole-branch review fix `e77878c`). Cause: the check run while drafting this roadmap was `grep -rl LocalFileVaultStore --include=*.swift .`, which zsh rejected with "no matches found: --include=*.swift"; the command never ran and its shell error was misread as "no results". A re-check of A, B, C and U with a working command confirms those four are genuinely unimplemented. |
 | 2026-08-07 | S8 | Honour the RP's requested attestation conveyance: `"none"` (the WebAuthn default, and what Chrome actually sends) now emits `fmt: "none"` with an empty `attStmt`; packed self-attestation is kept for `direct`/`indirect`/`enterprise`. Canonical CTAP2 key ordering preserved in both branches. |
+| 2026-08-07 | A scoring semantics | Plan A's illustrative scoring code contradicts its own test values (additive scoring gives 11 where tests demand 10; findOtpField would return a score-1 field where tests demand null). Ruling: the test assertions govern. autocomplete=one-time-code is a decisive signal (early-return 10, not stacked) and findOtpField requires MIN_OTP_FIELD_SCORE = 4. Both documented in content.js comments plus boundary tests. |
+| 2026-08-07 | A copied-flash dismissal | Plan A's popup snippet contradicts its own Global Constraints (copied flash must dismiss on second left-click / outside click; outside-click hide must survive sibling circles' stopPropagation). Ruling: constraints prose governs. Fixed via an active revealed-or-copied flag, capture-phase document listener with isConnected self-cleanup (commit d78a6d3). |
 
 ## Known trap when running the suite
 
