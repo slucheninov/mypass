@@ -259,8 +259,14 @@ credentials. Commit `95ea2a9` removed window activation on pairing-code generati
 exactly this reason — so the popup must fire-and-forget here, with no "waiting for
 unlock" state that the user will never see.
 
-- [ ] **U1** — Design doc in `docs/superpowers/specs/` (use `superpowers:brainstorming`
+- [x] **U1** — Design doc in `docs/superpowers/specs/` (use `superpowers:brainstorming`
       first). Must record the reversal above and supersede the redesign plan's constraint.
+      *(shipped: `2a42ddc` — `2026-08-07-chrome-extension-unlock-from-popup-design.md`)*
+  - [x] Decided during brainstorming: force a fresh Touch ID prompt on request (the
+        `.onAppear` auto-prompt does not re-fire on refocus); pairing required, accepting
+        the unpaired+locked chicken-and-egg; no settings toggle.
+  - [x] Found while writing: no app-side unlock UI is needed — `ContentView.swift:11`
+        already shows `UnlockView` when locked, so `U5` reduces to raising the window.
 - [ ] **U2** — Implementation plan in `docs/superpowers/plans/`
 - [ ] **U3** — `ExtensionBridgeKit`: `requestUnlock` request + `unlockPresented` response
 - [ ] **U4** — `ExtensionBridgeService`: `requestUnlock` handler
@@ -369,11 +375,11 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 0 — Spike + plan C fixes | 8 | **8 — complete** |
 | 1 — Vault (V1–V9) | 9 | **9 — already shipped** |
 | 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
-| 3 — Unlock from popup (U1–U9) | 9 | 0 |
+| 3 — Unlock from popup (U1–U9) | 9 | 1 |
 | 4 — Piece A (A1–A7) | 7 | 0 |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **19** |
+| **Total** | **55** | **20** |
 
 ## Decisions
 
