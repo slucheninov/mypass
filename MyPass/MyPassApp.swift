@@ -185,6 +185,13 @@ struct MyPassApp: App {
         pairingManager.onCodeGenerated = { [weak navigationState] code in
             DispatchQueue.main.async {
                 navigationState?.pendingPairingCode = code
+                // The code is an OUT-OF-BAND confirmation: the user must read it from the
+                // app to prove they control an unlocked vault. It must never be sent to
+                // the extension, so the window has to come forward or the code is
+                // unreadable. Activation was removed in 95ea2a9 because it closed the
+                // popup — harmless now, since the popup reopens straight onto the code
+                // field while the challenge is fresh (`isPairingChallengeFresh`).
+                MainWindowActivator.request()
             }
         }
         pairingManager.onPairingFinished = { [weak navigationState] in

@@ -25,6 +25,7 @@ done all of that, so the panel's one action is the one action that cannot help y
 - **A password field in the popup.** See "Trust model" — this is the whole point of the design.
 - **Unlocking without a pairing secret.** See "Pairing is the gate".
 - **A settings toggle.** Pairing already expresses consent; see "Rejected alternatives".
+- **Showing the pairing code in the popup.** See "Pairing-code visibility".
 - **Handling "MyPass is not running".** That is already a separate popup state
   (`app-unavailable`) with its own Retry / Open MyPass affordances. The locked panel is
   reachable only when the app answered `.locked`, which means it is running.
@@ -73,12 +74,34 @@ alternative reintroduces the prompt-spam vector for the one case that needs it l
    renders an **Unlock MyPass** button beside Retry.
 2. Click sends `requestUnlock` over the existing native-messaging bridge.
 3. The app validates pairing, raises its window, and re-triggers the Touch ID prompt.
-4. Raising MyPass takes focus, which **closes the Chrome popup**. This is expected and is
-   why the popup has no "waiting for unlock" state — the user would never see it.
-5. The user unlocks in the app, returns to Chrome, reopens the popup, and sees credentials.
+4. The popup shows "Waiting for you to unlock MyPass…" and polls `getCredentials` every
+   800 ms, for up to 60 s.
+5. The user unlocks in the app. The next poll sees the vault open and the popup renders
+   the credential list on its own.
 
-Commit `95ea2a9` removed window activation on pairing-code generation precisely because it
-closed the popup. Here the focus change is the intended outcome, not a side effect.
+**Corrected 2026-08-07 after manual testing.** This design originally asserted that
+raising MyPass takes focus, closes the Chrome popup, and therefore no waiting state was
+needed. That is wrong: in practice the popup stays open on a stale locked panel whose only
+action is Retry, which the user must press by hand. Polling replaces the assumption. If
+the popup *does* close in some situation, nothing is lost — reopening re-queries anyway,
+and the poll dies with the popup.
+
+Polling stops on any non-locked outcome, including errors, so a vault that is never
+unlocked or an app that quits does not spin for the whole budget.
+
+### Pairing-code visibility
+
+Commit `95ea2a9` removed window activation on pairing-code generation because it closed the
+popup. Manual testing showed the cure was worse: the code lands in a window hidden behind
+Chrome, so a browser cannot be re-paired at all.
+
+Activation is restored. The pairing code is an **out-of-band** confirmation — it proves the
+user controls an unlocked vault, which is the only reason the extension cannot pair itself.
+Sending it to the popup would close that loop inside the browser and void the pairing gate
+that `requestUnlock` itself depends on, so it must stay in the app.
+
+Closing the popup costs nothing here: `popup.js` already reopens straight onto the code
+field while the challenge is fresh (`isPairingChallengeFresh`).
 
 ### Wire protocol
 

@@ -13,15 +13,21 @@ extension Notification.Name {
 enum MainWindowActivator {
     static func request() {
         NSApp.activate(ignoringOtherApps: true)
-        frontExistingMainWindowIfPresent()
+        // `main` is a WindowGroup, so `openWindow(id:)` creates an ADDITIONAL window on
+        // every call rather than reusing one. Posting unconditionally therefore stacked
+        // up a new window per activation. Only ask for a window when there is none to
+        // front.
+        guard !frontExistingMainWindowIfPresent() else { return }
         NotificationCenter.default.post(name: .requestMainWindow, object: nil)
     }
 
-    private static func frontExistingMainWindowIfPresent() {
+    /// Returns `true` when an existing main window was found and brought forward.
+    private static func frontExistingMainWindowIfPresent() -> Bool {
         for window in NSApp.windows where isMainAppWindow(window) {
             window.makeKeyAndOrderFront(nil)
-            return
+            return true
         }
+        return false
     }
 
     private static func isMainAppWindow(_ window: NSWindow) -> Bool {

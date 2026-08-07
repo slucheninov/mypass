@@ -18,6 +18,12 @@ const PAIRING_PANEL_TITLE_TEXT = 'Connect browser extension';
 const UNLOCK_BUTTON_LABEL = 'Unlock MyPass';
 // Must match PAIRING_STORAGE_KEY in background.js — asserted by unlockButton.test.js.
 const POPUP_PAIRING_STORAGE_KEY = 'pairingSecret';
+// The popup was expected to close when MyPass takes focus, so no waiting state was
+// planned. It does not reliably close, so it polls the vault instead of stranding the
+// user on a stale locked panel with only Retry.
+const UNLOCK_POLL_INTERVAL_MS = 800;
+const UNLOCK_POLL_MAX_ATTEMPTS = 75; // 800 ms x 75 = 60 s of real unlocking time
+const WAITING_FOR_UNLOCK_TEXT = 'Waiting for you to unlock MyPass\u2026';
 
 function classifyGetCredentialsResponse(response) {
   if (!response || response.type === 'error') return 'error';
@@ -36,6 +42,13 @@ function classifyRequestUnlockResponse(response) {
   if (response.type === 'unlockPresented') return 'presented';
   if (response.type === 'unlockNotNeeded') return 'notNeeded';
   return 'unavailable';
+}
+
+function shouldContinueUnlockPolling(kind, attempt) {
+  // Any non-locked outcome is terminal: unlocked means we are done, and an error or a
+  // pairing prompt means polling cannot help.
+  if (kind !== 'locked') return false;
+  return attempt < UNLOCK_POLL_MAX_ATTEMPTS;
 }
 
 function isPairingChallengeFresh(startedAt, now) {
@@ -370,16 +383,50 @@ if (typeof document !== 'undefined') {
     }
   }
 
+  let unlockPollTimer = null;
+
+  function stopUnlockPolling() {
+    if (unlockPollTimer !== null) {
+      clearTimeout(unlockPollTimer);
+      unlockPollTimer = null;
+    }
+  }
+
+  function endUnlockWait(response, url) {
+    stopUnlockPolling();
+    lockedHelperEl.textContent = LOCKED_HELPER_TEXT;
+    lockedUnlockBtn.disabled = false;
+    handleCredentialsResponse(response, url);
+  }
+
+  function pollForUnlock(url, attempt) {
+    chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
+      if (!shouldContinueUnlockPolling(classifyGetCredentialsResponse(response), attempt)) {
+        endUnlockWait(response, url);
+        return;
+      }
+      unlockPollTimer = setTimeout(() => pollForUnlock(url, attempt + 1), UNLOCK_POLL_INTERVAL_MS);
+    });
+  }
+
   function requestUnlock(url) {
     chrome.runtime.sendMessage({ type: 'requestUnlock' }, (response) => {
-      // 'presented' needs no handling: MyPass is taking focus, which closes this popup.
-      if (classifyRequestUnlockResponse(response) === 'notNeeded') {
+      const kind = classifyRequestUnlockResponse(response);
+      if (kind === 'notNeeded') {
         queryCredentials(url);
+        return;
       }
+      if (kind !== 'presented') return;
+      // MyPass is now showing its unlock screen. Wait for it rather than leaving the
+      // user on a stale panel whose only action is Retry.
+      lockedHelperEl.textContent = WAITING_FOR_UNLOCK_TEXT;
+      lockedUnlockBtn.disabled = true;
+      pollForUnlock(url, 0);
     });
   }
 
   function queryCredentials(url) {
+    stopUnlockPolling();
     chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
       handleCredentialsResponse(response, url);
     });
@@ -416,6 +463,10 @@ if (typeof module !== 'undefined') {
     shouldShowUnlockButton,
     classifyRequestUnlockResponse,
     UNLOCK_BUTTON_LABEL,
-    POPUP_PAIRING_STORAGE_KEY
+    POPUP_PAIRING_STORAGE_KEY,
+    shouldContinueUnlockPolling,
+    UNLOCK_POLL_INTERVAL_MS,
+    UNLOCK_POLL_MAX_ATTEMPTS,
+    WAITING_FOR_UNLOCK_TEXT
   };
 }
