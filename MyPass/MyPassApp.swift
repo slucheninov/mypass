@@ -192,11 +192,19 @@ struct MyPassApp: App {
                 // popup — harmless now, since the popup reopens straight onto the code
                 // field while the challenge is fresh (`isPairingChallengeFresh`).
                 MainWindowActivator.request()
+                // Requested here, at app level, NOT from ContentView. ContentView is the
+                // content of the very WindowGroup this needs to affect: with the main
+                // window closed it does not exist, so its .onChange never ran and the
+                // level was never even requested. Opening the window afterwards does not
+                // help either — .onChange only fires for changes made after the view
+                // exists, and the code was set before that.
+                MainWindowActivator.setMainWindowFloating(true)
             }
         }
         pairingManager.onPairingFinished = { [weak navigationState] in
             DispatchQueue.main.async {
                 navigationState?.pendingPairingCode = nil
+                MainWindowActivator.setMainWindowFloating(false)
             }
         }
 

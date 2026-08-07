@@ -109,7 +109,15 @@ the code became unreadable exactly when it was needed. The main window is theref
 to `.floating` level while `pendingPairingCode` is non-nil and dropped back to `.normal` as
 soon as it clears, so the app never permanently sits above everything.
 
-Both the level reset and the pairing-code teardown are observed **outside** the
+**The window-level request and the window-opening action must both live at app level, not
+in a view.** `ContentView` and `OpenMainWindowOnDemand` are content of the very
+`WindowGroup` they act on, so with the main window closed neither exists: the float was
+never requested, and the notification that opens the window had no listener, so no window
+appeared at all. `MyPassApp.onCodeGenerated` now requests the level directly, and
+`MainWindowActivator` keeps the SwiftUI `OpenWindowAction` captured while a window exists
+so it still works after the last one closes.
+
+Both the level reset and the pairing-code teardown are additionally observed **outside** the
 locked/unlocked switch in `ContentView`. Attached inside the `.unlocked` branch they were
 destroyed when the vault locked, so the reset never ran and the window stayed `.floating`
 above every application until the app restarted. Locking now also cancels any live pairing

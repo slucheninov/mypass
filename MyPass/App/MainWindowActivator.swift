@@ -11,6 +11,16 @@ extension Notification.Name {
 }
 
 enum MainWindowActivator {
+    /// SwiftUI's window-opening action, captured while a window exists so it can still be
+    /// used after the last one closes. `OpenMainWindowOnDemand` lives inside the very
+    /// `WindowGroup` it opens, so with the window closed there is no view left to receive
+    /// the notification — the request simply vanished and no window ever appeared.
+    private static var openWindowAction: OpenWindowAction?
+
+    static func registerOpenWindowAction(_ action: OpenWindowAction) {
+        openWindowAction = action
+    }
+
     static func request() {
         NSApp.activate(ignoringOtherApps: true)
         // `main` is a WindowGroup, so `openWindow(id:)` creates an ADDITIONAL window on
@@ -18,14 +28,22 @@ enum MainWindowActivator {
         // up a new window per activation. Only ask for a window when there is none to
         // front.
         guard !frontExistingMainWindowIfPresent() else { return }
-        NotificationCenter.default.post(name: .requestMainWindow, object: nil)
+        // Call the captured action directly: the notification is only heard by a view
+        // inside the window, which is exactly what is missing here.
+        if let openWindowAction {
+            openWindowAction(id: "main")
+        } else {
+            NotificationCenter.default.post(name: .requestMainWindow, object: nil)
+        }
     }
 
     /// Whether the main window should currently sit above other applications. Held as
     /// state rather than applied once, because the window that needs it may not exist yet:
-    /// a pairing code can arrive while the main window is closed, and the window the
-    /// notification opens is created *after* the request to float it.
+    /// a pairing code can arrive while the main window is closed, and the window opened in
+    /// response is created *after* the request to float it.
     private static var desiredFloating = false
+    private static var floatingKeepAlive: Timer?
+    private static var floatingObserver: Any?
 
     /// Keeps the main window above other applications while a pairing code is on screen.
     /// The code is deliberately not sent to the extension, so the user has to read it here
@@ -35,14 +53,43 @@ enum MainWindowActivator {
     static func setMainWindowFloating(_ floating: Bool) {
         desiredFloating = floating
         applyDesiredFloating()
+
+        // Applying once is not enough when the main window is closed: the pairing code
+        // arrives, we float an empty window list, and the window the notification opens is
+        // created afterwards at `.normal`.
+        //
+        // Measured, not assumed: with the window already open, one apply is sufficient —
+        // instrumentation showed the level was never clobbered for the whole time a code
+        // was on screen. The keep-alive exists purely to catch a window that appears late.
+        // `OpenMainWindowOnDemand.onAppear` should already cover that, so this is a safety
+        // net rather than a proven necessity; it is kept because the failure it guards
+        // against (an unreadable pairing code) is user-visible, and it costs one timer for
+        // the few seconds a challenge lives. Both it and the observer are torn down the
+        // moment the code clears.
+        floatingKeepAlive?.invalidate()
+        floatingKeepAlive = nil
+        if let floatingObserver {
+            NotificationCenter.default.removeObserver(floatingObserver)
+            self.floatingObserver = nil
+        }
+        guard floating else { return }
+
+        floatingObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didBecomeKeyNotification, object: nil, queue: .main
+        ) { _ in applyDesiredFloating() }
+
+        let timer = Timer(timeInterval: 0.4, repeats: true) { _ in applyDesiredFloating() }
+        RunLoop.main.add(timer, forMode: .common)
+        floatingKeepAlive = timer
     }
 
     /// Re-asserts the desired level on whatever main windows exist right now. Called again
     /// from `OpenMainWindowOnDemand.onAppear` so a window created after `setMainWindowFloating`
     /// still picks the level up.
     static func applyDesiredFloating() {
-        for window in NSApp.windows where isMainAppWindow(window) {
-            window.level = desiredFloating ? .floating : .normal
+        let target: NSWindow.Level = desiredFloating ? .floating : .normal
+        for window in NSApp.windows where isMainAppWindow(window) && window.level != target {
+            window.level = target
         }
     }
 
@@ -82,6 +129,7 @@ struct OpenMainWindowOnDemand: View {
                 // This view is created with each main window, so it is the one place that
                 // reliably runs *after* a window exists. Without it, a window opened in
                 // response to a pairing code never receives the floating level.
+                MainWindowActivator.registerOpenWindowAction(openWindow)
                 MainWindowActivator.applyDesiredFloating()
             }
     }
