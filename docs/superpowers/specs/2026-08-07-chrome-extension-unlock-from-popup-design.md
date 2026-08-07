@@ -109,6 +109,13 @@ the code became unreadable exactly when it was needed. The main window is theref
 to `.floating` level while `pendingPairingCode` is non-nil and dropped back to `.normal` as
 soon as it clears, so the app never permanently sits above everything.
 
+Both the level reset and the pairing-code teardown are observed **outside** the
+locked/unlocked switch in `ContentView`. Attached inside the `.unlocked` branch they were
+destroyed when the vault locked, so the reset never ran and the window stayed `.floating`
+above every application until the app restarted. Locking now also cancels any live pairing
+challenge — pairing is gated on an unlocked vault, so a code that outlives the lock is both
+useless and misleading.
+
 ### Wire protocol
 
 New request:

@@ -5,7 +5,32 @@ struct ContentView: View {
     @EnvironmentObject var vaultSession: VaultSession
     @EnvironmentObject var navigationState: NavigationState
 
+    private var isVaultLocked: Bool { vaultSession.currentDatabase == nil }
+
     var body: some View {
+        // These two observers must sit OUTSIDE the switch. Anything attached inside the
+        // `.unlocked` branch is torn down when the vault locks, so a handler that resets
+        // state would simply never run — which previously left the window stuck at
+        // `.floating` above every other app until the app restarted.
+        vaultContent
+            .onChange(of: navigationState.pendingPairingCode) { _, code in
+                MainWindowActivator.setMainWindowFloating(code != nil)
+            }
+            .onChange(of: isVaultLocked) { _, locked in
+                guard locked else { return }
+                // A pairing challenge must not outlive the vault it authorises: pairing
+                // itself is gated on an unlocked vault, so a code left on screen after a
+                // lock is both useless and misleading.
+                if navigationState.pendingPairingCode != nil {
+                    AppDelegate.extensionPairingManager?.cancelPairing()
+                    navigationState.pendingPairingCode = nil
+                }
+                MainWindowActivator.setMainWindowFloating(false)
+            }
+    }
+
+    @ViewBuilder
+    private var vaultContent: some View {
         switch vaultSession.state {
         case .locked:
             UnlockView()
@@ -37,9 +62,6 @@ struct ContentView: View {
                 if newID != oldID {
                     navigationState.presentBrowse()
                 }
-            }
-            .onChange(of: navigationState.pendingPairingCode) { _, code in
-                MainWindowActivator.setMainWindowFloating(code != nil)
             }
             .sheet(isPresented: Binding(
                 get: { navigationState.pendingPairingCode != nil },
