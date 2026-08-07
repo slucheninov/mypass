@@ -112,6 +112,27 @@
       text-overflow: ellipsis;
       white-space: nowrap;
     }
+    .totp-circle {
+      flex-shrink: 0;
+      width: 32px;
+      height: 32px;
+      border-radius: 50%;
+      border: 1px solid rgba(127, 127, 127, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: ui-monospace, SFMono-Regular, monospace;
+      font-size: 11px;
+      cursor: pointer;
+      user-select: none;
+    }
+    .totp-circle.revealed {
+      border-color: rgba(80, 160, 255, 0.6);
+    }
+    .totp-circle.copied {
+      font-size: 9px;
+      border-color: rgba(60, 200, 120, 0.6);
+    }
     #pairing-panel .panel-title {
       margin-bottom: 12px;
     }

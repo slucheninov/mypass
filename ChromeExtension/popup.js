@@ -117,6 +117,105 @@ function clearPairingStartedAt(cb) {
   getPairingStorageArea().remove(PAIRING_STARTED_AT_KEY, cb);
 }
 
+const TOTP_AUTO_HIDE_MS = 5000;
+
+function shouldShowTotpCircle(hasTotp) {
+  return hasTotp === true;
+}
+
+function createTotpCircleController(circleEl, requestTotp) {
+  let hideTimer = null;
+  let revealed = false;
+
+  function clearHideTimer() {
+    if (hideTimer) {
+      clearTimeout(hideTimer);
+      hideTimer = null;
+    }
+  }
+
+  function showIdle() {
+    clearHideTimer();
+    revealed = false;
+    circleEl.textContent = '';
+    circleEl.classList.remove('revealed', 'copied');
+  }
+
+  function showDigits(code) {
+    revealed = true;
+    circleEl.textContent = code;
+    circleEl.classList.add('revealed');
+    circleEl.classList.remove('copied');
+    clearHideTimer();
+    hideTimer = setTimeout(showIdle, TOTP_AUTO_HIDE_MS);
+  }
+
+  function showCopiedFlash() {
+    circleEl.textContent = 'Copied';
+    circleEl.classList.add('copied');
+    circleEl.classList.remove('revealed');
+    clearHideTimer();
+    hideTimer = setTimeout(showIdle, TOTP_AUTO_HIDE_MS);
+  }
+
+  function handleLeftClick(event) {
+    event.stopPropagation();
+    if (revealed) {
+      showIdle();
+      return;
+    }
+    requestTotp().then((code) => {
+      if (code) showDigits(code);
+    }).catch(() => {});
+  }
+
+  function handleContextMenu(event) {
+    event.preventDefault();
+    event.stopPropagation();
+    requestTotp().then((code) => {
+      if (!code) return;
+      navigator.clipboard.writeText(code).then(showCopiedFlash).catch(() => {});
+    }).catch(() => {});
+  }
+
+  function handleMouseDown(event) {
+    event.stopPropagation();
+  }
+
+  function handleOutsideClick(event) {
+    if (revealed && !circleEl.contains(event.target)) {
+      showIdle();
+    }
+  }
+
+  circleEl.addEventListener('mousedown', handleMouseDown);
+  circleEl.addEventListener('click', handleLeftClick);
+  circleEl.addEventListener('contextmenu', handleContextMenu);
+  document.addEventListener('click', handleOutsideClick);
+
+  return { showIdle, showDigits, showCopiedFlash };
+}
+
+function buildTotpCircleElement(credential, url) {
+  const circle = document.createElement('div');
+  circle.className = 'totp-circle';
+  circle.setAttribute('role', 'button');
+  circle.setAttribute('aria-label', 'Reveal or copy verification code');
+
+  const requestTotp = () => new Promise((resolve, reject) => {
+    chrome.runtime.sendMessage({ type: 'getTotp', id: credential.id, url }, (response) => {
+      if (response && response.type === 'totp' && response.code) {
+        resolve(response.code);
+      } else {
+        reject(new Error('getTotp failed'));
+      }
+    });
+  });
+
+  createTotpCircleController(circle, requestTotp);
+  return circle;
+}
+
 if (typeof document !== 'undefined') {
   const lockedPanel = document.getElementById('locked-panel');
   const lockedTitleEl = document.getElementById('locked-title');
@@ -257,6 +356,11 @@ if (typeof document !== 'undefined') {
       }
 
       item.appendChild(textCol);
+
+      if (shouldShowTotpCircle(credential.hasTotp)) {
+        item.appendChild(buildTotpCircleElement(credential, url));
+      }
+
       item.addEventListener('click', () => {
         chrome.runtime.sendMessage(
           { type: 'fillCredential', id: credential.id, url },
@@ -467,6 +571,9 @@ if (typeof module !== 'undefined') {
     shouldContinueUnlockPolling,
     UNLOCK_POLL_INTERVAL_MS,
     UNLOCK_POLL_MAX_ATTEMPTS,
-    WAITING_FOR_UNLOCK_TEXT
+    WAITING_FOR_UNLOCK_TEXT,
+    shouldShowTotpCircle,
+    createTotpCircleController,
+    buildTotpCircleElement
   };
 }
