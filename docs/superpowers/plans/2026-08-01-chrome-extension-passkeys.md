@@ -57,7 +57,7 @@
 - Produces (requests): `.getPasskeyProxyStatus(token:pairing:)`, `.setPasskeyProxyEnabled(token:enabled:pairing:)`, `.passkeyCreate(token:requestId:requestDetailsJson:originUrl:pairing:)`, `.passkeyCreateConfirm(token:requestId:entryId:replace:pairing:)`, `.passkeyGet(token:requestId:requestDetailsJson:originUrl:pairing:)`, `.passkeyGetApprove(token:requestId:entryId:pairing:)`, `.passkeyCancel(token:requestId:pairing:)`.
 - Produces (responses): `.passkeyProxyStatus(unlocked:paired:attachAllowed:)`, `.passkeyProxyEnabled(enabled:)`, `.passkeyCreatePending(requestId:rpId:rpName:matches:)`, `.passkeyCreateComplete(requestId:responseJson:error:)`, `.passkeyGetPending(requestId:rpId:matches:)`, `.passkeyGetComplete(requestId:responseJson:error:)`, `.passkeyCancelled(requestId:)`.
 - Produces (types): `public struct PasskeyErrorDetails: Codable, Equatable { public let name: String; public let message: String }` — mirrors Chrome's `DOMExceptionDetails` shape exactly (`name`/`message`) so `background.js` can pass it straight through to `completeCreateRequest`/`completeGetRequest`'s `error` field with no remapping. `ExtensionCredentialSummary` gains `hasPasskey: Bool`.
-- `requestId` is `Int` throughout — Chrome's `chrome.webAuthenticationProxy` API defines it as a `number` (confirmed against `https://developer.chrome.com/docs/extensions/reference/api/webAuthenticationProxy`), so it must round-trip as a JSON number, not a string, end to end.
+- `requestId` is `Int` throughout — signed, and that matters: a live capture shows Chrome issuing **negative** ids (`-56026996`, `-913466539`), so an unsigned type would fail on roughly half of all ceremonies. Add a negative-value round-trip case alongside the `42` fixture. Chrome's `chrome.webAuthenticationProxy` API defines it as a `number` (confirmed against `https://developer.chrome.com/docs/extensions/reference/api/webAuthenticationProxy`), so it must round-trip as a JSON number, not a string, end to end.
 
 - [ ] **Step 1: Write failing tests**
 
@@ -837,6 +837,10 @@ struct PasskeyCreateContext {
     let userId: Data
     let userName: String
     let userDisplayName: String
+    /// The RP's requested attestation conveyance, verbatim. WebAuthn's default is
+    /// "none", and a live capture confirms Chrome forwards this field unchanged, so
+    /// the authenticator — us — is what must honour it.
+    let attestation: String
 }
 
 struct PasskeyGetContext {
@@ -926,9 +930,11 @@ enum PasskeyCeremony {
         let rpName = (rp["name"] as? String) ?? rpId
         let userName = (user["name"] as? String) ?? ""
         let userDisplayName = (user["displayName"] as? String) ?? userName
+        let attestation = (json["attestation"] as? String) ?? "none"
         return PasskeyCreateContext(
             rpId: rpId, rpName: rpName, challenge: challenge,
-            userId: userId, userName: userName, userDisplayName: userDisplayName
+            userId: userId, userName: userName, userDisplayName: userDisplayName,
+            attestation: attestation
         )
     }
 
@@ -982,7 +988,19 @@ enum PasskeyCeremony {
         return out
     }
 
-    private static func buildAttestationObject(authData: Data, signature: Data) -> Data {
+    /// Honours the RP's requested conveyance. When the RP asked for "none" — the WebAuthn
+    /// default, and what a live Chrome capture actually sends — we must emit the `none`
+    /// format with an empty statement. Returning self-attestation regardless would be
+    /// rejected by any RP that checks `fmt == "none"` for a `none` request. Key ordering
+    /// stays canonical CTAP2 in both branches: text keys sort by length, then bytewise.
+    private static func buildAttestationObject(authData: Data, signature: Data, attestation: String) -> Data {
+        if attestation == "none" {
+            var out = CBOR.encodeMapHeader(pairCount: 3)
+            out += CBOR.encodeTextString("fmt") + CBOR.encodeTextString("none")
+            out += CBOR.encodeTextString("attStmt") + CBOR.encodeMapHeader(pairCount: 0)
+            out += CBOR.encodeTextString("authData") + CBOR.encodeByteString(authData)
+            return out
+        }
         var out = CBOR.encodeMapHeader(pairCount: 3)
         out += CBOR.encodeTextString("fmt") + CBOR.encodeTextString("packed")
         var attStmt = CBOR.encodeMapHeader(pairCount: 2)
@@ -1016,7 +1034,7 @@ enum PasskeyCeremony {
         let clientDataHash = Data(SHA256.hash(data: clientDataJSON))
         let signature = try privateKey.signature(for: authData + clientDataHash).derRepresentation
 
-        let attestationObject = buildAttestationObject(authData: authData, signature: signature)
+        let attestationObject = buildAttestationObject(authData: authData, signature: signature, attestation: context.attestation)
 
         let response: [String: Any] = [
             "id": PasskeyBase64URL.encode(credentialIdBytes),
@@ -1697,15 +1715,23 @@ git commit -m "feat(app): show read-only Passkey section with Remove passkey con
   "permissions": ["nativeMessaging", "activeTab", "storage"],
 
 // With:
-  "permissions": ["nativeMessaging", "activeTab", "storage", "webAuthenticationProxy"],
-  "minimum_chrome_version": "115",
+  "permissions": ["nativeMessaging", "activeTab", "storage", "webAuthenticationProxy", "alarms"],
+  "minimum_chrome_version": "127",
 ```
+
+Two deliberate values here:
+
+- `"alarms"` is required because the ceremony watchdog runs on `chrome.alarms`, not
+  `setTimeout` — a `setTimeout` does not survive service-worker termination (Task 8).
+- `"127"`, not `"115"`. `webAuthenticationProxy` itself needs only 115, but
+  `chrome.action.openPopup()` is restricted to policy-installed extensions on Chrome
+  118–126, and the confirm popup is not optional in this design. 127 is the real floor.
 
 (If pieces A/B already added other permissions like `"clipboardRead"`, keep them — just make sure `"webAuthenticationProxy"` is present alongside whatever's already there.)
 
 - [ ] **Step 2: Update `background.manifest.test.js` if it locks down the permissions array**
 
-Open `ChromeExtension/tests/background.manifest.test.js` — if it asserts an exact permissions array or explicitly asserts `"webAuthenticationProxy"` is absent, update that assertion to expect it present. Also add an assertion that `manifest.minimum_chrome_version === "115"` if the file's style favors asserting every manifest field explicitly (match whatever level of strictness the existing assertions already use).
+Open `ChromeExtension/tests/background.manifest.test.js` — if it asserts an exact permissions array or explicitly asserts `"webAuthenticationProxy"` is absent, update that assertion to expect it present. Also add an assertion that `manifest.minimum_chrome_version === "127"` if the file's style favors asserting every manifest field explicitly (match whatever level of strictness the existing assertions already use).
 
 - [ ] **Step 3: Run and confirm pass**
 
@@ -1745,7 +1771,15 @@ global.chrome.storage = global.chrome.storage || { local: {}, session: {} };
 global.chrome.storage.local.get = (keys, cb) => cb({ passkeyProxyEnabled: true });
 global.chrome.storage.local.set = (obj, cb) => { if (cb) cb(); };
 global.chrome.storage.session = global.chrome.storage.session || {};
-global.chrome.storage.session.set = (obj, cb) => { if (cb) cb(); };
+let sessionStore = {};
+global.chrome.storage.session.set = (obj, cb) => { Object.assign(sessionStore, obj); if (cb) cb(); };
+global.chrome.storage.session.get = (keys, cb) => { cb(sessionStore); };
+global.chrome.storage.session.remove = (keys, cb) => {
+  (Array.isArray(keys) ? keys : [keys]).forEach((k) => delete sessionStore[k]);
+  if (cb) cb();
+};
+// chrome.alarms replaces setTimeout for the watchdog, so it must be stubbed too.
+global.chrome.alarms = { create: () => {}, clear: () => {}, onAlarm: { addListener: () => {} } };
 global.chrome.runtime = global.chrome.runtime || {};
 global.chrome.runtime.sendNativeMessage = (msg, cb) => { cb({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true }); };
 global.chrome.runtime.onMessage = { addListener: () => {} };
@@ -1820,16 +1854,63 @@ Add near the top of the file, alongside other module-level state (must be at the
 
 ```js
 const PASSKEY_WATCHDOG_MS = 120000;
-const pendingPasskeyCeremonies = new Map(); // requestId -> { kind, timer, originUrl, rpId, matches }
+const PASSKEY_WATCHDOG_ALARM = 'passkeyCeremonyWatchdog';
+const PENDING_KEY = 'pendingPasskeyCeremony';
+
+// MV3 terminates the service worker after ~30 s idle, while the user may take up to
+// 120 s to confirm. Nothing about a pending ceremony may therefore live only in a
+// module-scope Map or a setTimeout — both evaporate on termination, taking the
+// "one ceremony at a time" guard and the watchdog with them. chrome.storage.session
+// is the source of truth and chrome.alarms is the timer, because both survive a
+// service-worker restart. (Completion itself is safe either way: the proxy API is
+// keyed on requestId, not on a callback we hold.)
+//
+// Note: Chrome rewrites the page's requested timeout to 180 s, so this 120 s
+// watchdog deliberately fires first and we control the failure mode.
+
+function readPending() {
+  return new Promise((resolve) => {
+    chrome.storage.session.get([PENDING_KEY], (stored) => resolve(stored[PENDING_KEY] || null));
+  });
+}
+
+function writePending(record) {
+  return new Promise((resolve) => chrome.storage.session.set({ [PENDING_KEY]: record }, resolve));
+}
+
+function clearPending() {
+  return new Promise((resolve) => chrome.storage.session.remove([PENDING_KEY], resolve));
+}
 
 function passkeyNotAllowedError(message) {
   return { name: 'NotAllowedError', message };
 }
 
+// The proxy event carries only { requestId, requestDetailsJson } — no tab, no origin.
+// Chrome puts the true origin inside the payload as a WebAuthn extension. Read it from
+// there rather than guessing the initiating tab with chrome.tabs.query: a ceremony can
+// start in a background tab, and originUrl feeds the app's domain-match gate.
+function originFromRequestDetails(requestDetailsJson) {
+  try {
+    const details = JSON.parse(requestDetailsJson);
+    const override = details && details.extensions && details.extensions.remoteDesktopClientOverride;
+    return (override && override.origin) || null;
+  } catch (error) {
+    return null;
+  }
+}
+
 async function attachPasskeyProxyIfEligible() {
-  const stored = await new Promise((resolve) => chrome.storage.local.get(['passkeyProxyEnabled'], resolve));
+  const stored = await chrome.storage.local.get(['passkeyProxyEnabled']);
   if (!stored.passkeyProxyEnabled) return;
-  const status = await new Promise((resolve) => sendNativeMessageWithPairing({ type: 'getPasskeyProxyStatus' }).then(resolve));
+  let status;
+  try {
+    status = await sendNativeMessageWithPairing({ type: 'getPasskeyProxyStatus' });
+  } catch (error) {
+    // MyPass not running / host unavailable. Must not leave this promise unsettled.
+    console.warn('MyPass: passkey proxy status check failed', error);
+    return;
+  }
   if (status && status.type === 'passkeyProxyStatus' && status.attachAllowed) {
     try {
       await chrome.webAuthenticationProxy.attach();
@@ -1840,6 +1921,9 @@ async function attachPasskeyProxyIfEligible() {
 }
 
 function openPasskeyPopup() {
+  // No user gesture is required, but chrome.action.openPopup() rejects unless a Chrome
+  // window is OS-level focused. In the normal flow the user is on the page that started
+  // the ceremony, so this succeeds; the notification is the backgrounded-Chrome fallback.
   if (chrome.action && typeof chrome.action.openPopup === 'function') {
     chrome.action.openPopup().catch(() => {
       chrome.notifications.create({
@@ -1849,11 +1933,13 @@ function openPasskeyPopup() {
   }
 }
 
-function completePasskeyRequest(kind, details) {
-  const pending = pendingPasskeyCeremonies.get(details.requestId);
-  if (pending) {
-    clearTimeout(pending.timer);
-    pendingPasskeyCeremonies.delete(details.requestId);
+// Clears the pending record only when it belongs to this requestId, so rejecting a
+// second concurrent ceremony cannot cancel the first one's bookkeeping.
+async function completePasskeyRequest(kind, details) {
+  const pending = await readPending();
+  if (pending && pending.requestId === details.requestId) {
+    await clearPending();
+    chrome.alarms.clear(PASSKEY_WATCHDOG_ALARM);
   }
   if (kind === 'create') {
     chrome.webAuthenticationProxy.completeCreateRequest(details);
@@ -1862,64 +1948,106 @@ function completePasskeyRequest(kind, details) {
   }
 }
 
-function handlePasskeyRequest(kind, requestId, requestDetailsJson, originUrl) {
-  if (pendingPasskeyCeremonies.size > 0) {
-    completePasskeyRequest(kind, { requestId, error: { name: 'AbortError', message: 'Another passkey ceremony is already pending' } });
+async function handlePasskeyRequest(kind, requestId, requestDetailsJson) {
+  if (await readPending()) {
+    await completePasskeyRequest(kind, {
+      requestId,
+      error: { name: 'AbortError', message: 'Another passkey ceremony is already pending' },
+    });
     return;
   }
+
+  const originUrl = originFromRequestDetails(requestDetailsJson);
+  if (!originUrl) {
+    // Fail closed: without a trustworthy origin the app cannot run its domain check.
+    await completePasskeyRequest(kind, {
+      requestId,
+      error: passkeyNotAllowedError('Could not determine the ceremony origin'),
+    });
+    return;
+  }
+
   const messageType = kind === 'create' ? 'passkeyCreate' : 'passkeyGet';
-  sendNativeMessageWithPairing({ type: messageType, requestId, requestDetailsJson, originUrl }).then((response) => {
-    if (response && response.error) {
-      completePasskeyRequest(kind, { requestId, error: response.error });
-      return;
-    }
-    if (response && (response.type === 'passkeyCreatePending' || response.type === 'passkeyGetPending')) {
-      const timer = setTimeout(() => {
-        completePasskeyRequest(kind, { requestId, error: passkeyNotAllowedError('Timed out waiting for confirmation') });
-      }, PASSKEY_WATCHDOG_MS);
-      pendingPasskeyCeremonies.set(requestId, { kind, timer, originUrl, rpId: response.rpId, matches: response.matches });
-      chrome.storage.session.set({
-        pendingPasskeyCeremony: { kind, requestId, rpId: response.rpId, matches: response.matches, originUrl },
-      });
-      openPasskeyPopup();
-    }
-  });
+  let response;
+  try {
+    response = await sendNativeMessageWithPairing({ type: messageType, requestId, requestDetailsJson, originUrl });
+  } catch (error) {
+    await completePasskeyRequest(kind, { requestId, error: passkeyNotAllowedError('MyPass is unavailable') });
+    return;
+  }
+
+  if (response && response.error) {
+    await completePasskeyRequest(kind, { requestId, error: response.error });
+    return;
+  }
+
+  if (response && (response.type === 'passkeyCreatePending' || response.type === 'passkeyGetPending')) {
+    await writePending({
+      kind, requestId, originUrl, rpId: response.rpId, rpName: response.rpName, matches: response.matches,
+    });
+    chrome.alarms.create(PASSKEY_WATCHDOG_ALARM, { delayInMinutes: PASSKEY_WATCHDOG_MS / 60000 });
+    openPasskeyPopup();
+    return;
+  }
+
+  // Every other reply — `locked`, `pairingRequired`, an unknown type, or no reply at all —
+  // must still complete the request. Falling through here would hang the ceremony on the
+  // page with no watchdog armed, and `locked` is the most likely real-world reply.
+  const reason = !response ? 'MyPass did not respond'
+    : response.type === 'locked' ? 'MyPass is locked'
+    : response.type === 'pairingRequired' ? 'MyPass is not paired with this browser'
+    : `Unexpected MyPass response: ${response.type}`;
+  await completePasskeyRequest(kind, { requestId, error: passkeyNotAllowedError(reason) });
 }
+
+chrome.alarms.onAlarm.addListener((alarm) => {
+  if (alarm.name !== PASSKEY_WATCHDOG_ALARM) return;
+  readPending().then((pending) => {
+    if (!pending) return;
+    completePasskeyRequest(pending.kind, {
+      requestId: pending.requestId,
+      error: passkeyNotAllowedError('Timed out waiting for confirmation'),
+    });
+  });
+});
 ```
 
-Register the four proxy listeners synchronously at top level (near the file's other top-level `chrome.*.addListener` registrations):
+Register the four proxy listeners synchronously at top level (near the file's other top-level `chrome.*.addListener` registrations). No `chrome.tabs.query` is needed — the origin comes from the payload:
 
 ```js
 if (typeof chrome !== 'undefined' && chrome.webAuthenticationProxy) {
   chrome.webAuthenticationProxy.onCreateRequest.addListener((requestInfo) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      handlePasskeyRequest('create', requestInfo.requestId, requestInfo.requestDetailsJson, tabs[0] ? tabs[0].url : '');
-    });
+    handlePasskeyRequest('create', requestInfo.requestId, requestInfo.requestDetailsJson);
   });
 
   chrome.webAuthenticationProxy.onGetRequest.addListener((requestInfo) => {
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      handlePasskeyRequest('get', requestInfo.requestId, requestInfo.requestDetailsJson, tabs[0] ? tabs[0].url : '');
-    });
+    handlePasskeyRequest('get', requestInfo.requestId, requestInfo.requestDetailsJson);
   });
 
   chrome.webAuthenticationProxy.onIsUvpaaRequest.addListener((requestInfo) => {
+    // Every isUvpaa request MUST be answered — an early return leaves Chrome waiting forever.
+    const answer = (isUvpaa) => chrome.webAuthenticationProxy.completeIsUvpaaRequest({
+      requestId: requestInfo.requestId, isUvpaa,
+    });
     chrome.storage.local.get(['passkeyProxyEnabled'], (stored) => {
-      if (!stored.passkeyProxyEnabled) return;
-      sendNativeMessageWithPairing({ type: 'getPasskeyProxyStatus' }).then((status) => {
-        const isUvpaa = !!(status && status.type === 'passkeyProxyStatus' && status.unlocked);
-        chrome.webAuthenticationProxy.completeIsUvpaaRequest({ requestId: requestInfo.requestId, isUvpaa });
-      });
+      if (!stored.passkeyProxyEnabled) {
+        answer(false);
+        return;
+      }
+      sendNativeMessageWithPairing({ type: 'getPasskeyProxyStatus' })
+        .then((status) => answer(!!(status && status.type === 'passkeyProxyStatus' && status.unlocked)))
+        .catch(() => answer(false));
     });
   });
 
   chrome.webAuthenticationProxy.onRequestCanceled.addListener((requestId) => {
-    const pending = pendingPasskeyCeremonies.get(requestId);
-    if (pending) {
-      clearTimeout(pending.timer);
-      pendingPasskeyCeremonies.delete(requestId);
-    }
-    sendNativeMessageWithPairing({ type: 'passkeyCancel', requestId });
+    readPending().then((pending) => {
+      if (pending && pending.requestId === requestId) {
+        clearPending();
+        chrome.alarms.clear(PASSKEY_WATCHDOG_ALARM);
+      }
+    });
+    sendNativeMessageWithPairing({ type: 'passkeyCancel', requestId }).catch(() => {});
   });
 
   attachPasskeyProxyIfEligible();
@@ -1941,11 +2069,14 @@ Add two branches to the message listener (inside `handleRuntimeMessage` if piece
   }
 
   if (message.type === 'passkeyCancelUI') {
-    const pending = pendingPasskeyCeremonies.get(message.requestId);
-    const kind = pending ? pending.kind : 'create';
-    sendNativeMessageWithPairing({ type: 'passkeyCancel', requestId: message.requestId }).then(() => {
-      completePasskeyRequest(kind, { requestId: message.requestId, error: passkeyNotAllowedError('User cancelled') });
-      sendResponse({ type: 'ok' });
+    readPending().then((pending) => {
+      const kind = pending && pending.requestId === message.requestId ? pending.kind : 'create';
+      return sendNativeMessageWithPairing({ type: 'passkeyCancel', requestId: message.requestId })
+        .catch(() => null)
+        .then(() => completePasskeyRequest(kind, {
+          requestId: message.requestId, error: passkeyNotAllowedError('User cancelled'),
+        }))
+        .then(() => sendResponse({ type: 'ok' }));
     });
     return true;
   }
@@ -1969,7 +2100,7 @@ Add `"setPasskeyProxyEnabled"` to `knownTypes` (wherever it currently lives) so 
   }
 ```
 
-Add all four new functions (`attachPasskeyProxyIfEligible`, `handlePasskeyRequest`, `completePasskeyRequest`, `passkeyNotAllowedError`) to `module.exports`.
+Add the new functions to `module.exports`: `attachPasskeyProxyIfEligible`, `handlePasskeyRequest`, `completePasskeyRequest`, `passkeyNotAllowedError`, `originFromRequestDetails`, `readPending`, `writePending`, `clearPending`.
 
 - [ ] **Step 4: Wire the new test into `scripts/test.sh`**
 

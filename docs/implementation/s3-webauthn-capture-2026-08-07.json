@@ -1,0 +1,46 @@
+[
+  {
+    "capturedAt": "2026-08-07T09:58:15.389Z",
+    "kind": "create",
+    "requestDetailsJson": "{\"attestation\":\"none\",\"authenticatorSelection\":{\"residentKey\":\"preferred\",\"userVerification\":\"preferred\"},\"challenge\":\"QUwlpAXMXrD8bJvKxcsyY5jC_qdKdfoc4Qgw1tzDB3s\",\"excludeCredentials\":[],\"extensions\":{\"remoteDesktopClientOverride\":{\"origin\":\"http://localhost:8000\",\"sameOriginWithAncestors\":true}},\"pubKeyCredParams\":[{\"alg\":-7,\"type\":\"public-key\"},{\"alg\":-257,\"type\":\"public-key\"}],\"rp\":{\"id\":\"localhost\",\"name\":\"S3 Bench\"},\"timeout\":180000,\"user\":{\"displayName\":\"Alice\",\"id\":\"xqFZ3EVCKtTuoEF_0XlWxA\",\"name\":\"alice@example.com\"}}",
+    "requestId": -56026996,
+    "requestIdType": "number",
+    "requestInfoKeys": [
+      "requestDetailsJson",
+      "requestId"
+    ]
+  },
+  {
+    "capturedAt": "2026-08-07T09:58:57.110Z",
+    "kind": "create",
+    "requestDetailsJson": "{\"attestation\":\"none\",\"authenticatorSelection\":{\"residentKey\":\"preferred\",\"userVerification\":\"preferred\"},\"challenge\":\"6_NETYgmuqg_iRU5Bo-6e45-f8GCYNFtmJ9DNsoT7xI\",\"excludeCredentials\":[],\"extensions\":{\"remoteDesktopClientOverride\":{\"origin\":\"http://localhost:8000\",\"sameOriginWithAncestors\":true}},\"pubKeyCredParams\":[{\"alg\":-7,\"type\":\"public-key\"},{\"alg\":-257,\"type\":\"public-key\"}],\"rp\":{\"id\":\"localhost\",\"name\":\"S3 Bench\"},\"timeout\":180000,\"user\":{\"displayName\":\"Alice\",\"id\":\"W2VOZdGiUmOw3gJeQDKcxg\",\"name\":\"alice@example.com\"}}",
+    "requestId": 775613671,
+    "requestIdType": "number",
+    "requestInfoKeys": [
+      "requestDetailsJson",
+      "requestId"
+    ]
+  },
+  {
+    "capturedAt": "2026-08-07T10:01:35.451Z",
+    "kind": "create",
+    "requestDetailsJson": "{\"attestation\":\"none\",\"authenticatorSelection\":{\"residentKey\":\"preferred\",\"userVerification\":\"preferred\"},\"challenge\":\"xpxB398KzFK1XhRM1nWe3eNZ2oybbIphsIQcLrWjpSY\",\"excludeCredentials\":[],\"extensions\":{\"remoteDesktopClientOverride\":{\"origin\":\"http://localhost:8000\",\"sameOriginWithAncestors\":true}},\"pubKeyCredParams\":[{\"alg\":-7,\"type\":\"public-key\"},{\"alg\":-257,\"type\":\"public-key\"}],\"rp\":{\"id\":\"localhost\",\"name\":\"S3 Bench\"},\"timeout\":180000,\"user\":{\"displayName\":\"Alice\",\"id\":\"CZOMWkcZVKLwlNdgYMZ7Fw\",\"name\":\"alice@example.com\"}}",
+    "requestId": 329139876,
+    "requestIdType": "number",
+    "requestInfoKeys": [
+      "requestDetailsJson",
+      "requestId"
+    ]
+  },
+  {
+    "capturedAt": "2026-08-07T10:10:14.804Z",
+    "kind": "get",
+    "requestDetailsJson": "{\"allowCredentials\":[{\"id\":\"oOHwT0z-ae25hZ2eoK5iwN5cFvS3tyTA9TZYd7UDZKY\",\"transports\":[\"usb\",\"nfc\",\"ble\",\"hybrid\",\"internal\"],\"type\":\"public-key\"}],\"challenge\":\"DyQAg10lYet2KH8m85m6nu8Vjo1gTQhtFgnBVf8xQUI\",\"extensions\":{\"remoteDesktopClientOverride\":{\"origin\":\"http://localhost:8000\",\"sameOriginWithAncestors\":true}},\"rpId\":\"localhost\",\"timeout\":180000,\"userVerification\":\"preferred\"}",
+    "requestId": -913466539,
+    "requestIdType": "number",
+    "requestInfoKeys": [
+      "requestDetailsJson",
+      "requestId"
+    ]
+  }
+]

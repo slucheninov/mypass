@@ -83,42 +83,93 @@ Blocking for Stage 2 and Stage 6 only. Does not block Track 1, A, or B.
 Review of plan C found five defects in `background.js` (Task 8) and one deliberate
 spec deviation in the ceremony core (Task 3). Fix the plan text **before** executing it.
 
-- [ ] **S1** — Spike: confirm `chrome.webAuthenticationProxy` is usable by an
-      **unpacked, non-policy-installed** extension. If it requires enterprise force-install,
-      plan C changes shape and Stage 6 must be re-scoped before any code is written.
-- [ ] **S2** — Spike: confirm `chrome.action.openPopup()` behaviour when called from a
-      `webAuthenticationProxy` event (no user gesture). Plan C `:1841` assumes it works;
-      it likely rejects, leaving only the notification fallback + manual toolbar click.
-      Record the finding — it decides whether the confirm UX needs a redesign.
-- [ ] **S3** — Spike: capture one real `requestDetailsJson` from a live Chrome create
-      and get ceremony, diff against the fixtures in plan C Task 3. The plan itself flags
-      this as a required checkpoint — its fixtures come from MDN, one hop from Chrome's
-      actual payload.
-- [ ] **S4** — Plan C fix: `onIsUvpaaRequest` (`:1913`) returns early without calling
+- [x] **S1** — Spike: confirm `chrome.webAuthenticationProxy` is usable by an
+      **unpacked, non-policy-installed** extension. **Answer: yes, no policy gate.**
+      Chromium's `_permission_features.json` lists it as `channel: stable`,
+      `extension_types: ["extension"]`, `min_manifest_version: 3`,
+      `platforms: ["linux", "mac", "win"]` — with no `location: "policy"` and no
+      `allowlist`, which is how Chrome marks force-install-only APIs.
+      `_api_features.json` adds only `dependencies: ["permission:webAuthenticationProxy"]`
+      and `contexts: ["privileged_extension"]`. Stage 6 keeps its shape.
+      Side finding for **C8**: `privileged_extension` means service worker and popup
+      only — never a content script. Plan C already registers in `background.js`.
+      An optional on-machine confirmation probe is in the session scratchpad
+      (`s1-proxy-probe/`); it attaches and immediately detaches.
+- [x] **S2** — Spike: confirm `chrome.action.openPopup()` behaviour when called from a
+      `webAuthenticationProxy` event (no user gesture). **Answer: no user gesture is
+      required — but the Chrome window must be OS-level focused, and the effective
+      Chrome floor is 127, not 115.**
+      `ActionOpenPopupFunction::Run()` performs no `user_gesture()` check at all, so the
+      original worry was unfounded. It does enforce two separate preconditions:
+      `FindActiveBrowserWindow()` non-null (`kNoActiveWindowFound`) and
+      `browser->GetWindow()->IsActive()` (`kOpenPopupInactiveWindow`) — the latter is
+      OS-level window focus. In the normal passkey flow the user is interacting with a
+      Chrome page, so the window is focused and the call succeeds; plan C's notification
+      fallback survives as the edge case (Chrome backgrounded), not the norm.
+      Version gate: per the official docs, "Between Chrome 118 and Chrome 126, this is
+      only available to policy installed extensions" — so a normally-installed extension
+      needs **Chrome 127+**. See the amendment on **C7**.
+      Third precondition worth remembering: `kNoActivePopup` fires if the extension has
+      no `default_popup` on the active tab. MyPass declares `popup.html`, so this holds.
+- [x] **S3** — Spike: capture one real `requestDetailsJson` from a live Chrome create
+      and get ceremony, diff against the fixtures in plan C Task 3. **Done — captured on
+      a real Chrome against a localhost bench; both parse functions match the real shape.**
+      `parseGetRequest` correctly reads `rpId` / `challenge` / `allowCredentials[].id` and
+      ignores the `transports` array Chrome injects on its own. `parseCreateRequest`
+      matches `rp.id` / `rp.name` / `user` / `pubKeyCredParams`.
+      Differences from the MDN-derived fixtures, all recorded here as amendments:
+  - [x] **Origin must come from the payload, not the active tab.** `requestInfo` carries
+        exactly two keys — `requestDetailsJson` and `requestId` — verified empirically.
+        The true origin is inside the payload as
+        `extensions.remoteDesktopClientOverride.origin` (present on both create and get).
+        Plan C's `chrome.tabs.query({active: true, currentWindow: true})` only guesses the
+        initiating tab, which is wrong for a background-tab ceremony and weakens the
+        domain-match gate that consumes `originUrl`. Amends **C3**, **C4**, **C8**.
+        Use the payload origin as authoritative; fail closed if it is absent.
+        Applied to **C8**. **C3/C4 need no signature change** — the wire `originUrl` now
+        carries the true origin. Still open as a **C4** hardening item: have the app
+        cross-check the received `originUrl` against the payload's own
+        `remoteDesktopClientOverride.origin` and reject on mismatch, so a compromised
+        extension cannot steer the domain gate by lying about the origin.
+  - [x] **`requestId` is negative in practice** (`-56026996`, `-913466539`). Plan C already
+        types it `Int`, which is correct — but the tests use `42`. Add a negative-value
+        round-trip case. Amends **C1**.
+  - [x] Chrome rewrote the page's requested `timeout: 60000` to **`180000`**. Our
+        `PASSKEY_WATCHDOG_MS` of 120000 therefore fires before Chrome's own timeout.
+        Intentional, but record it rather than rediscover it. Amends **C8**.
+  - [x] `challenge` and `user.id` arrive as **unpadded** base64url (43 chars, no `=`).
+        `PasskeyBase64URL.decode` must accept missing padding. Amends **C3** —
+        **verified, no change needed**: the planned decoder already re-pads with
+        `while base64.count % 4 != 0 { base64 += "=" }`.
+  - [x] `attestation: "none"` reaches the authenticator verbatim, so the **S8** deviation
+        (always returning `fmt: "packed"`) is observable by the RP, not theoretical.
+- [x] **S4** — Plan C fix: `onIsUvpaaRequest` (`:1913`) returns early without calling
       `completeIsUvpaaRequest` when the toggle is off, so Chrome's request never gets an
       answer. Must complete with `isUvpaa: false`.
-- [ ] **S5** — Plan C fix: `handlePasskeyRequest` (`:1868`) handles only `response.error`
+- [x] **S5** — Plan C fix: `handlePasskeyRequest` (`:1868`) handles only `response.error`
       and `*Pending`. A `locked` or `pairingRequired` reply falls through every branch —
       no completion, no watchdog armed, ceremony hangs on the page until Chrome's own
       timeout. Add an explicit branch. This is the most likely real-world path.
-- [ ] **S6** — Plan C fix: `attachPasskeyProxyIfEligible` (`:1832`) wraps an existing
+- [x] **S6** — Plan C fix: `attachPasskeyProxyIfEligible` (`:1832`) wraps an existing
       promise in `new Promise((resolve) => ….then(resolve))` with no reject/catch, so a
       rejection (MyPass not running) never settles and the `await` hangs forever. Drop
       the wrapper.
-- [ ] **S7** — Plan C rework: move pending-ceremony bookkeeping to `chrome.storage.session`
+- [x] **S7** — Plan C rework: move pending-ceremony bookkeeping to `chrome.storage.session`
       as the source of truth. MV3 terminates the service worker after ~30 s idle while the
       user has 120 s to confirm, so the in-memory `pendingPasskeyCeremonies` Map and its
       `setTimeout` watchdog silently evaporate. Consequences today: the "one ceremony at a
       time" guard stops rejecting, and an abandoned ceremony is never completed with an
       error. Completion itself is safe (`completeCreateRequest` needs only `requestId`).
       This is a medium rework of Task 8, not a one-liner.
-- [ ] **S8** — Plan C decision: `buildAttestationObject` (`:985`) always returns
+- [x] **S8** — Plan C decision: `buildAttestationObject` (`:985`) always returns
       `fmt: "packed"` self-attestation even when the RP requested `attestation: "none"`.
       Decide explicitly — honour the requested value, or document why packed is always
       returned. Most RPs accept it; strict ones checking `fmt === "none"` will not.
 
-**⛳ Gate 0** — S1–S3 answered and recorded in "Decisions" below; S4–S8 applied to
-`docs/superpowers/plans/2026-08-01-chrome-extension-passkeys.md`.
+**⛳ Gate 0 — PASSED (2026-08-07).** S1–S3 answered and recorded in "Decisions" below;
+S4–S8 applied to `docs/superpowers/plans/2026-08-01-chrome-extension-passkeys.md`, along
+with the S2 version bump and the S3 origin/`requestId`/timeout amendments. Evidence for
+S3 is committed alongside this file as `s3-webauthn-capture-2026-08-07.json`.
 
 ---
 
@@ -272,7 +323,11 @@ Requires Gate 0 (especially **S1**) and Gate 2. Apply the S4–S8 plan fixes as 
         documented exception to the blanket locked gate
 - [ ] **C5** — `BrowserSettingsPane`: "Use MyPass for Chrome passkeys" toggle (opt-in, default off)
 - [ ] **C6** — `EntryDetailView`: read-only Passkey section + destructive "Remove passkey"
-- [ ] **C7** — `manifest.json`: `webAuthenticationProxy` permission, `minimum_chrome_version: 115`
+- [ ] **C7** — `manifest.json`: `webAuthenticationProxy` permission, `minimum_chrome_version`
+  - [x] Per **S2**, raise the declared minimum from `115` to `127`. `webAuthenticationProxy`
+        needs 115, but `chrome.action.openPopup()` is policy-installed-only on 118–126,
+        so 127 is the real floor for the confirm UX. Alternatively keep 115 and document
+        that 115–126 users only ever get the notification fallback.
 - [ ] **C8** — `background.js`: proxy lifecycle, ceremony relay, watchdog
   - [ ] Incorporates **S4** (complete isUvpaa when disabled)
   - [ ] Incorporates **S5** (locked / pairingRequired branch)
@@ -292,14 +347,14 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 
 | Stage | Items | Done |
 |-------|-------|------|
-| 0 — Spike + plan C fixes | 8 | 0 |
+| 0 — Spike + plan C fixes | 8 | **8 — complete** |
 | 1 — Vault (V1–V9) | 9 | 0 |
 | 2 — Passkey core (C2–C3) | 2 | 0 |
 | 3 — Unlock from popup (U1–U9) | 9 | 0 |
 | 4 — Piece A (A1–A7) | 7 | 0 |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **0** |
+| **Total** | **55** | **8** |
 
 ## Decisions
 
@@ -311,10 +366,10 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-07 | C task 1 | Excluded from the isolated core — it edits `ExtensionBridgeMessages.swift`, shared with A and B. |
 | 2026-08-07 | Unlock from popup | Approved, reversing the redesign plan's "no unlock-from-extension" constraint. Model: popup asks, app presents its own unlock UI. Master password never enters the browser; Touch ID is native-only so no alternative exists. |
 | 2026-08-07 | Popup focus loss | Accepted: activating MyPass closes the Chrome popup. No waiting state in the popup — user reopens it after unlocking. |
-| | S1 | _pending_ |
-| | S2 | _pending_ |
-| | S3 | _pending_ |
-| | S8 | _pending_ |
+| 2026-08-07 | S1 | `webAuthenticationProxy` is available to unpacked extensions — no enterprise policy required. Verified against Chromium `_permission_features.json` and `_api_features.json` (no `location: "policy"`, no allowlist, `channel: stable`, `mac` supported). Stage 6 unblocked. |
+| 2026-08-07 | S2 | `chrome.action.openPopup()` needs **no** user gesture (no such check in `ActionOpenPopupFunction::Run()`), but requires the Chrome window to be OS-level focused (`IsActive()`, else `kOpenPopupInactiveWindow`). Normal passkey flow satisfies this. Effective Chrome floor is **127** (policy-only on 118–126), so `minimum_chrome_version` in C7 must move from 115 to 127. |
+| 2026-08-07 | S3 | Real create + get payloads captured from live Chrome. Both plan-C parsers match. Four amendments recorded on the S3 item: payload-supplied origin replaces `chrome.tabs.query` (C3/C4/C8), negative `requestId` test (C1), Chrome's 180 s timeout vs our 120 s watchdog (C8), unpadded base64url (C3). |
+| 2026-08-07 | S8 | Honour the RP's requested attestation conveyance: `"none"` (the WebAuthn default, and what Chrome actually sends) now emits `fmt: "none"` with an empty `attStmt`; packed self-attestation is kept for `direct`/`indirect`/`enterprise`. Canonical CTAP2 key ordering preserved in both branches. |
 
 ## Verification commands
 
