@@ -125,7 +125,9 @@ function shouldShowTotpCircle(hasTotp) {
 
 function createTotpCircleController(circleEl, requestTotp) {
   let hideTimer = null;
-  let revealed = false;
+  // "active" covers both the revealed-digits state and the copied-flash state — either
+  // one must be dismissible by a second left-click or by clicking outside the circle.
+  let active = false;
 
   function clearHideTimer() {
     if (hideTimer) {
@@ -136,13 +138,13 @@ function createTotpCircleController(circleEl, requestTotp) {
 
   function showIdle() {
     clearHideTimer();
-    revealed = false;
+    active = false;
     circleEl.textContent = '';
     circleEl.classList.remove('revealed', 'copied');
   }
 
   function showDigits(code) {
-    revealed = true;
+    active = true;
     circleEl.textContent = code;
     circleEl.classList.add('revealed');
     circleEl.classList.remove('copied');
@@ -151,6 +153,7 @@ function createTotpCircleController(circleEl, requestTotp) {
   }
 
   function showCopiedFlash() {
+    active = true;
     circleEl.textContent = 'Copied';
     circleEl.classList.add('copied');
     circleEl.classList.remove('revealed');
@@ -160,7 +163,7 @@ function createTotpCircleController(circleEl, requestTotp) {
 
   function handleLeftClick(event) {
     event.stopPropagation();
-    if (revealed) {
+    if (active) {
       showIdle();
       return;
     }
@@ -183,7 +186,14 @@ function createTotpCircleController(circleEl, requestTotp) {
   }
 
   function handleOutsideClick(event) {
-    if (revealed && !circleEl.contains(event.target)) {
+    // Self-clean once this row's circle has been removed from the DOM (e.g.
+    // renderCredentials re-rendered the list on retry/unlock) — otherwise this
+    // document-level listener would accumulate across every re-render.
+    if (circleEl.isConnected === false) {
+      document.removeEventListener('click', handleOutsideClick, true);
+      return;
+    }
+    if (active && !circleEl.contains(event.target)) {
       showIdle();
     }
   }
@@ -191,7 +201,10 @@ function createTotpCircleController(circleEl, requestTotp) {
   circleEl.addEventListener('mousedown', handleMouseDown);
   circleEl.addEventListener('click', handleLeftClick);
   circleEl.addEventListener('contextmenu', handleContextMenu);
-  document.addEventListener('click', handleOutsideClick);
+  // Capture phase: a sibling circle's own click handler calls stopPropagation on the
+  // bubble phase, which would otherwise stop this document-level listener from ever
+  // seeing clicks on OTHER circles/rows. Capture runs before that stopPropagation.
+  document.addEventListener('click', handleOutsideClick, true);
 
   return { showIdle, showDigits, showCopiedFlash };
 }
