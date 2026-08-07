@@ -289,18 +289,32 @@ unlock" state that the user will never see.
 - [x] **U7** — `popup.js` / `popup.html`: "Unlock MyPass" button on the locked panel,
       alongside the existing Retry; fire-and-forget, no waiting state
 - [x] **U8** — `RUN.md` manual checklist (Ukrainian)
-- [ ] **U9** — Full verification run
+- [x] **U9** — Full verification run *(automated: `./scripts/test.sh` green; manual:
+      all 12 `RUN.md` bullets walked and confirmed 2026-08-07)*
 
-**⛳ Gate 3 — automated PASSED; manual walk 11/12 confirmed (2026-08-07).**
+**⛳ Gate 3 — PASSED (2026-08-07).**
 Blocks 1-3 of the checklist all pass: button visibility, waiting state, self-refresh
 without Retry, poll timeout, double-click debounce, no-biometrics path, and the
 unpaired path showing no button. Pairing-code visibility, the closed-window
 (Cmd+W) path and window non-duplication were confirmed live while debugging.
 
-One bullet outstanding: locking the vault (Cmd+L) *while a pairing code is displayed*
-must clear the code and drop the window off `.floating`. Only the normal completion
-path was exercised, and this is precisely the fail-open shape the security review
-flagged — an unverified failure here leaves a window above every application.
+The last bullet — locking the vault (Cmd+L) *while a pairing code is displayed* — was
+confirmed too: the code clears and the window drops off `.floating`. That path was the
+fail-open shape the security review flagged, so it was worth verifying separately from
+the normal completion path.
+
+**Three defects surfaced only in manual testing**, all fixed (`96854c7`, `2238c09`,
+`c968ca0`, `ee96cc0`, `37a49fc`). Two of them invalidated design assumptions:
+
+- The popup does **not** reliably close when MyPass takes focus, so the spec's
+  "no waiting state needed" reasoning was wrong. It now polls.
+- Three separate mechanisms that act on the main window were themselves hosted
+  *inside* that window (`ContentView`'s observers, `OpenMainWindowOnDemand`), so closing
+  the window removed the mechanism. Watch for this shape in future window work.
+
+Method note: four blind fix attempts failed before file-based instrumentation found the
+cause in one run — and disproved the leading hypothesis (SwiftUI clobbering the window
+level) along the way. Instrument after the first failed fix, not the fourth.
 
 `./scripts/test.sh` genuinely green (`EXIT=0` unpiped, `** TEST SUCCEEDED **`, 370 app
 tests, 42 ExtensionBridgeKit tests, all six JS suites). Acceptance criterion 7 verified
@@ -394,11 +408,11 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 0 — Spike + plan C fixes | 8 | **8 — complete** |
 | 1 — Vault (V1–V9) | 9 | **9 — already shipped** |
 | 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
-| 3 — Unlock from popup (U1–U9) | 9 | 8 |
+| 3 — Unlock from popup (U1–U9) | 9 | **9 — complete** |
 | 4 — Piece A (A1–A7) | 7 | 0 |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **27** |
+| **Total** | **55** | **28** |
 
 ## Decisions
 
