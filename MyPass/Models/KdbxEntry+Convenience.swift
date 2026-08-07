@@ -1,7 +1,9 @@
 import Foundation
 import MyPassKit
 
-private extension KdbxEntry {
+// Internal, not private: `KdbxEntry+Passkey.swift` reuses these helpers rather than
+// duplicating the field-lookup logic.
+extension KdbxEntry {
     func fieldValue(forKey key: String) -> String {
         fields.first(where: { $0.key == key })?.value ?? ""
     }
