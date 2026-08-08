@@ -7,6 +7,7 @@ public enum ExtensionBridgeRequest: Equatable {
     case fillCredential(token: String, id: String, url: String, pairing: String?)
     case getTotp(token: String, id: String, url: String, pairing: String?)
     case proposeSaveLogin(token: String, url: String, username: String, password: String, pairing: String?)
+    case proposeSaveTotp(token: String, url: String, otpauthOrSecret: String, entryId: String?, pairing: String?)
     case startPairing(token: String, browser: String?)
     case completePairing(token: String, code: String)
     case requestUnlock(token: String, pairing: String?)
@@ -14,7 +15,7 @@ public enum ExtensionBridgeRequest: Equatable {
 
 extension ExtensionBridgeRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, token, url, id, username, password, pairing, browser, code
+        case type, token, url, id, username, password, pairing, browser, code, otpauthOrSecret, entryId
     }
 
     public init(from decoder: Decoder) throws {
@@ -42,6 +43,12 @@ extension ExtensionBridgeRequest: Codable {
             let password = try container.decode(String.self, forKey: .password)
             let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
             self = .proposeSaveLogin(token: token, url: url, username: username, password: password, pairing: pairing)
+        case "proposeSaveTotp":
+            let url = try container.decode(String.self, forKey: .url)
+            let otpauthOrSecret = try container.decode(String.self, forKey: .otpauthOrSecret)
+            let entryId = try container.decodeIfPresent(String.self, forKey: .entryId)
+            let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
+            self = .proposeSaveTotp(token: token, url: url, otpauthOrSecret: otpauthOrSecret, entryId: entryId, pairing: pairing)
         case "startPairing":
             let browser = try container.decodeIfPresent(String.self, forKey: .browser)
             self = .startPairing(token: token, browser: browser)
@@ -85,6 +92,13 @@ extension ExtensionBridgeRequest: Codable {
             try container.encode(username, forKey: .username)
             try container.encode(password, forKey: .password)
             try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .proposeSaveTotp(let token, let url, let otpauthOrSecret, let entryId, let pairing):
+            try container.encode("proposeSaveTotp", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encode(url, forKey: .url)
+            try container.encode(otpauthOrSecret, forKey: .otpauthOrSecret)
+            try container.encodeIfPresent(entryId, forKey: .entryId)
+            try container.encodeIfPresent(pairing, forKey: .pairing)
         case .startPairing(let token, let browser):
             try container.encode("startPairing", forKey: .type)
             try container.encode(token, forKey: .token)
@@ -112,7 +126,7 @@ public extension ExtensionBridgeRequest {
         switch self {
         case .requestUnlock:
             return true
-        case .getCredentials, .fillCredential, .getTotp, .proposeSaveLogin, .startPairing, .completePairing:
+        case .getCredentials, .fillCredential, .getTotp, .proposeSaveLogin, .proposeSaveTotp, .startPairing, .completePairing:
             return false
         }
     }

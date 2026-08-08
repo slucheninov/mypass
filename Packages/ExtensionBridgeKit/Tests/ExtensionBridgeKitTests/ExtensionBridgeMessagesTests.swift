@@ -231,6 +231,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
             .fillCredential(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .getTotp(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .proposeSaveLogin(token: "t", url: "https://example.com", username: "u", password: "p", pairing: nil),
+            .proposeSaveTotp(token: "t", url: "https://example.com", otpauthOrSecret: "secret", entryId: nil, pairing: nil),
             .startPairing(token: "t", browser: nil),
             .completePairing(token: "t", code: "123456"),
         ]
@@ -276,5 +277,35 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         let json = try jsonObject(from: data)
         let credentials = try XCTUnwrap(json["credentials"] as? [[String: Any]])
         XCTAssertEqual(credentials.first?["hasTotp"] as? Bool, true)
+    }
+
+    func testProposeSaveTotpRoundTripsAndHasExpectedShapeWithEntryId() throws {
+        let request = ExtensionBridgeRequest.proposeSaveTotp(
+            token: "tok", url: "https://example.com", otpauthOrSecret: "otpauth://totp/Example:alice?secret=JBSWY3DP",
+            entryId: "entry-1", pairing: "pair-secret"
+        )
+        let data = try JSONEncoder().encode(request)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+
+        let json = try jsonObject(from: data)
+        XCTAssertEqual(json["type"] as? String, "proposeSaveTotp")
+        XCTAssertEqual(json["url"] as? String, "https://example.com")
+        XCTAssertEqual(json["otpauthOrSecret"] as? String, "otpauth://totp/Example:alice?secret=JBSWY3DP")
+        XCTAssertEqual(json["entryId"] as? String, "entry-1")
+        XCTAssertEqual(json["pairing"] as? String, "pair-secret")
+    }
+
+    func testProposeSaveTotpRoundTripsWithoutEntryIdOrPairing() throws {
+        let request = ExtensionBridgeRequest.proposeSaveTotp(
+            token: "tok", url: "https://example.com", otpauthOrSecret: "JBSWY3DPEHPK3PXP", entryId: nil, pairing: nil
+        )
+        let data = try JSONEncoder().encode(request)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+
+        let json = try jsonObject(from: data)
+        XCTAssertNil(json["entryId"])
+        XCTAssertNil(json["pairing"])
     }
 }
