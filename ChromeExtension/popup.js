@@ -119,11 +119,89 @@ function clearPairingStartedAt(cb) {
 
 const TOTP_AUTO_HIDE_MS = 5000;
 
+// Live countdown ring, mirroring MyPass/UI/EntryDetail/TOTPCountdownRingView.swift:
+// a green stroke whose arc length equals the REMAINING fraction of the 30 s TOTP
+// window, shrinking clockwise from 12 o'clock and resetting to full each window.
+const TOTP_RING_PERIOD_SECONDS = 30;
+const TOTP_RING_CIRCUMFERENCE = 2 * Math.PI * 14;
+
+function totpRemainingFraction(nowMs, periodSeconds = TOTP_RING_PERIOD_SECONDS) {
+  const remaining = periodSeconds - ((nowMs / 1000) % periodSeconds);
+  return remaining / periodSeconds;
+}
+
+function totpRingDashOffset(fraction, circumference) {
+  return circumference * (1 - fraction);
+}
+
+// Single shared 1 Hz ticker for every ring currently on screen, started lazily
+// when the first ring registers and torn down once the last one disconnects.
+let totpRingRegistry = [];
+let totpRingInterval = null;
+
+function applyTotpRingOffset(entry, fraction, snap) {
+  const offset = totpRingDashOffset(fraction, entry.circumference);
+  const style = entry.svgCircleEl.style;
+  if (snap) {
+    // Window rollover: jump back to (near) full without animating backwards.
+    style.transition = 'none';
+    style.strokeDashoffset = String(offset);
+    // Force a reflow so the "no transition" write lands before the class's own
+    // 1 s linear transition is restored on the next line.
+    void entry.svgCircleEl.offsetWidth;
+    style.transition = '';
+  } else {
+    style.strokeDashoffset = String(offset);
+  }
+}
+
+function tickTotpRings(nowMs = Date.now()) {
+  // Self-clean mirroring the outside-click listener pattern: drop rings whose
+  // host circle has left the DOM (list re-rendered), and once the registry is
+  // empty stop the interval so node tests (and idle popups) don't keep ticking.
+  totpRingRegistry = totpRingRegistry.filter((entry) => entry.hostEl.isConnected !== false);
+  if (totpRingRegistry.length === 0) {
+    if (totpRingInterval !== null) {
+      clearInterval(totpRingInterval);
+      totpRingInterval = null;
+    }
+    return;
+  }
+
+  const fraction = totpRemainingFraction(nowMs, TOTP_RING_PERIOD_SECONDS);
+  const windowIndex = Math.floor(nowMs / 1000 / TOTP_RING_PERIOD_SECONDS);
+
+  totpRingRegistry.forEach((entry) => {
+    const rolledOver = windowIndex !== entry.lastWindowIndex;
+    applyTotpRingOffset(entry, fraction, rolledOver);
+    // The window rolled over while digits were revealed (not the copied flash) —
+    // the shown code is now stale, so re-request it in place without touching
+    // the auto-hide timer.
+    if (rolledOver && entry.hostEl.classList.contains('revealed')) {
+      entry.requestTotp().then((code) => {
+        if (code) (entry.textEl || entry.hostEl).textContent = code;
+      }).catch(() => {});
+    }
+    entry.lastWindowIndex = windowIndex;
+  });
+}
+
+function registerTotpRing(entry, nowMs = Date.now()) {
+  totpRingRegistry.push({
+    ...entry,
+    lastWindowIndex: Math.floor(nowMs / 1000 / TOTP_RING_PERIOD_SECONDS)
+  });
+  if (totpRingInterval === null) {
+    totpRingInterval = setInterval(() => tickTotpRings(Date.now()), 1000);
+  }
+}
+
 function shouldShowTotpCircle(hasTotp) {
   return hasTotp === true;
 }
 
-function createTotpCircleController(circleEl, requestTotp) {
+function createTotpCircleController(circleEl, requestTotp, options = {}) {
+  const textEl = options.textEl || circleEl;
   let hideTimer = null;
   // "active" covers both the revealed-digits state and the copied-flash state — either
   // one must be dismissible by a second left-click or by clicking outside the circle.
@@ -139,13 +217,13 @@ function createTotpCircleController(circleEl, requestTotp) {
   function showIdle() {
     clearHideTimer();
     active = false;
-    circleEl.textContent = '';
+    textEl.textContent = '';
     circleEl.classList.remove('revealed', 'copied');
   }
 
   function showDigits(code) {
     active = true;
-    circleEl.textContent = code;
+    textEl.textContent = code;
     circleEl.classList.add('revealed');
     circleEl.classList.remove('copied');
     clearHideTimer();
@@ -154,7 +232,7 @@ function createTotpCircleController(circleEl, requestTotp) {
 
   function showCopiedFlash() {
     active = true;
-    circleEl.textContent = 'Copied';
+    textEl.textContent = 'Copied';
     circleEl.classList.add('copied');
     circleEl.classList.remove('revealed');
     clearHideTimer();
@@ -209,6 +287,32 @@ function createTotpCircleController(circleEl, requestTotp) {
   return { showIdle, showDigits, showCopiedFlash };
 }
 
+const SVG_NS = 'http://www.w3.org/2000/svg';
+
+function buildTotpRingSvg() {
+  const ring = document.createElementNS(SVG_NS, 'svg');
+  ring.setAttribute('viewBox', '0 0 32 32');
+  ring.setAttribute('class', 'totp-ring');
+  ring.setAttribute('aria-hidden', 'true');
+  ring.setAttribute('focusable', 'false');
+
+  const ringCircle = document.createElementNS(SVG_NS, 'circle');
+  ringCircle.setAttribute('cx', '16');
+  ringCircle.setAttribute('cy', '16');
+  ringCircle.setAttribute('r', '14');
+  ringCircle.setAttribute('fill', 'none');
+  ringCircle.setAttribute('stroke', '#34c759');
+  ringCircle.setAttribute('stroke-width', '2');
+  ringCircle.setAttribute('stroke-linecap', 'round');
+  ringCircle.setAttribute('transform', 'rotate(-90 16 16)');
+  ringCircle.setAttribute('stroke-dasharray', String(TOTP_RING_CIRCUMFERENCE));
+  const initialFraction = totpRemainingFraction(Date.now(), TOTP_RING_PERIOD_SECONDS);
+  ringCircle.style.strokeDashoffset = String(totpRingDashOffset(initialFraction, TOTP_RING_CIRCUMFERENCE));
+
+  ring.appendChild(ringCircle);
+  return { ring, ringCircle };
+}
+
 function buildTotpCircleElement(credential, url) {
   const circle = document.createElement('div');
   circle.className = 'totp-circle';
@@ -225,7 +329,27 @@ function buildTotpCircleElement(credential, url) {
     });
   });
 
-  createTotpCircleController(circle, requestTotp);
+  // The ring lives underneath as its own SVG (pointer-events: none, so it never
+  // intercepts clicks) and the digits/"Copied" text live in a sibling label span
+  // above it — kept separate so revealing/hiding the code (which replaces
+  // textContent) never wipes out the ring.
+  const { ring, ringCircle } = buildTotpRingSvg();
+  circle.appendChild(ring);
+
+  const label = document.createElement('span');
+  label.className = 'totp-circle-label';
+  circle.appendChild(label);
+
+  createTotpCircleController(circle, requestTotp, { textEl: label });
+
+  registerTotpRing({
+    hostEl: circle,
+    textEl: label,
+    svgCircleEl: ringCircle,
+    circumference: TOTP_RING_CIRCUMFERENCE,
+    requestTotp
+  });
+
   return circle;
 }
 
@@ -587,6 +711,12 @@ if (typeof module !== 'undefined') {
     WAITING_FOR_UNLOCK_TEXT,
     shouldShowTotpCircle,
     createTotpCircleController,
-    buildTotpCircleElement
+    buildTotpCircleElement,
+    totpRemainingFraction,
+    totpRingDashOffset,
+    tickTotpRings,
+    registerTotpRing,
+    TOTP_RING_PERIOD_SECONDS,
+    TOTP_RING_CIRCUMFERENCE
   };
 }

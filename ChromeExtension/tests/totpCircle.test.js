@@ -58,6 +58,10 @@ global.document = {
     return elements[id];
   },
   createElement: (tag) => makeEl(tag),
+  // buildTotpCircleElement draws the countdown ring with SVG nodes; the fake
+  // elements from makeEl (children/appendChild/setAttribute/style) are good
+  // enough shape for that non-interactive construction to succeed.
+  createElementNS: (_ns, tag) => makeEl(tag),
   addEventListener: (type, handler, capture) => {
     documentListeners.push({ type, handler, capture });
   },
@@ -125,12 +129,64 @@ function lastDocumentClickListener() {
   return undefined;
 }
 
-const { shouldShowTotpCircle, createTotpCircleController } = require('../popup.js');
+const {
+  shouldShowTotpCircle,
+  createTotpCircleController,
+  buildTotpCircleElement,
+  totpRemainingFraction,
+  totpRingDashOffset,
+  tickTotpRings,
+  registerTotpRing,
+  TOTP_RING_CIRCUMFERENCE
+} = require('../popup.js');
 
 assert.strictEqual(shouldShowTotpCircle(true), true);
 assert.strictEqual(shouldShowTotpCircle(false), false);
 assert.strictEqual(shouldShowTotpCircle(undefined), false);
 console.log('totpCircle.test.js: shouldShowTotpCircle OK');
+
+// --- totpRemainingFraction: remaining fraction of the current 30 s window. ---
+const PERIOD = 30;
+assert.strictEqual(totpRemainingFraction(5 * PERIOD * 1000, PERIOD), 1, 'exactly at a window boundary the ring is full');
+assert.ok(
+  Math.abs(totpRemainingFraction(5 * PERIOD * 1000 + 29000, PERIOD) - 1 / 30) < 1e-9,
+  '1 s before the next window, only 1/30th of the ring remains'
+);
+{
+  // Monotonically decreasing across the whole window.
+  let previous = totpRemainingFraction(5 * PERIOD * 1000, PERIOD);
+  for (let ms = 1000; ms < PERIOD * 1000; ms += 1000) {
+    const fraction = totpRemainingFraction(5 * PERIOD * 1000 + ms, PERIOD);
+    assert.ok(fraction < previous, 'fraction must strictly decrease as time advances within a window');
+    previous = fraction;
+  }
+}
+console.log('totpCircle.test.js: totpRemainingFraction OK');
+
+// --- totpRingDashOffset: maps a remaining fraction onto the SVG dash offset. ---
+assert.strictEqual(totpRingDashOffset(1, TOTP_RING_CIRCUMFERENCE), 0, 'full remaining fraction draws the whole ring (offset 0)');
+assert.strictEqual(totpRingDashOffset(0.5, TOTP_RING_CIRCUMFERENCE), TOTP_RING_CIRCUMFERENCE / 2);
+console.log('totpCircle.test.js: totpRingDashOffset OK');
+
+// --- buildTotpCircleElement: draws the ring as a non-interactive SVG child,
+// keeping the digits in a separate label so reveal/hide never wipes the ring. ---
+{
+  const el = buildTotpCircleElement({ id: 'ring-1' }, 'https://example.com');
+  const svgChild = el.children.find((child) => child.class === 'totp-ring');
+  assert.ok(svgChild, 'buildTotpCircleElement must append the countdown ring SVG');
+  const ringCircle = svgChild.children[0];
+  assert.ok(ringCircle, 'the ring SVG must contain a circle element');
+  assert.strictEqual(ringCircle['stroke-dasharray'], String(TOTP_RING_CIRCUMFERENCE));
+  const labelChild = el.children.find((child) => child.className === 'totp-circle-label');
+  assert.ok(labelChild, 'buildTotpCircleElement must append a separate label element for the digits');
+
+  // buildTotpCircleElement also registers this circle with the shared ticker;
+  // the fake element here has no classList, so sweep it out immediately
+  // (mirroring the isConnected self-clean) before any later tick would touch it.
+  el.isConnected = false;
+  tickTotpRings(Date.now());
+}
+console.log('totpCircle.test.js: buildTotpCircleElement ring structure OK');
 
 (async () => {
   const circle = makeFakeCircleElement();
@@ -227,4 +283,86 @@ console.log('totpCircle.test.js: shouldShowTotpCircle OK');
   assert.strictEqual(disconnectedCircle.textContent, '', 'a disconnected circle must not reveal/hide as a side effect of self-cleaning');
 
   console.log('totpCircle.test.js: stale listener self-clean on disconnect OK');
+
+  // --- (d) rollover refresh: while digits are revealed, a live window rollover
+  // must silently re-request the code in place, without resetting the auto-hide
+  // timer. Driven directly via the exported tick/register seam with fabricated
+  // times — no real timers, so the process still exits immediately. ---
+  const rolloverHost = makeFakeCircleElement();
+  const rolloverLabel = { textContent: '' };
+  const rolloverRing = { style: {} };
+  let rolloverRequestCount = 0;
+  const rolloverRequestTotp = () => {
+    rolloverRequestCount += 1;
+    return Promise.resolve(`code-${rolloverRequestCount}`);
+  };
+  createTotpCircleController(rolloverHost, rolloverRequestTotp, { textEl: rolloverLabel });
+
+  rolloverHost.dispatch('click', { stopPropagation: () => {} });
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(rolloverLabel.textContent, 'code-1', 'reveal sets the injected textEl, not the host');
+  assert.strictEqual(rolloverRequestCount, 1);
+
+  registerTotpRing({
+    hostEl: rolloverHost,
+    textEl: rolloverLabel,
+    svgCircleEl: rolloverRing,
+    circumference: TOTP_RING_CIRCUMFERENCE,
+    requestTotp: rolloverRequestTotp
+  }, 0);
+
+  tickTotpRings(0);
+  assert.strictEqual(rolloverRequestCount, 1, 'ticking within the same window must not re-request');
+
+  tickTotpRings(30000);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(rolloverRequestCount, 2, 'a window rollover while revealed must re-request exactly once');
+  assert.strictEqual(rolloverLabel.textContent, 'code-2', 'the refreshed code replaces the stale digits in place');
+
+  console.log('totpCircle.test.js: rollover refresh while revealed OK');
+
+  // --- (e) rollover refresh must NOT fire during the copied flash. ---
+  const copiedHost = makeFakeCircleElement();
+  const copiedLabel = { textContent: '' };
+  const copiedRing = { style: {} };
+  let copiedRequestCount = 0;
+  const copiedRequestTotp = () => {
+    copiedRequestCount += 1;
+    return Promise.resolve(`copy-${copiedRequestCount}`);
+  };
+  createTotpCircleController(copiedHost, copiedRequestTotp, { textEl: copiedLabel });
+
+  copiedHost.dispatch('contextmenu', { preventDefault: () => {}, stopPropagation: () => {} });
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(copiedLabel.textContent, 'Copied');
+  assert.strictEqual(copiedRequestCount, 1);
+
+  registerTotpRing({
+    hostEl: copiedHost,
+    textEl: copiedLabel,
+    svgCircleEl: copiedRing,
+    circumference: TOTP_RING_CIRCUMFERENCE,
+    requestTotp: copiedRequestTotp
+  }, 0);
+
+  tickTotpRings(30000);
+  await Promise.resolve();
+  await Promise.resolve();
+  assert.strictEqual(copiedRequestCount, 1, 'the copied flash must not re-request on rollover');
+  assert.strictEqual(copiedLabel.textContent, 'Copied', 'the copied flash text must be untouched by rollover');
+
+  console.log('totpCircle.test.js: rollover refresh suppressed during copied flash OK');
+
+  // Clean up the shared ticker: mark every still-registered host disconnected
+  // and tick once more so the registry empties and the interval self-clears —
+  // otherwise the shared 1 Hz ticker would keep the node process alive.
+  rolloverHost.isConnected = false;
+  copiedHost.isConnected = false;
+  tickTotpRings(60000);
+  console.log('totpCircle.test.js: shared ring ticker self-cleans OK');
 })();
