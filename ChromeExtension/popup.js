@@ -369,6 +369,17 @@ function isBase32PasteSecret(candidate) {
   return /^[A-Z2-7]{16,128}$/i.test(normalized);
 }
 
+// Shared by the picker row click handler and routeTotpCandidate's zero/one-match
+// branches so a proposeSaveTotp round-trip's actual outcome is reported instead of
+// always claiming success.
+function describeSaveProposalOutcome(response) {
+  if (response && response.type === 'saveProposalAccepted') return 'Opened in MyPass';
+  if (response && response.type === 'locked') return 'Unlock MyPass first';
+  if (response && response.type === 'pairingRequired') return 'Connect to MyPass first';
+  if (response && response.message) return response.message;
+  return "Couldn't reach MyPass";
+}
+
 // Assigned once the DOM is wired up below: renderTotpPicker needs `listEl` and
 // `buildLetterAvatarElement`, routeTotpCandidate needs renderTotpPicker, and
 // restorePendingTotpCandidate needs `totpPasteInput`/`showPanel`. Declared here (rather
@@ -742,9 +753,9 @@ if (typeof document !== 'undefined') {
       item.addEventListener('click', () => {
         chrome.runtime.sendMessage(
           { type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credential.id },
-          () => {
+          (response) => {
             addTotpErrorEl.hidden = false;
-            addTotpErrorEl.textContent = 'Opened in MyPass';
+            addTotpErrorEl.textContent = describeSaveProposalOutcome(response);
           }
         );
       });
@@ -753,10 +764,14 @@ if (typeof document !== 'undefined') {
   };
 
   routeTotpCandidate = function (url, otpauthOrSecret, credentials) {
+    const reportOutcome = (response) => {
+      addTotpErrorEl.hidden = false;
+      addTotpErrorEl.textContent = describeSaveProposalOutcome(response);
+    };
     if (credentials.length === 0) {
-      chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret });
+      chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret }, reportOutcome);
     } else if (credentials.length === 1) {
-      chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credentials[0].id });
+      chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credentials[0].id }, reportOutcome);
     } else {
       renderTotpPicker(credentials, url, otpauthOrSecret);
     }
@@ -819,12 +834,18 @@ if (typeof document !== 'undefined') {
       }
       totpPasteInput.value = pending.otpauthOrSecret;
       chrome.runtime.sendMessage({ type: 'getCredentials', url: pending.url }, (response) => {
-        const credentials = (response && response.type === 'credentialList') ? response.credentials : [];
-        if (credentials.length > 1) {
-          renderTotpPicker(credentials, pending.url, pending.otpauthOrSecret);
+        if (!response || response.type !== 'credentialList') {
+          // The vault re-locked (or otherwise stopped being unlocked/paired) between
+          // this popup opening and this inner re-check resolving — keep the stored
+          // candidate so it survives to the next popup open, same as the outer
+          // locked-path semantics above.
+          return;
         }
+        if (response.credentials.length > 1) {
+          renderTotpPicker(response.credentials, pending.url, pending.otpauthOrSecret);
+        }
+        area.remove(['pendingTotpCandidate']);
       });
-      area.remove(['pendingTotpCandidate']);
     });
   };
 
@@ -877,6 +898,7 @@ if (typeof module !== 'undefined') {
     TOTP_RING_CIRCUMFERENCE,
     validateTotpPasteInput,
     isBase32PasteSecret,
+    describeSaveProposalOutcome,
     renderTotpPicker,
     routeTotpCandidate,
     restorePendingTotpCandidate,

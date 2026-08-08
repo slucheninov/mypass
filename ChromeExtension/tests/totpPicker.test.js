@@ -18,7 +18,10 @@ function makeEl(id) {
     appendChild(child) {
       this.children.push(child);
     },
-    addEventListener() {},
+    addEventListener(type, handler) {
+      this._listeners = this._listeners || {};
+      this._listeners[type] = handler;
+    },
     setAttribute(name, value) {
       this[name] = value;
     }
@@ -168,6 +171,38 @@ console.log('totpPicker.test.js: paste validation OK');
   console.log('totpPicker.test.js: routeTotpCandidate multi-match delegates to renderTotpPicker OK');
 })();
 
+// --- additive: a picker row click reports the actual proposeSaveTotp outcome instead of
+// always claiming success (Finding 3). ---
+(() => {
+  global.chrome.runtime.sendMessage = (msg, cb) => { if (cb) cb({ type: 'locked' }); };
+  elements.list.children = [];
+  elements['add-totp-error'].hidden = true;
+  elements['add-totp-error'].textContent = '';
+
+  renderTotpPicker([{ id: 'a', title: 'Alpha', hasTotp: false }], 'https://example.com', 'JBSWY3DP');
+  elements.list.children[0]._listeners.click();
+
+  assert.strictEqual(elements['add-totp-error'].hidden, false, 'error shown on locked outcome');
+  assert.strictEqual(elements['add-totp-error'].textContent, 'Unlock MyPass first');
+
+  console.log('totpPicker.test.js: picker row click reports locked outcome OK');
+})();
+
+(() => {
+  global.chrome.runtime.sendMessage = (msg, cb) => { if (cb) cb({ type: 'saveProposalAccepted' }); };
+  elements.list.children = [];
+  elements['add-totp-error'].hidden = true;
+  elements['add-totp-error'].textContent = '';
+
+  renderTotpPicker([{ id: 'a', title: 'Alpha', hasTotp: false }], 'https://example.com', 'JBSWY3DP');
+  elements.list.children[0]._listeners.click();
+
+  assert.strictEqual(elements['add-totp-error'].hidden, false);
+  assert.strictEqual(elements['add-totp-error'].textContent, 'Opened in MyPass');
+
+  console.log('totpPicker.test.js: picker row click reports success outcome OK');
+})();
+
 // --- additive: restorePendingTotpCandidate is sequenced after the primary
 // getCredentials flow, not raced against it — it now takes the primary flow's
 // classified response kind and only acts when that kind is 'credentialList'
@@ -203,6 +238,32 @@ console.log('totpPicker.test.js: paste validation OK');
   assert.deepStrictEqual(removedKeys, ['pendingTotpCandidate'], 'pending candidate cleared after restore');
 
   console.log('totpPicker.test.js: restorePendingTotpCandidate(credentialList) multi-match OK');
+})();
+
+// (b2) primary=credentialList, but the inner re-check getCredentials for the *pending*
+// URL comes back locked (vault re-locked mid-flight): must not render a picker and must
+// NOT remove the stored key — same "never drop a pending candidate on anything but a
+// confirmed credentialList response" rule as the outer locked-path semantics (Finding 5).
+(() => {
+  let removedKeys = null;
+  global.chrome.storage.local.get = (_keys, cb) => {
+    cb({ pendingTotpCandidate: { url: 'https://pending.example.com', otpauthOrSecret: 'JBSWY3DPEHPK3PXP' } });
+  };
+  global.chrome.storage.local.remove = (keys, cb) => {
+    removedKeys = keys;
+    if (cb) cb();
+  };
+  global.chrome.runtime.sendMessage = (_msg, cb) => {
+    cb({ type: 'locked' });
+  };
+  elements.list.children = [];
+
+  restorePendingTotpCandidate('credentialList');
+
+  assert.strictEqual(elements.list.children.length, 0, 'no picker rendered when the inner re-check is locked');
+  assert.strictEqual(removedKeys, null, 'candidate key is kept when the vault re-locks mid-flight');
+
+  console.log('totpPicker.test.js: restorePendingTotpCandidate keeps key when inner re-check is locked OK');
 })();
 
 // (a) primary=locked: must not prefill, must not render a picker, and must NOT remove

@@ -215,6 +215,51 @@
     return detected.priority < state.totpBannerDismissed.priority;
   }
 
+  // Mirrors popup.js's classifyGetCredentialsResponse — kept as a separate local copy
+  // since content.js and popup.js are independent scripts with no shared module.
+  function classifyGetCredentialsResponse(response) {
+    if (!response || response.type === 'error') return 'error';
+    if (response.type === 'locked') return 'locked';
+    if (response.type === 'pairingRequired') return 'pairingRequired';
+    if (response.type === 'credentialList') return 'credentialList';
+    return 'unknown';
+  }
+
+  // Gates the Save-banner's proposeSaveTotp send on the actual getCredentials response
+  // instead of treating locked/pairingRequired/error as "zero matches" (which used to fire
+  // a blind proposal even while locked or unpaired). Same trust model as the password-save
+  // flow and popup.js's Add-2FA gating: only a real credentialList response may route to a
+  // proposal or the multi-match picker; anything else neither sends proposeSaveTotp nor
+  // touches storage. Also records this click's dismissal (same as the x button) up front,
+  // independent of the async response, since banner.remove() in the caller is itself a
+  // childList mutation the MutationObserver will redetect ~400ms later — without this, the
+  // still-present candidate would re-show the banner and a second Save would duplicate the
+  // proposal.
+  function routeBannerCredentialsResponse(response, url, otpauthOrSecret, state, priority, sendMessage) {
+    state.totpBannerDismissed = { priority };
+
+    const kind = classifyGetCredentialsResponse(response);
+    if (kind === 'locked') {
+      state.vaultLocked = true;
+      return;
+    }
+    if (kind !== 'credentialList') {
+      // pairingRequired / error / unknown: never fire a blind save proposal.
+      return;
+    }
+    state.vaultLocked = false;
+    const credentials = response.credentials;
+    if (credentials.length === 0) {
+      sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret });
+    } else if (credentials.length === 1) {
+      sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credentials[0].id });
+    } else {
+      chrome.storage.session.set({ pendingTotpCandidate: { url, otpauthOrSecret } }, () => {
+        sendMessage({ type: 'openPopupForTotpPicker' });
+      });
+    }
+  }
+
   // `priority` is the detected candidate's own priority (1=link, 2=text, 3=QR, 4=manual key),
   // threaded in from the caller's detection result. On
   // dismiss we store that ACTUAL priority — not a hardcoded weakest value — so that
@@ -236,16 +281,10 @@
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
     saveButton.addEventListener('click', () => {
       chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
-        const credentials = (response && response.type === 'credentialList') ? response.credentials : [];
-        if (credentials.length === 0) {
-          chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret });
-        } else if (credentials.length === 1) {
-          chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credentials[0].id });
-        } else {
-          chrome.storage.session.set({ pendingTotpCandidate: { url, otpauthOrSecret } }, () => {
-            chrome.runtime.sendMessage({ type: 'openPopupForTotpPicker' });
-          });
-        }
+        routeBannerCredentialsResponse(
+          response, url, otpauthOrSecret, state, priority,
+          (message) => chrome.runtime.sendMessage(message)
+        );
       });
       banner.remove();
       state.totpBannerShown = false;
@@ -409,6 +448,7 @@
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
+      classifyGetCredentialsResponse, routeBannerCredentialsResponse,
     };
   }
 })();

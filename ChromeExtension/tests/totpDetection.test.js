@@ -1,7 +1,7 @@
 const assert = require('node:assert');
 const {
   detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
-  detectTotpCandidateWithPriority, shouldShowTotpBanner,
+  detectTotpCandidateWithPriority, shouldShowTotpBanner, routeBannerCredentialsResponse,
 } = require('../content.js');
 
 function fakeAnchor(href) {
@@ -56,6 +56,50 @@ assert.strictEqual(shouldShowTotpBanner({ candidate: 'x', priority: 1 }, { vault
 assert.strictEqual(shouldShowTotpBanner({ candidate: 'x', priority: 1 }, { vaultLocked: false, totpBannerDismissed: { priority: 1 } }), false, 'dismissed priority-1 candidate stays suppressed for an equal-priority re-detection');
 
 console.log('totpDetection.test.js: OK');
+
+// --- routeBannerCredentialsResponse: gates the Save-banner's proposeSaveTotp send on the
+// actual getCredentials response (Finding 1), and records the dismissed priority on every
+// Save click so the MutationObserver's redetection of the banner.remove() mutation doesn't
+// re-show the same banner (Finding 2). ---
+
+(() => {
+  const state = { vaultLocked: false, totpBannerDismissed: null };
+  const sent = [];
+  routeBannerCredentialsResponse(
+    { type: 'locked' }, 'https://example.com', 'JBSWY3DP', state, 1,
+    (message) => sent.push(message)
+  );
+  assert.strictEqual(sent.length, 0, 'locked response must not send proposeSaveTotp');
+  assert.strictEqual(state.vaultLocked, true, 'locked response marks the vault locked');
+  assert.deepStrictEqual(state.totpBannerDismissed, { priority: 1 }, 'Save click records the dismissed priority even when locked');
+})();
+
+(() => {
+  const state = { vaultLocked: true, totpBannerDismissed: null };
+  const sent = [];
+  routeBannerCredentialsResponse(
+    { type: 'credentialList', credentials: [] }, 'https://example.com', 'JBSWY3DP', state, 2,
+    (message) => sent.push(message)
+  );
+  assert.strictEqual(sent.length, 1, 'a real credentialList response with zero matches still proposes a save');
+  assert.strictEqual(sent[0].type, 'proposeSaveTotp');
+  assert.strictEqual(sent[0].entryId, undefined, 'zero matches sends no entryId');
+  assert.strictEqual(state.vaultLocked, false, 'credentialList response clears vaultLocked');
+  assert.deepStrictEqual(state.totpBannerDismissed, { priority: 2 }, 'Save click records the dismissed priority');
+})();
+
+(() => {
+  const state = { vaultLocked: false, totpBannerDismissed: null };
+  const sent = [];
+  routeBannerCredentialsResponse(
+    { type: 'pairingRequired' }, 'https://example.com', 'JBSWY3DP', state, 1,
+    (message) => sent.push(message)
+  );
+  assert.strictEqual(sent.length, 0, 'pairingRequired must not send proposeSaveTotp');
+  assert.strictEqual(state.vaultLocked, false, 'pairingRequired does not change vaultLocked');
+})();
+
+console.log('totpDetection.test.js: routeBannerCredentialsResponse gating OK');
 
 // --- QR detection ---
 
