@@ -65,7 +65,7 @@ struct GroupSidebarView: View {
                             Button("Empty Recycle Bin…", role: .destructive) {
                                 showEmptyRecycleBinAlert = true
                             }
-                            .disabled(bin.entries.isEmpty)
+                            .disabled(EntrySearch.allEntries(in: bin).isEmpty)
                         }
                 } else {
                     Text(GroupTreeOperations.recycleBinGroupName)
@@ -112,7 +112,7 @@ struct GroupSidebarView: View {
 
     private var recycleBinEntryCount: Int {
         guard let uuid = recycleBinGroupUUID, let bin = rootGroup.subgroups.first(where: { $0.uuid == uuid }) else { return 0 }
-        return bin.entries.count
+        return EntrySearch.allEntries(in: bin).count
     }
 
     private func emptyRecycleBin() {
