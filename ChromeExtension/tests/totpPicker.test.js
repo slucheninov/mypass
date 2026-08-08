@@ -53,6 +53,7 @@ function makeEl(id) {
   'code-input',
   'submit-code-btn',
   'pairing-error',
+  'add-totp-section',
   'add-totp-btn',
   'totp-paste-input',
   'add-totp-error'
@@ -92,7 +93,10 @@ global.chrome = {
     }
   },
   tabs: {
-    query: (_opts, cb) => cb([{ url: 'https://example.com' }])
+    query: (_opts, cb) => cb([{ id: 1, url: 'https://example.com' }])
+    // sendMessage is intentionally absent at module-load time: requestPageTotpCandidate
+    // guards on `typeof chrome.tabs.sendMessage !== 'function'` so popup init doesn't
+    // crash on it, and every test below installs its own stub before calling it directly.
   }
 };
 
@@ -102,8 +106,14 @@ const {
   renderTotpPicker,
   routeTotpCandidate,
   restorePendingTotpCandidate,
-  handleAddTotpClick
+  handleAddTotpClick,
+  requestPageTotpCandidate
 } = require('../popup.js');
+
+// --- additive: the Add-2FA section (popup.html's `#add-totp-section`) must start
+// hidden — it only appears once there is an actual 2FA candidate in context. ---
+assert.strictEqual(elements['add-totp-section'].hidden, true, 'Add 2FA section starts hidden');
+console.log('totpPicker.test.js: add-totp-section hidden by default OK');
 
 assert.deepStrictEqual(
   validateTotpPasteInput('otpauth://totp/Example:alice?secret=JBSWY3DP'),
@@ -230,12 +240,14 @@ console.log('totpPicker.test.js: paste validation OK');
   };
   elements.list.children = [];
   elements['totp-paste-input'].value = '';
+  elements['add-totp-section'].hidden = true;
 
   restorePendingTotpCandidate('credentialList');
 
   assert.strictEqual(elements['totp-paste-input'].value, 'JBSWY3DPEHPK3PXP', 'restores pasted secret into input');
   assert.strictEqual(elements.list.children.length, 2, 'multi-match pending candidate renders picker rows');
   assert.deepStrictEqual(removedKeys, ['pendingTotpCandidate'], 'pending candidate cleared after restore');
+  assert.strictEqual(elements['add-totp-section'].hidden, false, 'restore proceed path unhides the Add 2FA section');
 
   console.log('totpPicker.test.js: restorePendingTotpCandidate(credentialList) multi-match OK');
 })();
@@ -257,11 +269,17 @@ console.log('totpPicker.test.js: paste validation OK');
     cb({ type: 'locked' });
   };
   elements.list.children = [];
+  elements['add-totp-section'].hidden = true;
 
   restorePendingTotpCandidate('credentialList');
 
   assert.strictEqual(elements.list.children.length, 0, 'no picker rendered when the inner re-check is locked');
   assert.strictEqual(removedKeys, null, 'candidate key is kept when the vault re-locks mid-flight');
+  assert.strictEqual(
+    elements['add-totp-section'].hidden,
+    false,
+    'section still unhides on the prefill step, even though the inner re-check later found the vault locked'
+  );
 
   console.log('totpPicker.test.js: restorePendingTotpCandidate keeps key when inner re-check is locked OK');
 })();
@@ -281,6 +299,7 @@ console.log('totpPicker.test.js: paste validation OK');
   global.chrome.runtime.sendMessage = () => { sendMessageCalled = true; };
   elements.list.children = [];
   elements['totp-paste-input'].value = '';
+  elements['add-totp-section'].hidden = true;
 
   restorePendingTotpCandidate('locked');
 
@@ -288,6 +307,7 @@ console.log('totpPicker.test.js: paste validation OK');
   assert.strictEqual(elements.list.children.length, 0, 'locked primary flow does not render a picker');
   assert.strictEqual(sendMessageCalled, false, 'locked primary flow does not re-check getCredentials for the pending URL');
   assert.strictEqual(removeCalled, false, 'locked primary flow leaves the stored candidate in place');
+  assert.strictEqual(elements['add-totp-section'].hidden, true, 'locked primary flow leaves the Add 2FA section hidden');
 
   console.log('totpPicker.test.js: restorePendingTotpCandidate(locked) leaves candidate untouched OK');
 })();
@@ -404,4 +424,61 @@ console.log('totpPicker.test.js: restorePendingTotpCandidate(pairingRequired/err
   assert.strictEqual(sentMessage.entryId, 'entry-1');
 
   console.log('totpPicker.test.js: handleAddTotpClick credentialList proceeds OK');
+})();
+
+// --- additive: requestPageTotpCandidate gates the Add-2FA section's visibility on
+// whether the active tab's content script actually reports a 2FA candidate. ---
+
+// A page candidate response unhides the section and prefills the paste input.
+(() => {
+  elements['add-totp-section'].hidden = true;
+  elements['totp-paste-input'].value = '';
+  global.chrome.runtime.lastError = undefined;
+  global.chrome.tabs.sendMessage = (tabId, msg, cb) => {
+    assert.strictEqual(tabId, 7);
+    assert.strictEqual(msg.type, 'queryTotpCandidate');
+    cb({ candidate: 'otpauth://totp/Example:alice?secret=JBSWY3DP', priority: 1 });
+  };
+
+  requestPageTotpCandidate(7);
+
+  assert.strictEqual(elements['add-totp-section'].hidden, false, 'candidate found unhides the Add 2FA section');
+  assert.strictEqual(
+    elements['totp-paste-input'].value,
+    'otpauth://totp/Example:alice?secret=JBSWY3DP',
+    'candidate prefills the paste input'
+  );
+
+  console.log('totpPicker.test.js: requestPageTotpCandidate candidate found OK');
+})();
+
+// chrome.runtime.lastError (no content script — e.g. a chrome:// page) must not un-hide
+// the section, and must not throw/log despite the callback firing with no response.
+(() => {
+  elements['add-totp-section'].hidden = true;
+  elements['totp-paste-input'].value = '';
+  global.chrome.tabs.sendMessage = (_tabId, _msg, cb) => {
+    global.chrome.runtime.lastError = { message: 'Could not establish connection. Receiving end does not exist.' };
+    cb(undefined);
+  };
+
+  requestPageTotpCandidate(7);
+
+  assert.strictEqual(elements['add-totp-section'].hidden, true, 'lastError keeps the section hidden');
+  global.chrome.runtime.lastError = undefined;
+
+  console.log('totpPicker.test.js: requestPageTotpCandidate lastError stays hidden OK');
+})();
+
+// A null/no-candidate response (content script present, nothing detected on the page)
+// also leaves the section hidden.
+(() => {
+  elements['add-totp-section'].hidden = true;
+  global.chrome.tabs.sendMessage = (_tabId, _msg, cb) => { cb(null); };
+
+  requestPageTotpCandidate(7);
+
+  assert.strictEqual(elements['add-totp-section'].hidden, true, 'no candidate keeps the section hidden');
+
+  console.log('totpPicker.test.js: requestPageTotpCandidate no-candidate stays hidden OK');
 })();

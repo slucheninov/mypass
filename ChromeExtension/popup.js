@@ -388,6 +388,7 @@ let renderTotpPicker = null;
 let routeTotpCandidate = null;
 let restorePendingTotpCandidate = null;
 let handleAddTotpClick = null;
+let requestPageTotpCandidate = null;
 
 if (typeof document !== 'undefined') {
   const lockedPanel = document.getElementById('locked-panel');
@@ -422,9 +423,14 @@ if (typeof document !== 'undefined') {
   const submitCodeBtn = document.getElementById('submit-code-btn');
   const pairingErrorEl = document.getElementById('pairing-error');
 
+  const addTotpSection = document.getElementById('add-totp-section');
   const addTotpBtn = document.getElementById('add-totp-btn');
   const totpPasteInput = document.getElementById('totp-paste-input');
   const addTotpErrorEl = document.getElementById('add-totp-error');
+  // Belt-and-suspenders alongside popup.html's static `hidden` attribute (same idiom as
+  // PANEL_SECTIONS/showPanel always setting `.hidden = true` before selectively revealing):
+  // the section must only appear once a real 2FA candidate is in context.
+  addTotpSection.hidden = true;
 
   // Set by queryCredentials for every credential lookup (initial load, retries, and
   // post-pairing/post-unlock re-checks) so the Add-2FA button can reuse the active tab's
@@ -833,6 +839,7 @@ if (typeof document !== 'undefined') {
         return;
       }
       totpPasteInput.value = pending.otpauthOrSecret;
+      addTotpSection.hidden = false;
       chrome.runtime.sendMessage({ type: 'getCredentials', url: pending.url }, (response) => {
         if (!response || response.type !== 'credentialList') {
           // The vault re-locked (or otherwise stopped being unlocked/paired) between
@@ -851,6 +858,23 @@ if (typeof document !== 'undefined') {
 
   addTotpBtn.onclick = () => handleAddTotpClick(currentTabUrl);
 
+  // The Add-2FA section starts hidden (popup.html) and only appears when there is an
+  // actual 2FA candidate in context: either detected on the current page (this function)
+  // or restored from a pending multi-match picker (restorePendingTotpCandidate). It must
+  // stay hidden on ordinary pages, chrome:// pages, and tabs with no content script.
+  requestPageTotpCandidate = function (tabId) {
+    if (typeof tabId !== 'number' || typeof chrome.tabs.sendMessage !== 'function') return;
+    chrome.tabs.sendMessage(tabId, { type: 'queryTotpCandidate' }, (resp) => {
+      // Reading lastError marks it "checked" so Chrome doesn't log an "Unchecked
+      // runtime.lastError" warning when the tab has no content script listening
+      // (chrome:// pages, the Web Store, etc.).
+      const lastError = chrome.runtime.lastError;
+      if (lastError || !resp || !resp.candidate) return;
+      totpPasteInput.value = resp.candidate;
+      addTotpSection.hidden = false;
+    });
+  };
+
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
     if (!activeTab || !activeTab.url) {
@@ -859,6 +883,7 @@ if (typeof document !== 'undefined') {
       return;
     }
     queryCredentials(activeTab.url);
+    requestPageTotpCandidate(activeTab.id);
   });
 }
 
@@ -902,6 +927,7 @@ if (typeof module !== 'undefined') {
     renderTotpPicker,
     routeTotpCandidate,
     restorePendingTotpCandidate,
-    handleAddTotpClick
+    handleAddTotpClick,
+    requestPageTotpCandidate
   };
 }

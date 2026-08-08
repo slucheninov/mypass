@@ -2,6 +2,7 @@ const assert = require('node:assert');
 const {
   detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
   detectTotpCandidateWithPriority, shouldShowTotpBanner, routeBannerCredentialsResponse,
+  buildTotpCandidateQueryResponse,
 } = require('../content.js');
 
 function fakeAnchor(href) {
@@ -100,6 +101,26 @@ console.log('totpDetection.test.js: OK');
 })();
 
 console.log('totpDetection.test.js: routeBannerCredentialsResponse gating OK');
+
+// --- buildTotpCandidateQueryResponse: what the content script's onMessage listener
+// answers a popup's `{ type: 'queryTotpCandidate' }` request with. The listener itself
+// lives inside content.js's browser-only wiring guard (chrome/document both defined) and
+// isn't reachable from this require (chrome/document are undefined at this point in the
+// file), so this exercises the extracted response-building logic directly — same pattern
+// as routeBannerCredentialsResponse above. ---
+
+assert.deepStrictEqual(
+  buildTotpCandidateQueryResponse(combinedDoc),
+  detectTotpCandidateWithPriority(combinedDoc),
+  'queryTotpCandidate response mirrors detectTotpCandidateWithPriority for a page with a candidate'
+);
+assert.strictEqual(
+  buildTotpCandidateQueryResponse(fakeDoc({})),
+  null,
+  'queryTotpCandidate response is null for a page with no TOTP candidate'
+);
+
+console.log('totpDetection.test.js: buildTotpCandidateQueryResponse OK');
 
 // --- QR detection ---
 

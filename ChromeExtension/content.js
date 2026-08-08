@@ -260,6 +260,16 @@
     }
   }
 
+  // What the content script answers a popup's `{ type: 'queryTotpCandidate' }` request
+  // with — the current page's strongest TOTP candidate (or null), so the popup's Add-2FA
+  // section can prefill itself and reveal only when there is something to act on. Extracted
+  // as its own (unguarded, exported) function — like routeBannerCredentialsResponse above —
+  // since the chrome.runtime.onMessage listener that calls it lives inside the browser-only
+  // wiring guard below and isn't reachable from tests without a full DOM/chrome stub.
+  function buildTotpCandidateQueryResponse(root) {
+    return detectTotpCandidateWithPriority(root);
+  }
+
   // `priority` is the detected candidate's own priority (1=link, 2=text, 3=QR, 4=manual key),
   // threaded in from the caller's detection result. On
   // dismiss we store that ACTUAL priority — not a hardcoded weakest value — so that
@@ -402,7 +412,11 @@
       });
     }
 
-    chrome.runtime.onMessage.addListener((message) => {
+    chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message.type === 'queryTotpCandidate') {
+        sendResponse(buildTotpCandidateQueryResponse(document));
+        return;
+      }
       if (message.type === 'applyFill') {
         if (!hostnameMatches(message.url, location.href)) {
           console.warn('MyPass: applyFill rejected — message URL does not match the current page hostname');
@@ -449,6 +463,7 @@
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
       classifyGetCredentialsResponse, routeBannerCredentialsResponse,
+      buildTotpCandidateQueryResponse,
     };
   }
 })();
