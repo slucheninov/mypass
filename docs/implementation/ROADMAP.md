@@ -349,23 +349,25 @@ both build on.
 Builds on A's `hasTotp` for the picker badge. Adapt plan anchors — B is written against
 the pre-A state of `background.js` and `ExtensionBridgeMessages.swift`.
 
-- [ ] **B1** — `ExtensionBridgeKit`: `proposeSaveTotp` request
-- [ ] **B2** — `ExtensionBridgeService`: `proposeSaveTotp` handler with domain re-validation
-- [ ] **B3** — `NavigationState`: `PendingTotpSaveProposal`, routing, `MyPassApp.init()` wiring
-- [ ] **B4** — `ContentView.swift`: route proposals to create / edit
-- [ ] **B5** — `EntryEditView.swift`: OTP pre-fill + "Replace 2FA?" confirmation
-- [ ] **B6** — `content.js`: otpauth link/text/manual-key detection + TOTP banner (no QR yet)
-- [ ] **B7** — `content.js`: QR detection via vendored `jsQR`
-  - [ ] Check `jsQR` licence and record it before vendoring
-  - [ ] Confirm the vendored script loads under the MV3 content-script CSP
-- [ ] **B8** — `background.js`: `proposeSaveTotp` routing, `openPopupForTotpPicker`,
+- [x] **B1** — `ExtensionBridgeKit`: `proposeSaveTotp` request
+- [x] **B2** — `ExtensionBridgeService`: `proposeSaveTotp` handler with domain re-validation
+- [x] **B3** — `NavigationState`: `PendingTotpSaveProposal`, routing, `MyPassApp.init()` wiring
+- [x] **B4** — `ContentView.swift`: route proposals to create / edit
+- [x] **B5** — `EntryEditView.swift`: OTP pre-fill + "Replace 2FA?" confirmation
+- [x] **B6** — `content.js`: otpauth link/text/manual-key detection + TOTP banner (no QR yet)
+- [x] **B7** — `content.js`: QR detection via vendored `jsQR`
+  - [x] Check `jsQR` licence and record it before vendoring
+  - [x] Confirm the vendored script loads under the MV3 content-script CSP
+- [x] **B8** — `background.js`: `proposeSaveTotp` routing, `openPopupForTotpPicker`,
       listener extracted into a testable `handleRuntimeMessage`
-- [ ] **B9** — `popup.js` / `popup.html`: "Add 2FA" paste field + multi-match entry picker
-- [ ] **B10** — Manual e2e fixtures + `RUN.md` checklist (Ukrainian)
-- [ ] **B11** — Full verification run; new JS tests wired into `scripts/test.sh`
+- [x] **B9** — `popup.js` / `popup.html`: "Add 2FA" paste field + multi-match entry picker
+- [x] **B10** — Manual e2e fixtures + `RUN.md` checklist (Ukrainian)
+- [x] **B11** — Full verification run; new JS tests wired into `scripts/test.sh`
 
 **⛳ Gate 5** — `./scripts/test.sh` green; all five e2e scenarios from the design pass
 (0 matches, 1 match, N matches, replace-existing, locked vault).
+
+Automated half of Gate 5 is green as of 2026-08-08: full `./scripts/test.sh` (MyPass 390 tests, SyncKit 86, ExtensionBridgeKit 47, nine JS suites), plus a whole-branch review whose two Critical banner findings were fixed in `61e473c`. The manual walk of the ten new RUN.md bullets (covering the five design e2e scenarios) is still pending.
 
 ---
 
@@ -410,9 +412,9 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
 | 3 — Unlock from popup (U1–U9) | 9 | **9 — complete** |
 | 4 — Piece A (A1–A7) | 7 | **7 — complete** |
-| 5 — Piece B (B1–B11) | 11 | 0 |
+| 5 — Piece B (B1–B11) | 11 | **11 — code complete, Gate 5 manual walk pending** |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **35** |
+| **Total** | **55** | **46** |
 
 ## Decisions
 
@@ -431,6 +433,10 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-07 | S8 | Honour the RP's requested attestation conveyance: `"none"` (the WebAuthn default, and what Chrome actually sends) now emits `fmt: "none"` with an empty `attStmt`; packed self-attestation is kept for `direct`/`indirect`/`enterprise`. Canonical CTAP2 key ordering preserved in both branches. |
 | 2026-08-07 | A scoring semantics | Plan A's illustrative scoring code contradicts its own test values (additive scoring gives 11 where tests demand 10; findOtpField would return a score-1 field where tests demand null). Ruling: the test assertions govern. autocomplete=one-time-code is a decisive signal (early-return 10, not stacked) and findOtpField requires MIN_OTP_FIELD_SCORE = 4. Both documented in content.js comments plus boundary tests. |
 | 2026-08-07 | A copied-flash dismissal | Plan A's popup snippet contradicts its own Global Constraints (copied flash must dismiss on second left-click / outside click; outside-click hide must survive sibling circles' stopPropagation). Ruling: constraints prose governs. Fixed via an active revealed-or-copied flag, capture-phase document listener with isConnected self-cleanup (commit d78a6d3). |
+| 2026-08-08 | B dismissal priority | Plan B's banner snippet hardcoded {priority: 4} on dismiss, contradicting its Global Constraints (a dismissed priority-1 banner would instantly re-show). Ruling: constraints govern — dismiss records the actual dismissed candidate's priority. |
+| 2026-08-08 | B manual-key detector | Plan B's detectManualSetupKey snippet fails its own test (greedy token concat matches "YOURMANUALSETUPKEY" before the real key). Ruling: the plan's tests govern; search window restricted to contiguous all-caps-as-written tokens. Lowercase page keys deferred. |
+| 2026-08-08 | B locked-state gating | Plan B's popup and banner snippets sent proposeSaveTotp even on locked/pairingRequired getCredentials responses, contradicting "locked → no proposal sent". Ruling: constraints govern — both paths now classify the response and only a real credentialList proceeds (popup: d89b793; banner: 61e473c, which also records dismissal on Save to stop a re-show loop). |
+| 2026-08-08 | B follow-ups parked | Final review deferrals (none touch the trust model): per-image QR decode memoization, event.isTrusted on banner buttons, isReplacingTotp recompute on cleared field, picker panel polish, img.onload rescan. |
 
 ## Known trap when running the suite
 
