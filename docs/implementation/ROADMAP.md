@@ -340,9 +340,7 @@ both build on.
 - [x] **A6** — Manual e2e fixtures + `RUN.md` checklist (Ukrainian)
 - [x] **A7** — Full verification run; `totpCircle.test.js` wired into `scripts/test.sh`
 
-**⛳ Gate 4** — `./scripts/test.sh` green; manual e2e from `RUN.md` passes.
-
-Automated half of Gate 4 is green as of 2026-08-07: full `./scripts/test.sh` run (MyPass 378 tests, MyPassKit, SyncKit 86, ExtensionBridgeKit 45, all seven JS suites including the new `totpCircle.test.js`). The manual e2e walk of the new RUN.md bullets is still pending — the seven new checklist items under «Короткий чеклист» are unchecked until a human walks them.
+**⛳ Gate 4 — closed 2026-08-08:** full `./scripts/test.sh` green and the manual walk of all seven RUN.md TOTP bullets passed on a real Chrome + MyPass build.
 
 ---
 
@@ -411,7 +409,7 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 1 — Vault (V1–V9) | 9 | **9 — already shipped** |
 | 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
 | 3 — Unlock from popup (U1–U9) | 9 | **9 — complete** |
-| 4 — Piece A (A1–A7) | 7 | **7 — code complete, Gate 4 manual walk pending** |
+| 4 — Piece A (A1–A7) | 7 | **7 — complete** |
 | 5 — Piece B (B1–B11) | 11 | 0 |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
 | **Total** | **55** | **35** |
