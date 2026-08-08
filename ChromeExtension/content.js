@@ -165,11 +165,44 @@
     return null;
   }
 
+  function decodeQrFromImage(imgEl) {
+    try {
+      if (!imgEl.complete || !imgEl.naturalWidth) return null;
+      const canvas = document.createElement('canvas');
+      canvas.width = imgEl.naturalWidth;
+      canvas.height = imgEl.naturalHeight;
+      const ctx = canvas.getContext('2d');
+      ctx.drawImage(imgEl, 0, 0);
+      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+      const result = typeof jsQR === 'function' ? jsQR(imageData.data, imageData.width, imageData.height) : null;
+      return result ? result.data : null;
+    } catch (error) {
+      // getImageData throws on a CORS-tainted canvas (cross-origin image) —
+      // skip rather than treat as a hard failure.
+      return null;
+    }
+  }
+
+  function detectQrCandidate(root) {
+    const scope = root || document;
+    const images = Array.from(scope.querySelectorAll('img'));
+    for (const img of images) {
+      if ((img.naturalWidth || 0) < 40 || (img.naturalHeight || 0) < 40) continue;
+      const decoded = decodeQrFromImage(img);
+      if (decoded && OTPAUTH_REGEX.test(decoded)) {
+        return decoded.match(OTPAUTH_REGEX)[0];
+      }
+    }
+    return null;
+  }
+
   function detectTotpCandidateWithPriority(root) {
     const link = detectOtpauthLink(root);
     if (link) return { candidate: link, priority: 1 };
     const text = detectOtpauthText(root);
     if (text) return { candidate: text, priority: 2 };
+    const qr = detectQrCandidate(root);
+    if (qr) return { candidate: qr, priority: 3 };
     const manual = detectManualSetupKey(root);
     if (manual) return { candidate: manual, priority: 4 };
     return null;
@@ -182,8 +215,8 @@
     return detected.priority < state.totpBannerDismissed.priority;
   }
 
-  // `priority` is the detected candidate's own priority (1=link, 2=text, 4=manual key; 3 is
-  // reserved for QR in a later task), threaded in from the caller's detection result. On
+  // `priority` is the detected candidate's own priority (1=link, 2=text, 3=QR, 4=manual key),
+  // threaded in from the caller's detection result. On
   // dismiss we store that ACTUAL priority — not a hardcoded weakest value — so that
   // `shouldShowTotpBanner`'s "session-dismiss suppresses only equal-or-weaker-priority
   // candidates" rule holds even when the dismissed candidate was already the strongest kind.
@@ -374,6 +407,7 @@
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
+      decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
     };
   }

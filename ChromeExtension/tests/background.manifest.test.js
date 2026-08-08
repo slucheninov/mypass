@@ -22,7 +22,8 @@ assert.ok(
 assert.strictEqual(manifest.background.service_worker, 'background.js');
 assert.strictEqual(manifest.action.default_popup, 'popup.html');
 assert.strictEqual(manifest.content_scripts.length, 1);
-assert.strictEqual(manifest.content_scripts[0].js[0], 'content.js');
+assert.strictEqual(manifest.content_scripts[0].js[0], 'vendor/jsQR.js', 'jsQR must load before content.js so the global jsQR function is defined');
+assert.strictEqual(manifest.content_scripts[0].js[1], 'content.js');
 assert.strictEqual(manifest.content_scripts[0].matches[0], '<all_urls>');
 assert.strictEqual(manifest.content_scripts[0].run_at, 'document_idle');
 

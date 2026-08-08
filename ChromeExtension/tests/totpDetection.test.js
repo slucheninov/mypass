@@ -56,3 +56,46 @@ assert.strictEqual(shouldShowTotpBanner({ candidate: 'x', priority: 1 }, { vault
 assert.strictEqual(shouldShowTotpBanner({ candidate: 'x', priority: 1 }, { vaultLocked: false, totpBannerDismissed: { priority: 1 } }), false, 'dismissed priority-1 candidate stays suppressed for an equal-priority re-detection');
 
 console.log('totpDetection.test.js: OK');
+
+// --- QR detection ---
+
+function fakeCanvasContext(imageDataResult) {
+  return { drawImage: () => {}, getImageData: () => imageDataResult };
+}
+
+function fakeCanvas(imageDataResult, shouldThrow) {
+  return {
+    width: 0,
+    height: 0,
+    getContext: () => {
+      if (shouldThrow) throw new Error('SecurityError: tainted canvas');
+      return fakeCanvasContext(imageDataResult);
+    },
+  };
+}
+
+global.document = global.document || {};
+global.document.createElement = (tag) => (tag === 'canvas' ? fakeCanvas({ data: [], width: 1, height: 1 }, global.__fakeCanvasThrows) : {});
+global.jsQR = () => global.__fakeQrResult || null;
+
+const { decodeQrFromImage, detectQrCandidate } = require('../content.js');
+
+global.__fakeQrResult = { data: 'otpauth://totp/Example:alice?secret=JBSWY3DP' };
+const decodableImg = { complete: true, naturalWidth: 200, naturalHeight: 200 };
+assert.strictEqual(decodeQrFromImage(decodableImg), 'otpauth://totp/Example:alice?secret=JBSWY3DP');
+
+global.__fakeQrResult = null;
+assert.strictEqual(decodeQrFromImage(decodableImg), null, 'no QR payload decodes to null');
+
+global.__fakeCanvasThrows = true;
+assert.strictEqual(decodeQrFromImage(decodableImg), null, 'CORS-tainted canvas is caught and skipped, not thrown');
+global.__fakeCanvasThrows = false;
+
+const incompleteImg = { complete: false, naturalWidth: 0, naturalHeight: 0 };
+assert.strictEqual(decodeQrFromImage(incompleteImg), null, 'unloaded image is skipped');
+
+global.__fakeQrResult = { data: 'otpauth://totp/Example:carol?secret=ABCDEFGH' };
+const qrDoc = { querySelectorAll: (sel) => (sel === 'img' ? [decodableImg] : []) };
+assert.strictEqual(detectQrCandidate(qrDoc), 'otpauth://totp/Example:carol?secret=ABCDEFGH');
+
+console.log('totpDetection.test.js: QR detection OK');
