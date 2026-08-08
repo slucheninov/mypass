@@ -97,6 +97,156 @@
     return { form, passwordInput, usernameInput };
   }
 
+  const OTPAUTH_REGEX = /otpauth:\/\/totp\/[^\s"'<>]+/i;
+  const BASE32_REGEX = /^[A-Z2-7]{16,128}$/;
+  const MANUAL_KEY_LABEL_REGEX = /secret|manual|setup key|authenticator/i;
+
+  function detectOtpauthLink(root) {
+    const scope = root || document;
+    const links = Array.from(scope.querySelectorAll('a[href]'));
+    for (const link of links) {
+      const href = link.getAttribute('href') || '';
+      const match = href.match(OTPAUTH_REGEX);
+      if (match) return match[0];
+    }
+    return null;
+  }
+
+  function detectOtpauthText(root) {
+    const scope = root || document;
+    const body = scope.body || scope;
+    if (!body) return null;
+    const text = body.textContent || '';
+    const match = text.match(OTPAUTH_REGEX);
+    return match ? match[0] : null;
+  }
+
+  function normalizeBase32Candidate(raw) {
+    return (raw || '').replace(/\s+/g, '').toUpperCase();
+  }
+
+  function isBase32Secret(candidate) {
+    return BASE32_REGEX.test(normalizeBase32Candidate(candidate));
+  }
+
+  // A plain sliding window over every token (including surrounding label words) is unsafe:
+  // concatenating enough ordinary sentence words (e.g. "Your"+"manual"+"setup"+"key" ->
+  // "YOURMANUALSETUPKEY") can accidentally satisfy the base32 alphabet+length check before
+  // the real key is ever reached. Real setup keys are rendered in caps (e.g. "JBSW Y3DP EHPK
+  // 3PXP"), so restrict the window to maximal runs of tokens that are already all
+  // uppercase letters/digits as written, which excludes ordinary lowercase/mixed-case words.
+  const CAPS_TOKEN_REGEX = /^[A-Z0-9]+$/;
+
+  function detectManualSetupKey(root) {
+    const scope = root || document;
+    const body = scope.body || scope;
+    if (!body) return null;
+    const text = (body.textContent || '').replace(/\s+/g, ' ');
+    if (!MANUAL_KEY_LABEL_REGEX.test(text)) return null;
+    const tokens = text.split(' ').filter(Boolean);
+    let i = 0;
+    while (i < tokens.length) {
+      if (!CAPS_TOKEN_REGEX.test(tokens[i])) {
+        i += 1;
+        continue;
+      }
+      let runEnd = i;
+      while (runEnd < tokens.length && CAPS_TOKEN_REGEX.test(tokens[runEnd])) runEnd += 1;
+      for (let start = i; start < runEnd; start += 1) {
+        for (let span = 1; span <= 8 && start + span <= runEnd; span += 1) {
+          const candidate = tokens.slice(start, start + span).join('');
+          if (isBase32Secret(candidate)) {
+            return normalizeBase32Candidate(candidate);
+          }
+        }
+      }
+      i = runEnd;
+    }
+    return null;
+  }
+
+  function detectTotpCandidateWithPriority(root) {
+    const link = detectOtpauthLink(root);
+    if (link) return { candidate: link, priority: 1 };
+    const text = detectOtpauthText(root);
+    if (text) return { candidate: text, priority: 2 };
+    const manual = detectManualSetupKey(root);
+    if (manual) return { candidate: manual, priority: 4 };
+    return null;
+  }
+
+  function shouldShowTotpBanner(detected, state) {
+    if (!detected) return false;
+    if (state.vaultLocked) return false;
+    if (!state.totpBannerDismissed) return true;
+    return detected.priority < state.totpBannerDismissed.priority;
+  }
+
+  // `priority` is the detected candidate's own priority (1=link, 2=text, 4=manual key; 3 is
+  // reserved for QR in a later task), threaded in from the caller's detection result. On
+  // dismiss we store that ACTUAL priority — not a hardcoded weakest value — so that
+  // `shouldShowTotpBanner`'s "session-dismiss suppresses only equal-or-weaker-priority
+  // candidates" rule holds even when the dismissed candidate was already the strongest kind.
+  function showTotpSaveBanner(url, otpauthOrSecret, state, priority) {
+    if (state.totpBannerShown) return;
+    state.totpBannerShown = true;
+
+    const banner = document.createElement('div');
+    banner.style.cssText =
+      'position:fixed;bottom:16px;right:16px;z-index:2147483647;background:#134e4a;' +
+      'color:#f0fdfa;padding:12px 16px;border-radius:8px;font-family:sans-serif;' +
+      'font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;gap:8px;';
+    banner.textContent = 'Save 2FA to MyPass?';
+
+    const saveButton = document.createElement('button');
+    saveButton.textContent = 'Save';
+    saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
+    saveButton.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
+        const credentials = (response && response.type === 'credentialList') ? response.credentials : [];
+        if (credentials.length === 0) {
+          chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret });
+        } else if (credentials.length === 1) {
+          chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credentials[0].id });
+        } else {
+          chrome.storage.session.set({ pendingTotpCandidate: { url, otpauthOrSecret } }, () => {
+            chrome.runtime.sendMessage({ type: 'openPopupForTotpPicker' });
+          });
+        }
+      });
+      banner.remove();
+      state.totpBannerShown = false;
+    });
+
+    const closeButton = document.createElement('button');
+    closeButton.textContent = '×';
+    closeButton.style.cssText = 'margin-left:8px;cursor:pointer;background:none;border:none;color:inherit;';
+    closeButton.addEventListener('click', () => {
+      banner.remove();
+      state.totpBannerShown = false;
+      state.totpBannerDismissed = { priority };
+    });
+
+    banner.appendChild(saveButton);
+    banner.appendChild(closeButton);
+    document.body.appendChild(banner);
+  }
+
+  function observeTotpCandidates(state) {
+    let debounceTimer = null;
+    const observer = new MutationObserver(() => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(() => {
+        const detected = detectTotpCandidateWithPriority(document);
+        if (shouldShowTotpBanner(detected, state)) {
+          showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+        }
+      }, 400);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    return observer;
+  }
+
   function hostnameMatches(messageUrl, pageUrl) {
     if (!messageUrl) return false;
     try {
@@ -148,7 +298,13 @@
   }
 
   if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
-    const state = { lastCredentialList: [], bannerShown: false, vaultLocked: false };
+    const state = {
+      lastCredentialList: [],
+      bannerShown: false,
+      vaultLocked: false,
+      totpBannerShown: false,
+      totpBannerDismissed: null,
+    };
 
     function requestCredentials() {
       chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
@@ -164,7 +320,7 @@
 
     function attachSubmitListener(loginForm) {
       loginForm.form.addEventListener('submit', () => {
-        if (!state.vaultLocked && state.lastCredentialList.length === 0) {
+        if (!state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0) {
           const username = loginForm.usernameInput ? loginForm.usernameInput.value : '';
           const password = loginForm.passwordInput.value;
           if (password) {
@@ -206,9 +362,19 @@
       requestCredentials();
       attachSubmitListener(loginForm);
     }
+
+    const detected = detectTotpCandidateWithPriority(document);
+    if (shouldShowTotpBanner(detected, state)) {
+      showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+    }
+    observeTotpCandidates(state);
   }
 
   if (typeof module !== 'undefined') {
-    module.exports = { scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField };
+    module.exports = {
+      scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
+      detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
+      detectTotpCandidateWithPriority, shouldShowTotpBanner,
+    };
   }
 })();
