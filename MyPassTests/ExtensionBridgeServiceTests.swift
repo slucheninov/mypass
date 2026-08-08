@@ -408,4 +408,64 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         )
         XCTAssertEqual(service.handle(.startPairing(token: "tok", browser: "Chrome")), .locked)
     }
+
+    // MARK: - proposeSaveTotp
+
+    func testProposeSaveTotpWithoutEntryIdInvokesClosureAndReturnsAccepted() {
+        var captured: (url: String, otpauthOrSecret: String, entryId: UUID?)?
+        service.onTotpSaveProposal = { url, otpauthOrSecret, entryId in
+            captured = (url, otpauthOrSecret, entryId)
+        }
+        let response = service.handle(.proposeSaveTotp(
+            token: "t", url: "https://example.com/setup", otpauthOrSecret: "otpauth://totp/Example:alice?secret=JBSWY3DP",
+            entryId: nil, pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .saveProposalAccepted)
+        XCTAssertEqual(captured?.url, "https://example.com/setup")
+        XCTAssertEqual(captured?.otpauthOrSecret, "otpauth://totp/Example:alice?secret=JBSWY3DP")
+        XCTAssertNil(captured?.entryId)
+    }
+
+    func testProposeSaveTotpWithMatchingEntryIdInvokesClosureWithResolvedUUID() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        var captured: (url: String, otpauthOrSecret: String, entryId: UUID?)?
+        service.onTotpSaveProposal = { url, otpauthOrSecret, entryId in
+            captured = (url, otpauthOrSecret, entryId)
+        }
+        let response = service.handle(.proposeSaveTotp(
+            token: "t", url: "https://example.com", otpauthOrSecret: "JBSWY3DPEHPK3PXP", entryId: id.uuidString, pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .saveProposalAccepted)
+        XCTAssertEqual(captured?.entryId, id)
+    }
+
+    func testProposeSaveTotpReturnsErrorWhenEntryIdDomainMismatch() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        var wasInvoked = false
+        service.onTotpSaveProposal = { _, _, _ in wasInvoked = true }
+        let response = service.handle(.proposeSaveTotp(
+            token: "t", url: "https://not-example.com", otpauthOrSecret: "JBSWY3DPEHPK3PXP", entryId: id.uuidString, pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .error("entry not found or domain mismatch"))
+        XCTAssertFalse(wasInvoked)
+    }
+
+    func testProposeSaveTotpReturnsPairingRequiredWithoutSecret() {
+        let (service, _, _) = makeServiceWithPairing()
+        let response = service.handle(.proposeSaveTotp(
+            token: "t", url: "https://example.com/setup", otpauthOrSecret: "JBSWY3DPEHPK3PXP", entryId: nil, pairing: nil
+        ))
+        XCTAssertEqual(response, .pairingRequired)
+    }
+
+    func testProposeSaveTotpReturnsLockedAndDoesNotInvokeClosureWhenVaultIsLocked() {
+        session.lock()
+        var wasInvoked = false
+        service.onTotpSaveProposal = { _, _, _ in wasInvoked = true }
+        let response = service.handle(.proposeSaveTotp(
+            token: "t", url: "https://example.com/setup", otpauthOrSecret: "JBSWY3DPEHPK3PXP", entryId: nil, pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .locked)
+        XCTAssertFalse(wasInvoked)
+    }
 }

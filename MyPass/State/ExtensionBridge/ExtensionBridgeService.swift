@@ -20,6 +20,7 @@ final class ExtensionBridgeService {
     /// closure that populates `NavigationState.pendingSaveProposal` and brings
     /// `MyPass.app` to the foreground) — not left as a bare extension point.
     var onSaveProposal: ((_ url: String, _ username: String, _ password: String) -> Void)?
+    var onTotpSaveProposal: ((_ url: String, _ otpauthOrSecret: String, _ entryId: UUID?) -> Void)?
     var onCredentialFilled: ((UUID) -> Void)?
     /// Fired for `.requestUnlock`. Wired in `MyPassApp.init()` to bring the window
     /// forward and re-trigger the Touch ID prompt. The service itself never unlocks
@@ -111,6 +112,24 @@ final class ExtensionBridgeService {
                 return .pairingRequired
             }
             onSaveProposal?(url, username, password)
+            return .saveProposalAccepted
+
+        case .proposeSaveTotp(_, let url, let otpauthOrSecret, let entryId, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            var resolvedEntryID: UUID?
+            if let entryId {
+                guard let database = vaultSession?.currentDatabase else {
+                    return .locked
+                }
+                let matches = ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
+                guard let entry = matches.first(where: { $0.uuid.uuidString == entryId }) else {
+                    return .error("entry not found or domain mismatch")
+                }
+                resolvedEntryID = entry.uuid
+            }
+            onTotpSaveProposal?(url, otpauthOrSecret, resolvedEntryID)
             return .saveProposalAccepted
 
         case .requestUnlock(_, let pairing):
