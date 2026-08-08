@@ -1,6 +1,6 @@
 const NATIVE_HOST_NAME = "com.mypass.chromehost";
 const PAIRING_STORAGE_KEY = "pairingSecret";
-const knownTypes = ["getCredentials", "fillCredential", "getTotp", "proposeSaveLogin", "startPairing", "completePairing", "requestUnlock"];
+const knownTypes = ["getCredentials", "fillCredential", "getTotp", "proposeSaveLogin", "proposeSaveTotp", "startPairing", "completePairing", "requestUnlock"];
 
 function detectBrowserName() {
   const brands = (navigator.userAgentData && navigator.userAgentData.brands) || [];
@@ -129,7 +129,14 @@ function stripCredentialSecrets(response) {
   return response;
 }
 
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+function handleRuntimeMessage(message, sender, sendResponse) {
+  if (message && message.type === "openPopupForTotpPicker") {
+    if (chrome.action && typeof chrome.action.openPopup === "function") {
+      chrome.action.openPopup().catch(() => {});
+    }
+    return false;
+  }
+
   if (!message || !knownTypes.includes(message.type)) {
     return false;
   }
@@ -158,7 +165,9 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   });
 
   return true; // keep the message channel open for the async sendNativeMessage response
-});
+}
+
+chrome.runtime.onMessage.addListener(handleRuntimeMessage);
 
 if (typeof module !== "undefined") {
   module.exports = {
@@ -168,6 +177,7 @@ if (typeof module !== "undefined") {
     persistPairingResponse,
     clearStaleSecretOnPairingRequired,
     detectBrowserName,
-    sendPairingCompletion
+    sendPairingCompletion,
+    handleRuntimeMessage
   };
 }

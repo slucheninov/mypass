@@ -102,3 +102,20 @@ assert.strictEqual(detectBrowserName(), 'Chromium browser');
 
   console.log('pairing.test.js OK');
 })();
+
+{
+  const { handleRuntimeMessage } = require('../background.js');
+
+  let openPopupCalled = false;
+  global.chrome.action = { openPopup: () => { openPopupCalled = true; return Promise.resolve(); } };
+  const pickerResult = handleRuntimeMessage({ type: 'openPopupForTotpPicker' }, {}, () => {});
+  assert.strictEqual(pickerResult, false);
+  assert.strictEqual(openPopupCalled, true, 'openPopupForTotpPicker triggers chrome.action.openPopup');
+
+  const keepChannelOpen = handleRuntimeMessage(
+    { type: 'proposeSaveTotp', url: 'https://example.com', otpauthOrSecret: 'JBSWY3DP' }, {}, () => {}
+  );
+  assert.strictEqual(keepChannelOpen, true, 'proposeSaveTotp is a known type routed through native messaging');
+
+  console.log('pairing.test.js: proposeSaveTotp + openPopupForTotpPicker routing OK');
+}
