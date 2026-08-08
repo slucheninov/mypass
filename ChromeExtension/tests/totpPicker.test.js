@@ -98,7 +98,8 @@ const {
   isBase32PasteSecret,
   renderTotpPicker,
   routeTotpCandidate,
-  restorePendingTotpCandidate
+  restorePendingTotpCandidate,
+  handleAddTotpClick
 } = require('../popup.js');
 
 assert.deepStrictEqual(
@@ -210,4 +211,87 @@ console.log('totpPicker.test.js: paste validation OK');
   assert.strictEqual(sendMessageCalled, false, 'no pending candidate means no getCredentials lookup');
 
   console.log('totpPicker.test.js: restorePendingTotpCandidate no-op when nothing pending OK');
+})();
+
+// --- additive: handleAddTotpClick must never fire a blind proposeSaveTotp when the
+// vault is locked or unpaired — same trust model as the password-save flow (Global
+// Constraints: pairing secret required, vault must be unlocked). ---
+(() => {
+  elements['totp-paste-input'].value = 'JBSWY3DPEHPK3PXP';
+  elements['add-totp-error'].hidden = true;
+  elements['add-totp-error'].textContent = '';
+  let sentMessage = null;
+  global.chrome.runtime.sendMessage = (msg, cb) => {
+    if (msg.type === 'proposeSaveTotp') sentMessage = msg;
+    if (msg.type === 'getCredentials') cb({ type: 'locked' });
+  };
+
+  handleAddTotpClick('https://example.com');
+
+  assert.strictEqual(sentMessage, null, 'locked vault must not trigger proposeSaveTotp');
+  assert.strictEqual(elements['add-totp-error'].hidden, false, 'error shown when locked');
+  assert.strictEqual(elements['add-totp-error'].textContent, 'Unlock MyPass first');
+
+  console.log('totpPicker.test.js: handleAddTotpClick locked gate OK');
+})();
+
+(() => {
+  elements['totp-paste-input'].value = 'JBSWY3DPEHPK3PXP';
+  elements['add-totp-error'].hidden = true;
+  elements['add-totp-error'].textContent = '';
+  let sentMessage = null;
+  global.chrome.runtime.sendMessage = (msg, cb) => {
+    if (msg.type === 'proposeSaveTotp') sentMessage = msg;
+    if (msg.type === 'getCredentials') cb({ type: 'pairingRequired' });
+  };
+
+  handleAddTotpClick('https://example.com');
+
+  assert.strictEqual(sentMessage, null, 'unpaired browser must not trigger proposeSaveTotp');
+  assert.strictEqual(elements['add-totp-error'].hidden, false, 'error shown when pairing required');
+  assert.strictEqual(elements['add-totp-error'].textContent, 'Connect to MyPass first');
+
+  console.log('totpPicker.test.js: handleAddTotpClick pairingRequired gate OK');
+})();
+
+// --- additive: any other non-credentialList response (error / undefined / unreachable
+// native host) must also not fire a blind proposeSaveTotp. ---
+(() => {
+  elements['totp-paste-input'].value = 'JBSWY3DPEHPK3PXP';
+  elements['add-totp-error'].hidden = true;
+  elements['add-totp-error'].textContent = '';
+  let sentMessage = null;
+  global.chrome.runtime.sendMessage = (msg, cb) => {
+    if (msg.type === 'proposeSaveTotp') sentMessage = msg;
+    if (msg.type === 'getCredentials') cb({ type: 'error', message: 'native_host_not_found' });
+  };
+
+  handleAddTotpClick('https://example.com');
+
+  assert.strictEqual(sentMessage, null, 'unreachable MyPass must not trigger proposeSaveTotp');
+  assert.strictEqual(elements['add-totp-error'].hidden, false, 'error shown when unreachable');
+  assert.strictEqual(elements['add-totp-error'].textContent, "Couldn't reach MyPass");
+
+  console.log('totpPicker.test.js: handleAddTotpClick unreachable-host gate OK');
+})();
+
+// --- additive: a real credentialList response still proceeds to routeTotpCandidate. ---
+(() => {
+  elements['totp-paste-input'].value = 'JBSWY3DPEHPK3PXP';
+  elements['add-totp-error'].hidden = true;
+  elements['add-totp-error'].textContent = '';
+  let sentMessage = null;
+  global.chrome.runtime.sendMessage = (msg, cb) => {
+    if (msg.type === 'proposeSaveTotp') sentMessage = msg;
+    if (msg.type === 'getCredentials') {
+      cb({ type: 'credentialList', credentials: [{ id: 'entry-1', title: 'Example', hasTotp: false }] });
+    }
+  };
+
+  handleAddTotpClick('https://example.com');
+
+  assert.strictEqual(sentMessage && sentMessage.type, 'proposeSaveTotp', 'unlocked+paired single match still proposes a save');
+  assert.strictEqual(sentMessage.entryId, 'entry-1');
+
+  console.log('totpPicker.test.js: handleAddTotpClick credentialList proceeds OK');
 })();

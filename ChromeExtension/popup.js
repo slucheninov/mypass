@@ -376,6 +376,7 @@ function isBase32PasteSecret(candidate) {
 let renderTotpPicker = null;
 let routeTotpCandidate = null;
 let restorePendingTotpCandidate = null;
+let handleAddTotpClick = null;
 
 if (typeof document !== 'undefined') {
   const lockedPanel = document.getElementById('locked-panel');
@@ -753,7 +754,7 @@ if (typeof document !== 'undefined') {
     }
   };
 
-  function handleAddTotpClick(activeTabUrl) {
+  handleAddTotpClick = function (activeTabUrl) {
     const raw = totpPasteInput.value;
     const validation = validateTotpPasteInput(raw);
     if (!validation.valid) {
@@ -763,10 +764,30 @@ if (typeof document !== 'undefined') {
     }
     addTotpErrorEl.hidden = true;
     chrome.runtime.sendMessage({ type: 'getCredentials', url: activeTabUrl }, (response) => {
-      const credentials = (response && response.type === 'credentialList') ? response.credentials : [];
-      routeTotpCandidate(activeTabUrl, validation.value, credentials);
+      // Same trust model as the password-save flow: never fire a save/picker proposal
+      // unless the vault is actually unlocked and paired. A locked/pairingRequired/error
+      // response must surface a status here, not silently fall through to a blind
+      // proposeSaveTotp (that would happen if we treated "not credentialList" as "zero
+      // matches", since routeTotpCandidate's zero-match branch sends the proposal anyway).
+      const kind = classifyGetCredentialsResponse(response);
+      if (kind === 'locked') {
+        addTotpErrorEl.textContent = 'Unlock MyPass first';
+        addTotpErrorEl.hidden = false;
+        return;
+      }
+      if (kind === 'pairingRequired') {
+        addTotpErrorEl.textContent = 'Connect to MyPass first';
+        addTotpErrorEl.hidden = false;
+        return;
+      }
+      if (kind !== 'credentialList') {
+        addTotpErrorEl.textContent = "Couldn't reach MyPass";
+        addTotpErrorEl.hidden = false;
+        return;
+      }
+      routeTotpCandidate(activeTabUrl, validation.value, response.credentials);
     });
-  }
+  };
 
   restorePendingTotpCandidate = function () {
     const area = getPairingStorageArea();
@@ -837,6 +858,7 @@ if (typeof module !== 'undefined') {
     isBase32PasteSecret,
     renderTotpPicker,
     routeTotpCandidate,
-    restorePendingTotpCandidate
+    restorePendingTotpCandidate,
+    handleAddTotpClick
   };
 }
