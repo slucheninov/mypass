@@ -222,6 +222,12 @@ struct MyPassApp: App {
                 MainWindowActivator.request()
             }
         }
+        extensionBridgeService.onTotpSaveProposal = { [weak navigationState] url, otpauthOrSecret, entryId in
+            DispatchQueue.main.async {
+                navigationState?.pendingTotpSaveProposal = PendingTotpSaveProposal(url: url, otpauthOrSecret: otpauthOrSecret, entryId: entryId)
+                MainWindowActivator.request()
+            }
+        }
 
         // Stage 3 (U5): the popup's Unlock button. Activation alone is not enough —
         // if the window was already open on the unlock screen, `UnlockView.onAppear`

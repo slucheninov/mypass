@@ -92,6 +92,14 @@ private struct DetailColumnView: View {
             entryEdit(existingID: nil, defaultGroupID: defaultGroupID, entryType: entryType)
         case .createFromProposal(let proposal):
             entryEdit(existingID: nil, proposal: proposal)
+        case .createFromTotpProposal, .editFromTotpProposal:
+            // Real routing (pre-filled OTP create/edit sheet) lands in Task 4
+            // (B4: ContentView — route TOTP proposals). Until then this case is
+            // unreachable in practice: `MyPassApp.init()` wiring (Task 3) only
+            // stores `pendingTotpSaveProposal`; nothing yet calls
+            // `presentCreateFromTotpProposal`/`presentEditFromTotpProposal` to
+            // route it into `detailPresentation`.
+            browseDetail()
         }
     }
 
