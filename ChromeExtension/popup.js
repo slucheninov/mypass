@@ -353,6 +353,30 @@ function buildTotpCircleElement(credential, url) {
   return circle;
 }
 
+function validateTotpPasteInput(raw) {
+  const trimmed = (raw || '').trim();
+  if (trimmed.toLowerCase().startsWith('otpauth://totp/')) {
+    return { valid: true, value: trimmed };
+  }
+  if (isBase32PasteSecret(trimmed)) {
+    return { valid: true, value: trimmed.replace(/\s+/g, '').toUpperCase() };
+  }
+  return { valid: false, value: null };
+}
+
+function isBase32PasteSecret(candidate) {
+  const normalized = (candidate || '').replace(/\s+/g, '');
+  return /^[A-Z2-7]{16,128}$/i.test(normalized);
+}
+
+// Assigned once the DOM is wired up below: renderTotpPicker needs `listEl` and
+// `buildLetterAvatarElement`, routeTotpCandidate needs renderTotpPicker, and
+// restorePendingTotpCandidate needs `totpPasteInput`/`showPanel`. Declared here (rather
+// than only inside the DOM block) so module.exports at the bottom of this file can see them.
+let renderTotpPicker = null;
+let routeTotpCandidate = null;
+let restorePendingTotpCandidate = null;
+
 if (typeof document !== 'undefined') {
   const lockedPanel = document.getElementById('locked-panel');
   const lockedTitleEl = document.getElementById('locked-title');
@@ -385,6 +409,15 @@ if (typeof document !== 'undefined') {
   const codeInput = document.getElementById('code-input');
   const submitCodeBtn = document.getElementById('submit-code-btn');
   const pairingErrorEl = document.getElementById('pairing-error');
+
+  const addTotpBtn = document.getElementById('add-totp-btn');
+  const totpPasteInput = document.getElementById('totp-paste-input');
+  const addTotpErrorEl = document.getElementById('add-totp-error');
+
+  // Set by queryCredentials for every credential lookup (initial load, retries, and
+  // post-pairing/post-unlock re-checks) so the Add-2FA button can reuse the active tab's
+  // URL without re-querying chrome.tabs itself.
+  let currentTabUrl = null;
 
   lockedTitleEl.textContent = LOCKED_TITLE_TEXT;
   lockedHelperEl.textContent = LOCKED_HELPER_TEXT;
@@ -667,11 +700,93 @@ if (typeof document !== 'undefined') {
   }
 
   function queryCredentials(url) {
+    currentTabUrl = url;
     stopUnlockPolling();
     chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
       handleCredentialsResponse(response, url);
     });
   }
+
+  renderTotpPicker = function (credentials, url, otpauthOrSecret) {
+    showPanel('credential-list');
+    listEl.innerHTML = '';
+    credentials.forEach((credential) => {
+      const item = document.createElement('li');
+      item.className = 'credential-row';
+      item.appendChild(buildLetterAvatarElement(credential.title));
+
+      const textCol = document.createElement('div');
+      textCol.className = 'credential-text';
+      const title = document.createElement('div');
+      title.className = 'credential-title';
+      title.textContent = credential.title;
+      textCol.appendChild(title);
+      item.appendChild(textCol);
+
+      if (credential.hasTotp) {
+        const badge = document.createElement('span');
+        badge.className = 'totp-badge';
+        badge.textContent = '2FA';
+        item.appendChild(badge);
+      }
+
+      item.addEventListener('click', () => {
+        chrome.runtime.sendMessage(
+          { type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credential.id },
+          () => {
+            addTotpErrorEl.hidden = false;
+            addTotpErrorEl.textContent = 'Opened in MyPass';
+          }
+        );
+      });
+      listEl.appendChild(item);
+    });
+  };
+
+  routeTotpCandidate = function (url, otpauthOrSecret, credentials) {
+    if (credentials.length === 0) {
+      chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret });
+    } else if (credentials.length === 1) {
+      chrome.runtime.sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credentials[0].id });
+    } else {
+      renderTotpPicker(credentials, url, otpauthOrSecret);
+    }
+  };
+
+  function handleAddTotpClick(activeTabUrl) {
+    const raw = totpPasteInput.value;
+    const validation = validateTotpPasteInput(raw);
+    if (!validation.valid) {
+      addTotpErrorEl.textContent = 'Enter a valid authenticator URL or secret key';
+      addTotpErrorEl.hidden = false;
+      return;
+    }
+    addTotpErrorEl.hidden = true;
+    chrome.runtime.sendMessage({ type: 'getCredentials', url: activeTabUrl }, (response) => {
+      const credentials = (response && response.type === 'credentialList') ? response.credentials : [];
+      routeTotpCandidate(activeTabUrl, validation.value, credentials);
+    });
+  }
+
+  restorePendingTotpCandidate = function () {
+    const area = getPairingStorageArea();
+    if (!area || !area.get) return;
+    area.get(['pendingTotpCandidate'], (result) => {
+      const pending = result && result.pendingTotpCandidate;
+      if (!pending) return;
+      totpPasteInput.value = pending.otpauthOrSecret;
+      chrome.runtime.sendMessage({ type: 'getCredentials', url: pending.url }, (response) => {
+        const credentials = (response && response.type === 'credentialList') ? response.credentials : [];
+        if (credentials.length > 1) {
+          renderTotpPicker(credentials, pending.url, pending.otpauthOrSecret);
+        }
+      });
+      area.remove(['pendingTotpCandidate']);
+    });
+  };
+
+  addTotpBtn.onclick = () => handleAddTotpClick(currentTabUrl);
+  restorePendingTotpCandidate();
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
@@ -717,6 +832,11 @@ if (typeof module !== 'undefined') {
     tickTotpRings,
     registerTotpRing,
     TOTP_RING_PERIOD_SECONDS,
-    TOTP_RING_CIRCUMFERENCE
+    TOTP_RING_CIRCUMFERENCE,
+    validateTotpPasteInput,
+    isBase32PasteSecret,
+    renderTotpPicker,
+    routeTotpCandidate,
+    restorePendingTotpCandidate
   };
 }

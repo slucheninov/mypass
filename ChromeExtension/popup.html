@@ -177,6 +177,36 @@
       font-size: 12px;
       color: #6e6e73;
     }
+    #add-totp-section {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #e5e5e7;
+    }
+    #add-totp-hint {
+      margin: 0 0 6px;
+      font-size: 12px;
+      color: #6e6e73;
+    }
+    #totp-paste-input {
+      width: 100%;
+      box-sizing: border-box;
+      font-size: 13px;
+      margin-bottom: 8px;
+    }
+    #add-totp-error {
+      color: #c00;
+      font-size: 12px;
+      margin: 8px 0 0;
+    }
+    .totp-badge {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(80, 160, 255, 0.15);
+      color: #3b82f6;
+    }
     [hidden] {
       display: none !important;
     }
@@ -221,6 +251,13 @@
       </div>
       <p id="pairing-error" hidden></p>
     </section>
+
+    <div id="add-totp-section">
+      <p id="add-totp-hint">Paste otpauth:// URL or secret key</p>
+      <input id="totp-paste-input" type="text" placeholder="Paste otpauth:// URL or secret key" />
+      <button id="add-totp-btn" type="button" class="btn-primary">Add</button>
+      <p id="add-totp-error" hidden></p>
+    </div>
   </div>
   <script src="popup.js"></script>
 </body>
