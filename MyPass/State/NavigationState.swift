@@ -126,4 +126,23 @@ final class NavigationState: ObservableObject {
     func presentEditFromTotpProposal(entryID: UUID, otpauthInput: String) {
         detailPresentation = .editFromTotpProposal(entryID: entryID, otpauthInput: otpauthInput)
     }
+
+    /// Routes any proposal that arrived while no window was subscribed —
+    /// e.g. when the main window was closed at proposal time and onChange
+    /// never saw the initial value. Called from ContentView's onAppear and
+    /// from both onChange handlers so the logic lives in one place.
+    func consumePendingProposals() {
+        if let proposal = pendingSaveProposal {
+            presentCreateFromProposal(proposal)
+            pendingSaveProposal = nil
+        }
+        if let proposal = pendingTotpSaveProposal {
+            if let entryId = proposal.entryId {
+                presentEditFromTotpProposal(entryID: entryId, otpauthInput: proposal.otpauthOrSecret)
+            } else {
+                presentCreateFromTotpProposal(proposal)
+            }
+            pendingTotpSaveProposal = nil
+        }
+    }
 }

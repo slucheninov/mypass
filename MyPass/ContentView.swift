@@ -51,21 +51,20 @@ struct ContentView: View {
                 actions: {},
                 message: { Text(vaultSession.lastSaveError ?? "") }
             )
+            .onAppear {
+                // Covers both the closed-window case (proposal set before ContentView —
+                // and therefore these onChange handlers — existed, so .onChange never saw
+                // the initial value) and the locked-vault case (proposal set while this
+                // branch was torn down; consumed once it reappears after unlock).
+                navigationState.consumePendingProposals()
+            }
             .onChange(of: navigationState.pendingSaveProposal) { _, proposal in
-                if let proposal {
-                    navigationState.presentCreateFromProposal(proposal)
-                    navigationState.pendingSaveProposal = nil
-                }
+                guard proposal != nil else { return }
+                navigationState.consumePendingProposals()
             }
             .onChange(of: navigationState.pendingTotpSaveProposal) { _, proposal in
-                if let proposal {
-                    if let entryId = proposal.entryId {
-                        navigationState.presentEditFromTotpProposal(entryID: entryId, otpauthInput: proposal.otpauthOrSecret)
-                    } else {
-                        navigationState.presentCreateFromTotpProposal(proposal)
-                    }
-                    navigationState.pendingTotpSaveProposal = nil
-                }
+                guard proposal != nil else { return }
+                navigationState.consumePendingProposals()
             }
             .onChange(of: navigationState.selectedEntryID) { oldID, newID in
                 guard navigationState.detailPresentation != .browse else { return }
