@@ -4,7 +4,7 @@
 outstanding workstreams is tracked. Tick a box only when the item is implemented **and**
 its tests pass — see "Definition of done" below.
 
-Last updated: 2026-08-07
+Last updated: 2026-08-08
 
 ---
 
@@ -367,7 +367,7 @@ the pre-A state of `background.js` and `ExtensionBridgeMessages.swift`.
 **⛳ Gate 5** — `./scripts/test.sh` green; all five e2e scenarios from the design pass
 (0 matches, 1 match, N matches, replace-existing, locked vault).
 
-Automated half of Gate 5 is green as of 2026-08-08: full `./scripts/test.sh` (MyPass 390 tests, SyncKit 86, ExtensionBridgeKit 47, nine JS suites), plus a whole-branch review whose two Critical banner findings were fixed in `61e473c`. The manual walk of the ten new RUN.md bullets (covering the five design e2e scenarios) is still pending.
+Gate 5 closed 2026-08-08: full `./scripts/test.sh` green, the whole-branch review's findings fixed, and the manual walk of all fourteen new RUN.md bullets passed on a real Chrome + MyPass build — including six defects the walk itself surfaced (see Decisions).
 
 ---
 
@@ -412,7 +412,7 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 2 — Passkey core (C2–C3) | 2 | **2 — complete** |
 | 3 — Unlock from popup (U1–U9) | 9 | **9 — complete** |
 | 4 — Piece A (A1–A7) | 7 | **7 — complete** |
-| 5 — Piece B (B1–B11) | 11 | **11 — code complete, Gate 5 manual walk pending** |
+| 5 — Piece B (B1–B11) | 11 | **11 — complete** |
 | 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
 | **Total** | **55** | **46** |
 
