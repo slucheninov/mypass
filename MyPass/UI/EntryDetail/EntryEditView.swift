@@ -25,6 +25,7 @@ struct EntryEditView: View {
     @State private var isFavorite: Bool
     @State private var isReplacingTotp: Bool
     @State private var showReplaceTotpAlert = false
+    @State private var removeExistingTotp = false
 
     init(
         existingEntry: KdbxEntry?,
@@ -122,9 +123,21 @@ struct EntryEditView: View {
                     Divider().overlay(Color.primary.opacity(0.08))
 
                     if showOTPField {
-                        TextField("otpauth:// or secret", text: $otpauthInput)
+                        HStack {
+                            TextField("otpauth:// or secret", text: $otpauthInput)
+                            Button("Remove", systemImage: "minus.circle") {
+                                let hadExistingSecret = existingEntry?.totpSecretBase32?.isEmpty == false
+                                otpauthInput = ""
+                                showOTPField = false
+                                isReplacingTotp = false
+                                removeExistingTotp = hadExistingSecret
+                            }
+                        }
                     } else {
-                        Button("+ Add one-time password") { showOTPField = true }
+                        Button("+ Add one-time password") {
+                            showOTPField = true
+                            removeExistingTotp = false
+                        }
                     }
 
                     if !extraFields.isEmpty {
@@ -194,6 +207,11 @@ struct EntryEditView: View {
                 Text("This entry already has an authenticator set up. Saving will replace it with the new one.")
             }
         )
+        .onChange(of: otpauthInput) { _, newValue in
+            if !newValue.isEmpty {
+                removeExistingTotp = false
+            }
+        }
     }
 
     private func save() {
@@ -224,7 +242,11 @@ struct EntryEditView: View {
         entry.isFavorite = isFavorite
         entry.lastModificationTime = now
         entry.lastAccessTime = now
-        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: otpauthInput)
+        if removeExistingTotp && otpauthInput.isEmpty {
+            EntryEditSaveLogic.applyOTPRemoval(to: &entry)
+        } else {
+            EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: otpauthInput)
+        }
 
         entry.fields.removeAll { !KdbxEntry.standardFieldKeys.contains($0.key) }
         for field in extraFields where !field.key.isEmpty {

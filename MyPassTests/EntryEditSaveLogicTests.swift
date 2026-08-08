@@ -85,6 +85,31 @@ final class EntryEditSaveLogicTests: XCTestCase {
         XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: nil, isFromTotpProposal: true))
     }
 
+    func testApplyOTPRemovalClearsExistingSecret() {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: []
+        )
+        entry.totpSecretBase32 = "EXISTING"
+        EntryEditSaveLogic.applyOTPRemoval(to: &entry)
+        XCTAssertNil(entry.totpSecretBase32)
+    }
+
+    /// Removal-then-retype: if the user removes 2FA and then types a new
+    /// secret before saving, the new value must win over the removal.
+    func testApplyOTPRemovalThenApplyOTPWithNewInputWins() {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: []
+        )
+        entry.totpSecretBase32 = "EXISTING"
+        EntryEditSaveLogic.applyOTPRemoval(to: &entry)
+        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "JBSWY3DPEHPK3PXP")
+        XCTAssertEqual(entry.totpSecretBase32, "JBSWY3DPEHPK3PXP")
+    }
+
     func testApplyOTPParsesOtpauthURL() {
         var entry = KdbxEntry(
             uuid: UUID(), iconID: 0, fields: [],

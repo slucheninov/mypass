@@ -21,4 +21,12 @@ enum EntryEditSaveLogic {
             entry.totpSecretBase32 = otpauthInput
         }
     }
+
+    /// Explicit removal path: unlike `applyOTP`'s empty-input no-op (which
+    /// deliberately preserves an existing secret), this clears it. Only
+    /// called when the user has actively removed 2FA via the editor's
+    /// "Remove" button.
+    static func applyOTPRemoval(to entry: inout KdbxEntry) {
+        entry.totpSecretBase32 = nil
+    }
 }
