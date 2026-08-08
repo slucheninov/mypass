@@ -47,6 +47,12 @@ final class EntryCategoryFilterTests: XCTestCase {
         XCTAssertEqual(EntryCategoryFilter.entries(for: .codes, in: db).map(\.title), ["OTP"])
     }
 
+    func testCodesFilterExcludesBin() {
+        let deletedWithOTP = makeEntry(title: "DeletedOTP", totp: "SECRET")
+        let db = makeDatabase(rootEntries: [], binEntries: [deletedWithOTP])
+        XCTAssertEqual(EntryCategoryFilter.entries(for: .codes, in: db), [])
+    }
+
     func testDeletedFilterBinOnly() {
         let deleted = makeEntry(title: "Bin")
         let db = makeDatabase(rootEntries: [makeEntry(title: "Live")], binEntries: [deleted])

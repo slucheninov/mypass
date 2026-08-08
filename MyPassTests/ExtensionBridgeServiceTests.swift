@@ -51,6 +51,17 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         return entry.uuid
     }
 
+    /// Soft-deletes the fixture entry into the recycle bin, mirroring what the
+    /// app's own delete flow does via `GroupTreeOperations.softDeleteEntry`.
+    private func moveEntryToRecycleBin(_ id: UUID) {
+        session.mutate { db in
+            GroupTreeOperations.softDeleteEntry(
+                withID: id, in: db.rootGroup,
+                deletedObjects: &db.deletedObjects, recycleBinGroupUUID: &db.recycleBinGroupUUID
+            )
+        }
+    }
+
     private func makeServiceWithPairing() -> (ExtensionBridgeService, InMemoryExtensionPairingStore, ExtensionPairingManager) {
         let store = InMemoryExtensionPairingStore()
         let manager = ExtensionPairingManager(store: store)
@@ -466,6 +477,46 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             token: "t", url: "https://example.com/setup", otpauthOrSecret: "JBSWY3DPEHPK3PXP", entryId: nil, pairing: authorizedPairingSecret
         ))
         XCTAssertEqual(response, .locked)
+        XCTAssertFalse(wasInvoked)
+    }
+
+    // MARK: - Recycle bin exclusion
+
+    func testGetCredentialsExcludesRecycleBinEntries() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        moveEntryToRecycleBin(id)
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .credentialList([]))
+    }
+
+    func testFillCredentialReturnsErrorForRecycleBinEntry() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        moveEntryToRecycleBin(id)
+        let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .error("entry not found or domain mismatch"))
+    }
+
+    func testGetTotpReturnsErrorForRecycleBinEntry() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        session.mutate { db in
+            if let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) {
+                db.rootGroup.entries[index].totpSecretBase32 = "JBSWY3DPEHPK3PXP"
+            }
+        }
+        moveEntryToRecycleBin(id)
+        let response = service.handle(.getTotp(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .error("entry not found or domain mismatch"))
+    }
+
+    func testProposeSaveTotpReturnsErrorForRecycleBinEntryId() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        moveEntryToRecycleBin(id)
+        var wasInvoked = false
+        service.onTotpSaveProposal = { _, _, _ in wasInvoked = true }
+        let response = service.handle(.proposeSaveTotp(
+            token: "t", url: "https://example.com", otpauthOrSecret: "JBSWY3DPEHPK3PXP", entryId: id.uuidString, pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .error("entry not found or domain mismatch"))
         XCTAssertFalse(wasInvoked)
     }
 }

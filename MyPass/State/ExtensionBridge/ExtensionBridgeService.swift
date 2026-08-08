@@ -37,6 +37,13 @@ final class ExtensionBridgeService {
         self.now = now
     }
 
+    /// Matches entries for `url`, then excludes any that live in the Recycle Bin —
+    /// soft-deleted entries must never be surfaced to or filled by the extension.
+    private func matchingEntries(forURL url: String, in database: KdbxDatabase) -> [KdbxEntry] {
+        ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
+            .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
+    }
+
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
         guard vaultSession?.currentDatabase != nil || request.isAnswerableWhileLocked else {
             return .locked
@@ -57,7 +64,7 @@ final class ExtensionBridgeService {
             guard let database = vaultSession?.currentDatabase else {
                 return .locked
             }
-            let matches = ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
+            let matches = matchingEntries(forURL: url, in: database)
             let summaries = matches.map {
                 ExtensionCredentialSummary(
                     id: $0.uuid.uuidString,
@@ -75,7 +82,7 @@ final class ExtensionBridgeService {
             guard let database = vaultSession?.currentDatabase else {
                 return .locked
             }
-            let matches = ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
+            let matches = matchingEntries(forURL: url, in: database)
             guard let entry = matches.first(where: { $0.uuid.uuidString == id }) else {
                 return .error("entry not found or domain mismatch")
             }
@@ -95,7 +102,7 @@ final class ExtensionBridgeService {
             guard let database = vaultSession?.currentDatabase else {
                 return .locked
             }
-            let matches = ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
+            let matches = matchingEntries(forURL: url, in: database)
             guard let entry = matches.first(where: { $0.uuid.uuidString == id }) else {
                 return .error("entry not found or domain mismatch")
             }
@@ -123,7 +130,7 @@ final class ExtensionBridgeService {
                 guard let database = vaultSession?.currentDatabase else {
                     return .locked
                 }
-                let matches = ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
+                let matches = matchingEntries(forURL: url, in: database)
                 guard let entry = matches.first(where: { $0.uuid.uuidString == entryId }) else {
                     return .error("entry not found or domain mismatch")
                 }

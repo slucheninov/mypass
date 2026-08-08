@@ -11,8 +11,8 @@ enum EntryCategoryFilter {
             return all.filter { $0.isFavorite && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         case .codes:
             return all.filter {
-                guard let secret = $0.totpSecretBase32 else { return false }
-                return !secret.isEmpty
+                guard let secret = $0.totpSecretBase32, !secret.isEmpty else { return false }
+                return !RecycleBinEntryFilter.isInRecycleBin($0, database: database)
             }
         case .cards:
             return all.filter { $0.entryType == .card && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
