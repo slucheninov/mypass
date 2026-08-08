@@ -180,7 +180,9 @@ private struct DetailColumnView: View {
                 existingEntry: existingEntry, rootGroup: rootGroup,
                 recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
                 onCancel: onCancel, onSave: onSave, onDelete: onDelete,
-                prefilledOtpauthInput: prefilledOtpauthInput
+                // The create path carries the OTP inside the proposal itself;
+                // the edit path passes it explicitly via prefilledOtpauthInput.
+                prefilledOtpauthInput: prefilledOtpauthInput ?? totpProposal?.otpauthOrSecret
             )
             .id(navigationState.detailPresentation)
         case .card:
