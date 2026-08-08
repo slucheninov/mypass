@@ -39,6 +39,7 @@ struct EntryDetailView: View {
     @State private var lastTouchedEntryID: UUID?
     @State private var largeTypeField: LargeTypeField?
     @State private var showWebsitesSheet = false
+    @State private var showDeletePermanentlyAlert = false
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
@@ -214,6 +215,10 @@ struct EntryDetailView: View {
                                 }
                                 navigationState.selectedEntryID = nil
                             }
+                            Button("Delete Permanently…", role: .destructive) {
+                                showDeletePermanentlyAlert = true
+                            }
+                            .foregroundStyle(.red)
                         }
                         .padding(.bottom, 24)
                     }
@@ -255,6 +260,17 @@ struct EntryDetailView: View {
                     onDone: { _ in showWebsitesSheet = false },
                     onCancel: { showWebsitesSheet = false }
                 )
+            }
+            .alert("Delete Permanently?", isPresented: $showDeletePermanentlyAlert) {
+                Button("Delete Permanently", role: .destructive) {
+                    vaultSession.mutate { database in
+                        GroupTreeOperations.permanentlyDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects)
+                    }
+                    navigationState.selectedEntryID = nil
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This entry will be permanently deleted. This cannot be undone.")
             }
             .onChange(of: navigationState.selectedEntryID) { _, newID in
                 isPasswordRevealed = false

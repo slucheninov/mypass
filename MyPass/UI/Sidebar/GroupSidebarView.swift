@@ -10,6 +10,7 @@ struct GroupSidebarView: View {
     @State private var showingCreateSheet = false
     @State private var groupBeingEdited: KdbxGroup?
     @State private var groupPendingDeletion: KdbxGroup?
+    @State private var showEmptyRecycleBinAlert = false
 
     var body: some View {
         List(selection: $navigationState.sidebarSelectedGroupID) {
@@ -60,6 +61,12 @@ struct GroupSidebarView: View {
                 if let uuid = recycleBinGroupUUID, let bin = rootGroup.subgroups.first(where: { $0.uuid == uuid }) {
                     Text(GroupTreeOperations.recycleBinGroupName)
                         .tag(bin.uuid)
+                        .contextMenu {
+                            Button("Empty Recycle Bin…", role: .destructive) {
+                                showEmptyRecycleBinAlert = true
+                            }
+                            .disabled(bin.entries.isEmpty)
+                        }
                 } else {
                     Text(GroupTreeOperations.recycleBinGroupName)
                         .foregroundStyle(.secondary)
@@ -91,6 +98,29 @@ struct GroupSidebarView: View {
                     confirmDeleteGroup(group)
                 },
                 secondaryButton: .cancel()
+            )
+        }
+        .alert("Empty Recycle Bin?", isPresented: $showEmptyRecycleBinAlert) {
+            Button("Delete All", role: .destructive) {
+                emptyRecycleBin()
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("Permanently delete all \(recycleBinEntryCount) items in the Recycle Bin? This cannot be undone.")
+        }
+    }
+
+    private var recycleBinEntryCount: Int {
+        guard let uuid = recycleBinGroupUUID, let bin = rootGroup.subgroups.first(where: { $0.uuid == uuid }) else { return 0 }
+        return bin.entries.count
+    }
+
+    private func emptyRecycleBin() {
+        vaultSession.mutate { database in
+            GroupTreeOperations.emptyRecycleBin(
+                in: database.rootGroup,
+                deletedObjects: &database.deletedObjects,
+                recycleBinGroupUUID: database.recycleBinGroupUUID
             )
         }
     }

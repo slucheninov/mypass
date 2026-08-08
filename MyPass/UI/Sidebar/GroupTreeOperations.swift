@@ -192,4 +192,34 @@ extension GroupTreeOperations {
     private static func flattenGroups(_ group: KdbxGroup) -> [KdbxGroup] {
         [group] + group.subgroups.flatMap(flattenGroups)
     }
+
+    /// Removes the entry from wherever it currently lives and records a
+    /// tombstone for sync — unlike `softDeleteEntry`, it does NOT land in the
+    /// Recycle Bin. Used for permanent purges (e.g. "Delete Permanently…").
+    @discardableResult
+    static func permanentlyDeleteEntry(withID entryID: UUID, in root: KdbxGroup, deletedObjects: inout [KdbxDeletedObject]) -> Bool {
+        guard removeEntry(withID: entryID, from: root) else { return false }
+        deletedObjects.append(KdbxDeletedObject(uuid: entryID, deletionTime: Date()))
+        return true
+    }
+
+    /// Permanently removes every entry (and any stray subgroups) inside the
+    /// Recycle Bin, tombstoning each for sync. The bin group itself stays.
+    /// A safe no-op when the bin is missing or already empty.
+    static func emptyRecycleBin(in root: KdbxGroup, deletedObjects: inout [KdbxDeletedObject], recycleBinGroupUUID: UUID?) {
+        guard let binUUID = recycleBinGroupUUID, let bin = findGroup(uuid: binUUID, in: root) else { return }
+        let now = Date()
+
+        for entry in collectEntriesInSubtree(bin) {
+            deletedObjects.append(KdbxDeletedObject(uuid: entry.uuid, deletionTime: now))
+        }
+        for subgroup in bin.subgroups {
+            for groupID in collectGroupsInSubtree(subgroup).map(\.uuid) {
+                deletedObjects.append(KdbxDeletedObject(uuid: groupID, deletionTime: now))
+            }
+        }
+
+        bin.entries.removeAll()
+        bin.subgroups.removeAll()
+    }
 }

@@ -363,4 +363,90 @@ final class GroupTreeOperationsTests: XCTestCase {
 
         XCTAssertEqual(Set(selectable.map(\.uuid)), [root.uuid, child.uuid])
     }
+
+    // MARK: - permanentlyDeleteEntry
+
+    func testPermanentlyDeleteEntryRemovesAndTombstonesWithoutAddingToBin() {
+        let now = Date()
+        let entry = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let source = makeGroup(name: "Source", entries: [entry])
+        let root = makeGroup(name: "Root", subgroups: [source])
+        var deletedObjects: [KdbxDeletedObject] = []
+
+        let deleted = GroupTreeOperations.permanentlyDeleteEntry(withID: entry.uuid, in: root, deletedObjects: &deletedObjects)
+
+        XCTAssertTrue(deleted)
+        XCTAssertEqual(source.entries.count, 0)
+        XCTAssertEqual(deletedObjects.count, 1)
+        XCTAssertEqual(deletedObjects.first?.uuid, entry.uuid)
+        XCTAssertNil(root.subgroups.first { GroupTreeOperations.isRecycleBinGroup($0) }, "must not create/add to a recycle bin")
+    }
+
+    func testPermanentlyDeleteEntryReturnsFalseWhenEntryNotFound() {
+        let root = makeGroup(name: "Root")
+        var deletedObjects: [KdbxDeletedObject] = []
+
+        let deleted = GroupTreeOperations.permanentlyDeleteEntry(withID: UUID(), in: root, deletedObjects: &deletedObjects)
+
+        XCTAssertFalse(deleted)
+        XCTAssertTrue(deletedObjects.isEmpty)
+    }
+
+    // MARK: - emptyRecycleBin
+
+    func testEmptyRecycleBinRemovesEntriesAndTombstonesButKeepsBinGroup() {
+        let now = Date()
+        let entry1 = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let entry2 = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let root = makeGroup(name: "Root")
+        var recycleBinUUID: UUID? = nil
+        let bin = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+        bin.entries.append(contentsOf: [entry1, entry2])
+        var deletedObjects: [KdbxDeletedObject] = []
+
+        GroupTreeOperations.emptyRecycleBin(in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: recycleBinUUID)
+
+        XCTAssertEqual(bin.entries.count, 0)
+        XCTAssertTrue(root.subgroups.contains { $0.uuid == bin.uuid }, "the bin group itself must stay")
+        XCTAssertEqual(deletedObjects.count, 2)
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == entry1.uuid })
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == entry2.uuid })
+    }
+
+    func testEmptyRecycleBinRemovesStraySubgroupsAndTombstonesThem() {
+        let now = Date()
+        let nestedEntry = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        let stray = makeGroup(name: "Stray", entries: [nestedEntry])
+        let root = makeGroup(name: "Root")
+        var recycleBinUUID: UUID? = nil
+        let bin = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+        bin.subgroups.append(stray)
+        var deletedObjects: [KdbxDeletedObject] = []
+
+        GroupTreeOperations.emptyRecycleBin(in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: recycleBinUUID)
+
+        XCTAssertEqual(bin.subgroups.count, 0)
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == stray.uuid })
+        XCTAssertTrue(deletedObjects.contains { $0.uuid == nestedEntry.uuid })
+    }
+
+    func testEmptyRecycleBinOnMissingBinIsSafeNoOp() {
+        let root = makeGroup(name: "Root")
+        var deletedObjects: [KdbxDeletedObject] = []
+
+        GroupTreeOperations.emptyRecycleBin(in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: nil)
+
+        XCTAssertTrue(deletedObjects.isEmpty)
+    }
+
+    func testEmptyRecycleBinOnEmptyBinIsSafeNoOp() {
+        let root = makeGroup(name: "Root")
+        var recycleBinUUID: UUID? = nil
+        _ = GroupTreeOperations.recycleBinGroup(in: root, recycleBinGroupUUID: &recycleBinUUID)
+        var deletedObjects: [KdbxDeletedObject] = []
+
+        GroupTreeOperations.emptyRecycleBin(in: root, deletedObjects: &deletedObjects, recycleBinGroupUUID: recycleBinUUID)
+
+        XCTAssertTrue(deletedObjects.isEmpty)
+    }
 }
