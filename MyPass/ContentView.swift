@@ -57,6 +57,16 @@ struct ContentView: View {
                     navigationState.pendingSaveProposal = nil
                 }
             }
+            .onChange(of: navigationState.pendingTotpSaveProposal) { _, proposal in
+                if let proposal {
+                    if let entryId = proposal.entryId {
+                        navigationState.presentEditFromTotpProposal(entryID: entryId, otpauthInput: proposal.otpauthOrSecret)
+                    } else {
+                        navigationState.presentCreateFromTotpProposal(proposal)
+                    }
+                    navigationState.pendingTotpSaveProposal = nil
+                }
+            }
             .onChange(of: navigationState.selectedEntryID) { oldID, newID in
                 guard navigationState.detailPresentation != .browse else { return }
                 if newID != oldID {
@@ -92,14 +102,10 @@ private struct DetailColumnView: View {
             entryEdit(existingID: nil, defaultGroupID: defaultGroupID, entryType: entryType)
         case .createFromProposal(let proposal):
             entryEdit(existingID: nil, proposal: proposal)
-        case .createFromTotpProposal, .editFromTotpProposal:
-            // Real routing (pre-filled OTP create/edit sheet) lands in Task 4
-            // (B4: ContentView — route TOTP proposals). Until then this case is
-            // unreachable in practice: `MyPassApp.init()` wiring (Task 3) only
-            // stores `pendingTotpSaveProposal`; nothing yet calls
-            // `presentCreateFromTotpProposal`/`presentEditFromTotpProposal` to
-            // route it into `detailPresentation`.
-            browseDetail()
+        case .createFromTotpProposal(let proposal):
+            entryEdit(existingID: nil, totpProposal: proposal)
+        case .editFromTotpProposal(let entryID, let otpauthInput):
+            entryEdit(existingID: entryID, prefilledOtpauthInput: otpauthInput)
         }
     }
 
@@ -129,10 +135,12 @@ private struct DetailColumnView: View {
         existingID: UUID?,
         defaultGroupID: UUID? = nil,
         proposal: PendingSaveProposal? = nil,
+        totpProposal: PendingTotpSaveProposal? = nil,
+        prefilledOtpauthInput: String? = nil,
         entryType: EntryType = .login
     ) -> some View {
         let targetGroupID = resolvedDefaultGroupID(existingID: existingID, defaultGroupID: defaultGroupID)
-        let existingEntry = resolvedEntry(existingID: existingID, proposal: proposal)
+        let existingEntry = resolvedEntry(existingID: existingID, proposal: proposal, totpProposal: totpProposal)
         let resolvedType = existingEntry?.entryType ?? entryType
         let recycleBinGroupUUID = vaultSession.currentDatabase?.recycleBinGroupUUID
 
@@ -168,6 +176,9 @@ private struct DetailColumnView: View {
 
         switch resolvedType {
         case .login:
+            // B5 threads `prefilledOtpauthInput` into EntryEditView's init once it
+            // gains that parameter; for now it flows in via `resolvedEntry`/
+            // `draftEntry(from:)` only through `totpProposal`.
             EntryEditView(
                 existingEntry: existingEntry, rootGroup: rootGroup,
                 recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
@@ -205,9 +216,12 @@ private struct DetailColumnView: View {
         return GroupTreeOperations.clampedDefaultGroupID(raw, in: rootGroup, recycleBinGroupUUID: binUUID)
     }
 
-    private func resolvedEntry(existingID: UUID?, proposal: PendingSaveProposal?) -> KdbxEntry? {
+    private func resolvedEntry(existingID: UUID?, proposal: PendingSaveProposal?, totpProposal: PendingTotpSaveProposal? = nil) -> KdbxEntry? {
         if let proposal {
             return draftEntry(from: proposal)
+        }
+        if let totpProposal {
+            return draftEntry(from: totpProposal)
         }
         guard let existingID, let database = vaultSession.currentDatabase else { return nil }
         return EntrySearch.allEntries(in: database.rootGroup).first { $0.uuid == existingID }
@@ -224,6 +238,18 @@ private struct DetailColumnView: View {
         entry.login = proposal.username
         entry.password = proposal.password
         entry.url = proposal.url
+        return entry
+    }
+
+    private func draftEntry(from totpProposal: PendingTotpSaveProposal) -> KdbxEntry {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now,
+            history: []
+        )
+        entry.title = totpProposal.registrableDomain
+        entry.url = totpProposal.url
         return entry
     }
 }
