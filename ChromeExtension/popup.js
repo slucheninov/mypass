@@ -624,6 +624,7 @@ if (typeof document !== 'undefined') {
       if (shouldShowAppUnavailableActions(kind)) {
         showAppUnavailableActions(url);
       }
+      restorePendingTotpCandidate(kind);
       return;
     }
     hideAppUnavailableActions();
@@ -635,6 +636,7 @@ if (typeof document !== 'undefined') {
       chrome.storage.local.get(POPUP_PAIRING_STORAGE_KEY, (stored) => {
         lockedUnlockBtn.hidden = !shouldShowUnlockButton(stored[POPUP_PAIRING_STORAGE_KEY]);
       });
+      restorePendingTotpCandidate(kind);
       return;
     }
     if (kind === 'pairingRequired') {
@@ -646,16 +648,22 @@ if (typeof document !== 'undefined') {
           revealCodeEntry();
         }
       });
+      restorePendingTotpCandidate(kind);
       return;
     }
     if (kind === 'credentialList') {
       if (response.credentials.length === 0) {
         showPanel('empty');
+        restorePendingTotpCandidate(kind);
         return;
       }
       showPanel('credential-list');
       renderCredentials(response.credentials, url);
     }
+    // Only reached for a non-empty credentialList — the primary panel is already
+    // showing the current tab's credentials by the time this runs, so a picker
+    // rendered below (for a *different*, pending URL) cannot race it.
+    restorePendingTotpCandidate(kind);
   }
 
   let unlockPollTimer = null;
@@ -789,12 +797,26 @@ if (typeof document !== 'undefined') {
     });
   };
 
-  restorePendingTotpCandidate = function () {
+  // Sequenced (not raced) with the primary getCredentials flow: called from
+  // handleCredentialsResponse once the panel for the *current* tab has already been
+  // decided and shown, with that decision's classified kind passed in. Running this
+  // concurrently with the primary flow (e.g. both fired from popup init) let whichever
+  // chrome.runtime.sendMessage callback resolved last silently win — a late pending-
+  // candidate lookup could override a just-shown locked/pairing panel, or the primary
+  // flow could wipe an already-rendered picker.
+  restorePendingTotpCandidate = function (primaryKind) {
     const area = getPairingStorageArea();
     if (!area || !area.get) return;
     area.get(['pendingTotpCandidate'], (result) => {
       const pending = result && result.pendingTotpCandidate;
       if (!pending) return;
+      if (primaryKind !== 'credentialList') {
+        // Vault isn't unlocked/paired for the current tab yet — leave the stored
+        // candidate and the paste input untouched so it survives to the next popup
+        // open (after the user unlocks/pairs) instead of fighting the locked/
+        // pairing/error panel that was just shown.
+        return;
+      }
       totpPasteInput.value = pending.otpauthOrSecret;
       chrome.runtime.sendMessage({ type: 'getCredentials', url: pending.url }, (response) => {
         const credentials = (response && response.type === 'credentialList') ? response.credentials : [];
@@ -807,7 +829,6 @@ if (typeof document !== 'undefined') {
   };
 
   addTotpBtn.onclick = () => handleAddTotpClick(currentTabUrl);
-  restorePendingTotpCandidate();
 
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];

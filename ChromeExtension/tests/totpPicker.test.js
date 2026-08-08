@@ -168,8 +168,13 @@ console.log('totpPicker.test.js: paste validation OK');
   console.log('totpPicker.test.js: routeTotpCandidate multi-match delegates to renderTotpPicker OK');
 })();
 
-// --- additive: restorePendingTotpCandidate prefills the paste input, renders the
-// picker when the re-checked match count is >1, and clears the stored candidate. ---
+// --- additive: restorePendingTotpCandidate is sequenced after the primary
+// getCredentials flow, not raced against it — it now takes the primary flow's
+// classified response kind and only acts when that kind is 'credentialList'
+// (vault unlocked and paired for the *current* tab). ---
+
+// (b) primary=credentialList + pending candidate with >1 matches for the pending URL:
+// prefills the input, renders the picker, and removes the stored key.
 (() => {
   let removedKeys = null;
   global.chrome.storage.local.get = (_keys, cb) => {
@@ -191,14 +196,58 @@ console.log('totpPicker.test.js: paste validation OK');
   elements.list.children = [];
   elements['totp-paste-input'].value = '';
 
-  restorePendingTotpCandidate();
+  restorePendingTotpCandidate('credentialList');
 
   assert.strictEqual(elements['totp-paste-input'].value, 'JBSWY3DPEHPK3PXP', 'restores pasted secret into input');
   assert.strictEqual(elements.list.children.length, 2, 'multi-match pending candidate renders picker rows');
   assert.deepStrictEqual(removedKeys, ['pendingTotpCandidate'], 'pending candidate cleared after restore');
 
-  console.log('totpPicker.test.js: restorePendingTotpCandidate multi-match OK');
+  console.log('totpPicker.test.js: restorePendingTotpCandidate(credentialList) multi-match OK');
 })();
+
+// (a) primary=locked: must not prefill, must not render a picker, and must NOT remove
+// the stored candidate — it has to survive to the next popup open after unlock.
+(() => {
+  let removeCalled = false;
+  global.chrome.storage.local.get = (_keys, cb) => {
+    cb({ pendingTotpCandidate: { url: 'https://pending.example.com', otpauthOrSecret: 'JBSWY3DPEHPK3PXP' } });
+  };
+  global.chrome.storage.local.remove = (_keys, cb) => {
+    removeCalled = true;
+    if (cb) cb();
+  };
+  let sendMessageCalled = false;
+  global.chrome.runtime.sendMessage = () => { sendMessageCalled = true; };
+  elements.list.children = [];
+  elements['totp-paste-input'].value = '';
+
+  restorePendingTotpCandidate('locked');
+
+  assert.strictEqual(elements['totp-paste-input'].value, '', 'locked primary flow does not prefill the input');
+  assert.strictEqual(elements.list.children.length, 0, 'locked primary flow does not render a picker');
+  assert.strictEqual(sendMessageCalled, false, 'locked primary flow does not re-check getCredentials for the pending URL');
+  assert.strictEqual(removeCalled, false, 'locked primary flow leaves the stored candidate in place');
+
+  console.log('totpPicker.test.js: restorePendingTotpCandidate(locked) leaves candidate untouched OK');
+})();
+
+// Same gating for pairingRequired and error primary kinds — the candidate must survive.
+['pairingRequired', 'error'].forEach((primaryKind) => {
+  let removeCalled = false;
+  global.chrome.storage.local.get = (_keys, cb) => {
+    cb({ pendingTotpCandidate: { url: 'https://pending.example.com', otpauthOrSecret: 'JBSWY3DPEHPK3PXP' } });
+  };
+  global.chrome.storage.local.remove = (_keys, cb) => {
+    removeCalled = true;
+    if (cb) cb();
+  };
+  global.chrome.runtime.sendMessage = () => {};
+
+  restorePendingTotpCandidate(primaryKind);
+
+  assert.strictEqual(removeCalled, false, `${primaryKind} primary flow leaves the stored candidate in place`);
+});
+console.log('totpPicker.test.js: restorePendingTotpCandidate(pairingRequired/error) leaves candidate untouched OK');
 
 // --- additive: restorePendingTotpCandidate is a no-op when nothing is pending. ---
 (() => {
@@ -206,7 +255,7 @@ console.log('totpPicker.test.js: paste validation OK');
   let sendMessageCalled = false;
   global.chrome.runtime.sendMessage = () => { sendMessageCalled = true; };
 
-  restorePendingTotpCandidate();
+  restorePendingTotpCandidate('credentialList');
 
   assert.strictEqual(sendMessageCalled, false, 'no pending candidate means no getCredentials lookup');
 
