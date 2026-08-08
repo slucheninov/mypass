@@ -110,6 +110,24 @@ final class EntryEditSaveLogicTests: XCTestCase {
         XCTAssertEqual(entry.totpSecretBase32, "JBSWY3DPEHPK3PXP")
     }
 
+    func testInitialOtpauthInputPrefersPrefilledProposalOverExistingSecret() {
+        XCTAssertEqual(
+            EntryEditSaveLogic.initialOtpauthInput(prefilled: "otpauth://totp/New:x?secret=NEWSECRET", existingSecret: "EXISTING"),
+            "otpauth://totp/New:x?secret=NEWSECRET"
+        )
+    }
+
+    func testInitialOtpauthInputFallsBackToExistingSecretWhenNoProposal() {
+        XCTAssertEqual(
+            EntryEditSaveLogic.initialOtpauthInput(prefilled: nil, existingSecret: "EXISTING"),
+            "EXISTING"
+        )
+    }
+
+    func testInitialOtpauthInputEmptyWhenNeitherPresent() {
+        XCTAssertEqual(EntryEditSaveLogic.initialOtpauthInput(prefilled: nil, existingSecret: nil), "")
+    }
+
     func testApplyOTPParsesOtpauthURL() {
         var entry = KdbxEntry(
             uuid: UUID(), iconID: 0, fields: [],

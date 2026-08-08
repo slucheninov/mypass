@@ -46,7 +46,9 @@ struct EntryEditView: View {
         self.onDelete = onDelete
         _selectedGroupID = State(initialValue: defaultGroupID)
         _showOTPField = State(initialValue: existingEntry?.totpSecretBase32?.isEmpty == false || prefilledOtpauthInput != nil)
-        _otpauthInput = State(initialValue: prefilledOtpauthInput ?? "")
+        _otpauthInput = State(initialValue: EntryEditSaveLogic.initialOtpauthInput(
+            prefilled: prefilledOtpauthInput, existingSecret: existingEntry?.totpSecretBase32
+        ))
         _isReplacingTotp = State(initialValue: EntryEditSaveLogic.requiresReplaceConfirmation(
             existingEntry: existingEntry, isFromTotpProposal: prefilledOtpauthInput != nil
         ))

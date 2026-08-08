@@ -13,6 +13,13 @@ enum EntryEditSaveLogic {
         return ExtensionEntryMatcher.registrableDomain(from: url) ?? url
     }
 
+    /// Seeds the editor's OTP field: an incoming save-proposal prefill always wins
+    /// (it represents a fresh secret the user is actively setting up), otherwise the
+    /// entry's own stored secret is shown so it can be viewed/edited, otherwise empty.
+    static func initialOtpauthInput(prefilled: String?, existingSecret: String?) -> String {
+        prefilled ?? existingSecret ?? ""
+    }
+
     static func applyOTP(to entry: inout KdbxEntry, otpauthInput: String) {
         guard !otpauthInput.isEmpty else { return }
         if let parsed = TOTPCode.parse(otpauthURL: otpauthInput) {
