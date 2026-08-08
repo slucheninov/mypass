@@ -23,6 +23,8 @@ struct EntryEditView: View {
     @State private var isPasswordRevealed = false
     @State private var showWebsitesSheet = false
     @State private var isFavorite: Bool
+    @State private var isReplacingTotp: Bool
+    @State private var showReplaceTotpAlert = false
 
     init(
         existingEntry: KdbxEntry?,
@@ -31,7 +33,8 @@ struct EntryEditView: View {
         defaultGroupID: UUID,
         onCancel: @escaping () -> Void,
         onSave: @escaping (KdbxEntry, UUID) -> Void,
-        onDelete: @escaping () -> Void
+        onDelete: @escaping () -> Void,
+        prefilledOtpauthInput: String? = nil
     ) {
         self.existingEntry = existingEntry
         self.rootGroup = rootGroup
@@ -41,7 +44,11 @@ struct EntryEditView: View {
         self.onSave = onSave
         self.onDelete = onDelete
         _selectedGroupID = State(initialValue: defaultGroupID)
-        _showOTPField = State(initialValue: existingEntry?.totpSecretBase32?.isEmpty == false)
+        _showOTPField = State(initialValue: existingEntry?.totpSecretBase32?.isEmpty == false || prefilledOtpauthInput != nil)
+        _otpauthInput = State(initialValue: prefilledOtpauthInput ?? "")
+        _isReplacingTotp = State(initialValue: EntryEditSaveLogic.requiresReplaceConfirmation(
+            existingEntry: existingEntry, isFromTotpProposal: prefilledOtpauthInput != nil
+        ))
         _title = State(initialValue: existingEntry?.title ?? "")
         _login = State(initialValue: existingEntry?.login ?? "")
         _password = State(initialValue: existingEntry?.password ?? "")
@@ -173,9 +180,31 @@ struct EntryEditView: View {
                 )
             }
         }
+        .alert(
+            "Replace 2FA?",
+            isPresented: $showReplaceTotpAlert,
+            actions: {
+                Button("Cancel", role: .cancel) {}
+                Button("Replace", role: .destructive) {
+                    isReplacingTotp = false
+                    performSave()
+                }
+            },
+            message: {
+                Text("This entry already has an authenticator set up. Saving will replace it with the new one.")
+            }
+        )
     }
 
     private func save() {
+        if isReplacingTotp {
+            showReplaceTotpAlert = true
+            return
+        }
+        performSave()
+    }
+
+    private func performSave() {
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
             uuid: UUID(),

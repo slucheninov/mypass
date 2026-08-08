@@ -51,4 +51,47 @@ final class EntryEditSaveLogicTests: XCTestCase {
         EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "JBSWY3DPEHPK3PXP")
         XCTAssertEqual(entry.totpSecretBase32, "JBSWY3DPEHPK3PXP")
     }
+
+    func testRequiresReplaceConfirmationWhenEntryHasExistingSecretAndFromProposal() {
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(), locationChanged: Date(),
+            history: []
+        )
+        entry.totpSecretBase32 = "JBSWY3DP"
+        XCTAssertTrue(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: entry, isFromTotpProposal: true))
+    }
+
+    func testRequiresReplaceConfirmationFalseWhenNotFromProposal() {
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(), locationChanged: Date(),
+            history: []
+        )
+        entry.totpSecretBase32 = "JBSWY3DP"
+        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: entry, isFromTotpProposal: false))
+    }
+
+    func testRequiresReplaceConfirmationFalseWhenNoExistingSecret() {
+        let entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(), locationChanged: Date(),
+            history: []
+        )
+        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: entry, isFromTotpProposal: true))
+    }
+
+    func testRequiresReplaceConfirmationFalseWhenCreatingNewEntry() {
+        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: nil, isFromTotpProposal: true))
+    }
+
+    func testApplyOTPParsesOtpauthURL() {
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(), locationChanged: Date(),
+            history: []
+        )
+        EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example")
+        XCTAssertEqual(entry.totpSecretBase32, "JBSWY3DPEHPK3PXP")
+    }
 }

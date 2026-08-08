@@ -176,13 +176,11 @@ private struct DetailColumnView: View {
 
         switch resolvedType {
         case .login:
-            // B5 threads `prefilledOtpauthInput` into EntryEditView's init once it
-            // gains that parameter; for now it flows in via `resolvedEntry`/
-            // `draftEntry(from:)` only through `totpProposal`.
             EntryEditView(
                 existingEntry: existingEntry, rootGroup: rootGroup,
                 recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
-                onCancel: onCancel, onSave: onSave, onDelete: onDelete
+                onCancel: onCancel, onSave: onSave, onDelete: onDelete,
+                prefilledOtpauthInput: prefilledOtpauthInput
             )
             .id(navigationState.detailPresentation)
         case .card:

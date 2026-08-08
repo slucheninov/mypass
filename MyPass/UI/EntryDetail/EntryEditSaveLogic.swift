@@ -2,6 +2,10 @@ import Foundation
 import MyPassKit
 
 enum EntryEditSaveLogic {
+    static func requiresReplaceConfirmation(existingEntry: KdbxEntry?, isFromTotpProposal: Bool) -> Bool {
+        isFromTotpProposal && existingEntry?.totpSecretBase32?.isEmpty == false
+    }
+
     static func resolvedTitle(draftTitle: String, url: String) -> String {
         let trimmed = draftTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
