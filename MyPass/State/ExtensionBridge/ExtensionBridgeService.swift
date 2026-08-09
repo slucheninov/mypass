@@ -283,12 +283,25 @@ final class ExtensionBridgeService {
                 entry.setPasskeyBackupFlags()
                 entry.lastModificationTime = timestamp
                 let isUpdate = targetEntry != nil
+                var didWrite = false
                 vaultSession?.mutate { db in
-                    if isUpdate, let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == entry.uuid }) {
-                        db.rootGroup.entries[index] = entry
-                    } else if !isUpdate {
+                    if isUpdate {
+                        // Located across the whole tree, not just the root group — a
+                        // subgroup entry would otherwise be reported as saved and
+                        // silently not written.
+                        guard let location = GroupTreeOperations.entryLocation(entryID: entry.uuid, in: db.rootGroup) else { return }
+                        location.group.entries[location.index] = entry
+                    } else {
                         db.rootGroup.entries.append(entry)
                     }
+                    didWrite = true
+                }
+                guard didWrite else {
+                    pendingPasskeyCreates.removeValue(forKey: requestId)
+                    return .passkeyCreateComplete(
+                        requestId: requestId, responseJson: nil,
+                        error: PasskeyErrorDetails(name: "NotAllowedError", message: "Could not save the passkey")
+                    )
                 }
                 onCredentialFilled?(entry.uuid)
                 pendingPasskeyCreates.removeValue(forKey: requestId)

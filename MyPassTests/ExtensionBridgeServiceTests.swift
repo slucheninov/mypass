@@ -694,6 +694,30 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertTrue(entry?.passkeyPrivateKeyPEM?.contains("PRIVATE KEY") == true)
     }
 
+    /// Regression guard: the confirm write must locate the target anywhere in the group
+    /// tree. Looking only at `rootGroup.entries` would report success while writing nothing.
+    func testPasskeyCreateConfirmWritesToAnEntryInASubgroup() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        session.mutate { db in
+            let subgroup = GroupTreeOperations.addGroup(named: "Work", emoji: nil, to: db.rootGroup)
+            _ = GroupTreeOperations.moveEntry(withID: id, to: subgroup.uuid, in: db.rootGroup)
+        }
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 26, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        let response = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 26, entryId: id.uuidString, replace: false, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, let responseJson, let error) = response else { return XCTFail("expected complete") }
+        XCTAssertNil(error)
+        XCTAssertNotNil(responseJson)
+
+        let entry = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == id }
+        XCTAssertEqual(entry?.passkeyRelyingParty, "example.com")
+        XCTAssertTrue(entry?.passkeyPrivateKeyPEM?.contains("PRIVATE KEY") == true)
+    }
+
     func testPasskeyCreateReturnsLockedAndDoesNotWriteWhenVaultIsLocked() {
         session.lock()
         let response = service.handle(.passkeyCreate(
