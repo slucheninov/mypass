@@ -68,7 +68,13 @@ global.chrome = {
     session: null
   },
   runtime: {
-    sendMessage: (_msg, cb) => {
+    // Counts getCredentials only: popup init also fires getPasskeyProxyStatus for the
+    // passkey settings toggle, which is not a credential lookup.
+    sendMessage: (msg, cb) => {
+      if (!msg || msg.type !== 'getCredentials') {
+        if (cb) cb({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: false });
+        return;
+      }
       sendMessageCall += 1;
       if (sendMessageCall === 1) {
         cb({ type: 'error', message: 'native_host_not_found' });

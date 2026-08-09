@@ -198,6 +198,27 @@
       font-size: 12px;
       margin: 8px 0 0;
     }
+    .passkey-summary {
+      word-break: break-all;
+    }
+    #passkey-picker-list {
+      list-style: none;
+      margin: 0 0 8px;
+      padding: 0;
+    }
+    #passkey-settings-footer {
+      margin-top: 16px;
+      padding-top: 12px;
+      border-top: 1px solid #e5e5e7;
+      font-size: 12px;
+      color: #6e6e73;
+    }
+    #passkey-settings-footer label {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      cursor: pointer;
+    }
     .totp-badge {
       flex-shrink: 0;
       font-size: 10px;
@@ -252,11 +273,50 @@
       <p id="pairing-error" hidden></p>
     </section>
 
+    <!-- Every passkey confirm panel shows the relying-party ID and the origin the
+         ceremony actually came from. That pairing is the phishing-resistance
+         requirement from the design's Global Constraints, not decorative copy. -->
+    <section id="passkey-save-panel" hidden>
+      <h1 class="panel-title">Save passkey</h1>
+      <p class="panel-helper passkey-summary" id="passkey-save-summary"></p>
+      <button id="passkey-save-btn" type="button" class="btn-primary">Save</button>
+      <button id="passkey-cancel-btn" type="button" class="btn-secondary">Cancel</button>
+    </section>
+
+    <section id="passkey-replace-panel" hidden>
+      <h1 class="panel-title">Replace passkey?</h1>
+      <p class="panel-helper passkey-summary" id="passkey-replace-summary"></p>
+      <p class="panel-helper">This entry already has a passkey. Replacing it means the old one stops working.</p>
+      <button id="passkey-replace-btn" type="button" class="btn-primary">Replace</button>
+      <button id="passkey-replace-cancel-btn" type="button" class="btn-secondary">Cancel</button>
+    </section>
+
+    <section id="passkey-use-panel" hidden>
+      <h1 class="panel-title">Use passkey</h1>
+      <p class="panel-helper passkey-summary" id="passkey-use-summary"></p>
+      <button id="passkey-approve-btn" type="button" class="btn-primary">Approve</button>
+      <button id="passkey-use-cancel-btn" type="button" class="btn-secondary">Cancel</button>
+    </section>
+
+    <section id="passkey-picker-panel" hidden>
+      <h1 class="panel-title">Choose an entry</h1>
+      <p class="panel-helper passkey-summary" id="passkey-picker-summary"></p>
+      <ul id="passkey-picker-list"></ul>
+      <button id="passkey-picker-cancel-btn" type="button" class="btn-secondary">Cancel</button>
+    </section>
+
     <div id="add-totp-section" hidden>
       <p id="add-totp-hint">Paste otpauth:// URL or secret key</p>
       <input id="totp-paste-input" type="text" placeholder="Paste otpauth:// URL or secret key" />
       <button id="add-totp-btn" type="button" class="btn-primary">Add</button>
       <p id="add-totp-error" hidden></p>
+    </div>
+
+    <div id="passkey-settings-footer" hidden>
+      <label for="passkey-proxy-toggle">
+        <input type="checkbox" id="passkey-proxy-toggle">
+        Use MyPass for Chrome passkeys
+      </label>
     </div>
   </div>
   <script src="popup.js"></script>
