@@ -557,13 +557,26 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     }
 
     func testGetPasskeyProxyStatusReportsUnlockedAndAttachAllowed() {
+        defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
+        UserDefaults.standard.set(true, forKey: "passkeyProxyEnabled")
         let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true))
+    }
+
+    /// Turning the feature off in Settings has to actually stop the extension attaching.
+    /// There is no push channel, so `attachAllowed` is the only way the app can say no.
+    func testGetPasskeyProxyStatusDisallowsAttachWhenTheAppSideToggleIsOff() {
+        defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
+        UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
+        let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: false))
     }
 
     /// The one message that must answer past the blanket locked gate — otherwise the
     /// extension can never learn *why* it may not attach.
     func testGetPasskeyProxyStatusReportsLockedWithoutReturningGenericLockedResponse() {
+        defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
+        UserDefaults.standard.set(true, forKey: "passkeyProxyEnabled")
         session.lock()
         let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .passkeyProxyStatus(unlocked: false, paired: true, attachAllowed: false))

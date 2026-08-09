@@ -192,7 +192,12 @@ final class ExtensionBridgeService {
                 return .pairingRequired
             }
             let unlocked = vaultSession?.currentDatabase != nil
-            return .passkeyProxyStatus(unlocked: unlocked, paired: true, attachAllowed: unlocked)
+            // `attachAllowed` folds in the app-side opt-in, not just lock state — the
+            // extension mirrors this flag locally, and without the app's value in the
+            // answer, turning the feature off in Settings would leave an already-attached
+            // Chrome attached indefinitely (there is no push channel to tell it otherwise).
+            let enabled = UserDefaults.standard.bool(forKey: "passkeyProxyEnabled")
+            return .passkeyProxyStatus(unlocked: unlocked, paired: true, attachAllowed: unlocked && enabled)
 
         case .setPasskeyProxyEnabled(_, let enabled, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {

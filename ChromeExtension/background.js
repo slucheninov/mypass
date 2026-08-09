@@ -298,8 +298,10 @@ async function answerIsUvpaa(requestId) {
     answer(false);
     return;
   }
+  // attachAllowed, not unlocked: it also folds in the app-side opt-in, so a vault that
+  // is unlocked with the feature turned off still answers false.
   const status = await fetchPasskeyProxyStatus();
-  answer(!!(status && status.unlocked));
+  answer(!!(status && status.attachAllowed));
 }
 
 async function setPasskeyProxyEnabled(message) {

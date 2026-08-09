@@ -250,7 +250,18 @@ const detailsFor = (origin) => JSON.stringify({
   nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: false, paired: true, attachAllowed: false });
   await answerIsUvpaa(13);
   assert.deepStrictEqual(completedIsUvpaa, { requestId: 13, isUvpaa: false }, 'attached-but-locked must answer false');
-  console.log('passkeyProxy.test.js: isUvpaa reflects unlocked state OK');
+
+  // Unlocked but turned off app-side: attachAllowed is the authority, not `unlocked`.
+  resetState();
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: false });
+  await answerIsUvpaa(14);
+  assert.deepStrictEqual(completedIsUvpaa, { requestId: 14, isUvpaa: false });
+
+  resetState();
+  nativeResponder = () => ({ type: 'error', message: 'app_not_running' });
+  await answerIsUvpaa(15);
+  assert.deepStrictEqual(completedIsUvpaa, { requestId: 15, isUvpaa: false }, 'an unreachable app must still answer');
+  console.log('passkeyProxy.test.js: isUvpaa reflects attach eligibility OK');
 
   // --- popup-driven confirm / cancel --------------------------------------
   resetState();
