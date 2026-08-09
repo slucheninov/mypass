@@ -40,6 +40,7 @@ struct EntryDetailView: View {
     @State private var largeTypeField: LargeTypeField?
     @State private var showWebsitesSheet = false
     @State private var showDeletePermanentlyAlert = false
+    @State private var showRemovePasskeyConfirm = false
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
@@ -148,6 +149,15 @@ struct EntryDetailView: View {
                                 .popover(isPresented: largeTypeBinding(.totp)) {
                                     LargeTypePopover(text: currentTOTPCode(secret: secret))
                                 }
+                        }
+
+                        if let rpId = entry.passkeyRelyingParty, entry.passkeyPrivateKeyPEM?.isEmpty == false {
+                            DetailFieldDivider()
+                            passkeyRow(
+                                rpId: rpId,
+                                username: entry.passkeyUsername,
+                                credentialId: entry.passkeyCredentialId
+                            )
                         }
 
                         if !entry.urls.isEmpty {
@@ -271,6 +281,14 @@ struct EntryDetailView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This entry will be permanently deleted. This cannot be undone.")
+            }
+            .alert("Remove Passkey?", isPresented: $showRemovePasskeyConfirm) {
+                Button("Remove", role: .destructive) {
+                    removePasskey(entryID: entry.uuid)
+                }
+                Button("Cancel", role: .cancel) {}
+            } message: {
+                Text("This removes the passkey from this entry. The site will no longer accept it for sign-in.")
             }
             .onChange(of: navigationState.selectedEntryID) { _, newID in
                 isPasswordRevealed = false
@@ -480,6 +498,54 @@ struct EntryDetailView: View {
         let normalized = urlString.contains("://") ? urlString : "https://\(urlString)"
         guard let url = URL(string: normalized) else { return }
         NSWorkspace.shared.open(url)
+    }
+
+    /// Read-only by design: a passkey is created and replaced through the browser
+    /// ceremony, never edited by hand. The only action offered here is removal.
+    private func passkeyRow(rpId: String, username: String?, credentialId: Data?) -> some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text("Passkey")
+                .foregroundStyle(.secondary)
+                .frame(width: 100, alignment: .leading)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(rpId)
+                if let username, !username.isEmpty {
+                    Text(username)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let credentialId {
+                    Text("Credential ID: \(truncatedCredentialId(credentialId))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .textSelection(.enabled)
+                }
+                Button("Remove Passkey", role: .destructive) {
+                    showRemovePasskeyConfirm = true
+                }
+                .buttonStyle(.link)
+                .padding(.top, 2)
+            }
+            .frame(maxWidth: .infinity, alignment: .trailing)
+            .multilineTextAlignment(.trailing)
+        }
+        .font(.body)
+        .padding(.horizontal, 16)
+        .padding(.vertical, 10)
+    }
+
+    private func truncatedCredentialId(_ data: Data) -> String {
+        let encoded = PasskeyBase64URL.encode(data)
+        guard encoded.count > 14 else { return encoded }
+        return "\(encoded.prefix(6))…\(encoded.suffix(6))"
+    }
+
+    private func removePasskey(entryID: UUID) {
+        vaultSession.mutate { database in
+            guard let location = GroupTreeOperations.entryLocation(entryID: entryID, in: database.rootGroup) else { return }
+            location.group.entries[location.index].clearPasskey()
+            location.group.entries[location.index].lastModificationTime = Date()
+        }
     }
 
     private func moveToGroup(_ groupID: UUID, entryID: UUID) {
