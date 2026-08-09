@@ -40,7 +40,7 @@ struct EntryDetailView: View {
     @State private var largeTypeField: LargeTypeField?
     @State private var showWebsitesSheet = false
     @State private var showDeletePermanentlyAlert = false
-    @State private var showRemovePasskeyConfirm = false
+    @State private var showPasskeyDetails = false
 
     private let pasteboard = NSPasteboardClearing()
     private let clock = RealAutoLockClock()
@@ -151,13 +151,9 @@ struct EntryDetailView: View {
                                 }
                         }
 
-                        if let rpId = entry.passkeyRelyingParty, entry.passkeyPrivateKeyPEM?.isEmpty == false {
+                        if entry.hasPasskey {
                             DetailFieldDivider()
-                            passkeyRow(
-                                rpId: rpId,
-                                username: entry.passkeyUsername,
-                                credentialId: entry.passkeyCredentialId
-                            )
+                            passkeyRow(for: entry)
                         }
 
                         if !entry.urls.isEmpty {
@@ -281,14 +277,6 @@ struct EntryDetailView: View {
                 Button("Cancel", role: .cancel) {}
             } message: {
                 Text("This entry will be permanently deleted. This cannot be undone.")
-            }
-            .alert("Remove Passkey?", isPresented: $showRemovePasskeyConfirm) {
-                Button("Remove", role: .destructive) {
-                    removePasskey(entryID: entry.uuid)
-                }
-                Button("Cancel", role: .cancel) {}
-            } message: {
-                Text("This removes the passkey from this entry. The site will no longer accept it for sign-in.")
             }
             .onChange(of: navigationState.selectedEntryID) { _, newID in
                 isPasswordRevealed = false
@@ -500,51 +488,69 @@ struct EntryDetailView: View {
         NSWorkspace.shared.open(url)
     }
 
-    /// Read-only by design: a passkey is created and replaced through the browser
-    /// ceremony, never edited by hand. The only action offered here is removal.
-    private func passkeyRow(rpId: String, username: String?, credentialId: Data?) -> some View {
-        HStack(alignment: .top, spacing: 12) {
+    /// Deliberately terse: the card answers "is there a passkey, and since when". The
+    /// relying-party ID and credential ID are diagnostics, not everyday reading, so they
+    /// live behind Show. Removal lives in the editor, next to every other destructive edit.
+    private func passkeyRow(for entry: KdbxEntry) -> some View {
+        HStack(alignment: .center, spacing: 12) {
             Text("Passkey")
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(rpId)
-                if let username, !username.isEmpty {
-                    Text(username)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-                if let credentialId {
-                    Text("Credential ID: \(truncatedCredentialId(credentialId))")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                }
-                Button("Remove Passkey", role: .destructive) {
-                    showRemovePasskeyConfirm = true
-                }
+            Text(passkeyCreatedDescription(entry.passkeyCreatedAt))
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            Button("Show") { showPasskeyDetails = true }
                 .buttonStyle(.link)
-                .padding(.top, 2)
-            }
-            .frame(maxWidth: .infinity, alignment: .trailing)
-            .multilineTextAlignment(.trailing)
+                .accessibilityLabel("Show passkey details")
+                .popover(isPresented: $showPasskeyDetails, arrowEdge: .bottom) {
+                    passkeyDetailsPopover(for: entry)
+                }
         }
         .font(.body)
         .padding(.horizontal, 16)
         .padding(.vertical, 10)
     }
 
-    private func truncatedCredentialId(_ data: Data) -> String {
-        let encoded = PasskeyBase64URL.encode(data)
-        guard encoded.count > 14 else { return encoded }
-        return "\(encoded.prefix(6))…\(encoded.suffix(6))"
+    /// A passkey imported from KeePassXC carries no creation date — say so plainly
+    /// rather than showing a date invented from the entry's own timestamps.
+    private func passkeyCreatedDescription(_ created: Date?) -> String {
+        guard let created else { return "Added" }
+        return "Added \(created.formatted(date: .abbreviated, time: .omitted))"
     }
 
-    private func removePasskey(entryID: UUID) {
-        vaultSession.mutate { database in
-            guard let location = GroupTreeOperations.entryLocation(entryID: entryID, in: database.rootGroup) else { return }
-            location.group.entries[location.index].clearPasskey()
-            location.group.entries[location.index].lastModificationTime = Date()
+    @ViewBuilder
+    private func passkeyDetailsPopover(for entry: KdbxEntry) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Passkey")
+                .font(.headline)
+            if let rpId = entry.passkeyRelyingParty {
+                passkeyDetailLine(label: "Site", value: rpId)
+            }
+            if let username = entry.passkeyUsername, !username.isEmpty {
+                passkeyDetailLine(label: "Username", value: username)
+            }
+            if let created = entry.passkeyCreatedAt {
+                passkeyDetailLine(label: "Created", value: created.formatted(date: .abbreviated, time: .shortened))
+            }
+            if let credentialId = entry.passkeyCredentialId {
+                passkeyDetailLine(label: "Credential ID", value: PasskeyBase64URL.encode(credentialId))
+            }
+            Text("Remove this passkey by editing the entry.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .padding(.top, 2)
+        }
+        .padding(16)
+        .frame(width: 320, alignment: .leading)
+    }
+
+    private func passkeyDetailLine(label: String, value: String) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(label)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(.caption, design: .monospaced))
+                .textSelection(.enabled)
         }
     }
 

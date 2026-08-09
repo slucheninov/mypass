@@ -120,6 +120,46 @@ final class KdbxEntryPasskeyTests: XCTestCase {
         XCTAssertEqual(entry.password, "hunter2")
     }
 
+    // MARK: - Creation date
+
+    func testPasskeyCreatedAtRoundTripsToTheSecond() {
+        var entry = makeEntry()
+        // ISO8601 without fractional seconds, so compare at whole-second resolution.
+        let date = Date(timeIntervalSince1970: 1_754_700_000)
+        entry.passkeyCreatedAt = date
+
+        XCTAssertEqual(entry.passkeyCreatedAt?.timeIntervalSince1970, date.timeIntervalSince1970)
+    }
+
+    func testPasskeyCreatedAtIsNilWhenAbsent() {
+        XCTAssertNil(makeEntry().passkeyCreatedAt)
+    }
+
+    /// A passkey imported from KeePassXC carries no creation date — that is expected,
+    /// not corruption, and must read as `nil` rather than crash or invent a date.
+    func testPasskeyCreatedAtIsNilWhenValueIsNotADate() {
+        var entry = makeEntry()
+        entry.setFieldValue("not a date", forKey: "KPEX_PASSKEY_CREATED", isProtected: false)
+        XCTAssertNil(entry.passkeyCreatedAt)
+    }
+
+    func testPasskeyCreatedAtUsesItsOwnFieldAndIsClearedWithTheRest() {
+        var entry = makeEntry()
+        entry.passkeyCreatedAt = Date(timeIntervalSince1970: 1_754_700_000)
+        XCTAssertTrue(entry.fields.contains { $0.key == "KPEX_PASSKEY_CREATED" })
+
+        entry.clearPasskey()
+        XCTAssertNil(entry.passkeyCreatedAt)
+        XCTAssertTrue(entry.fields.filter { $0.key.hasPrefix("KPEX_PASSKEY_") }.isEmpty)
+    }
+
+    func testSettingPasskeyCreatedAtToNilRemovesTheField() {
+        var entry = makeEntry()
+        entry.passkeyCreatedAt = Date()
+        entry.passkeyCreatedAt = nil
+        XCTAssertFalse(entry.fields.contains { $0.key == "KPEX_PASSKEY_CREATED" })
+    }
+
     func testBase64URLRoundTripsAndAcceptsUnpaddedInput() {
         let data = Data([0xFB, 0xEF, 0xBE, 0x00, 0x01])
         let encoded = PasskeyBase64URL.encode(data)

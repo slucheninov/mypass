@@ -36,4 +36,11 @@ enum EntryEditSaveLogic {
     static func applyOTPRemoval(to entry: inout KdbxEntry) {
         entry.totpSecretBase32 = nil
     }
+
+    /// Removes every `KPEX_PASSKEY_*` field. Deferred to Save like `applyOTPRemoval`, so
+    /// pressing Remove and then Cancel leaves the passkey intact — the private key is
+    /// unrecoverable once gone, which makes an accidental in-place delete unforgiving.
+    static func applyPasskeyRemoval(to entry: inout KdbxEntry) {
+        entry.clearPasskey()
+    }
 }

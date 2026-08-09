@@ -285,6 +285,7 @@ final class ExtensionBridgeService {
                 entry.passkeyPrivateKeyPEM = result.privateKeyPEM
                 entry.passkeyUserHandle = pending.context.userId
                 entry.passkeyUsername = pending.context.userName
+                entry.passkeyCreatedAt = timestamp
                 entry.setPasskeyBackupFlags()
                 entry.lastModificationTime = timestamp
                 let isUpdate = targetEntry != nil

@@ -668,6 +668,12 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
         let entries = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup)
         XCTAssertTrue(entries.contains { $0.passkeyRelyingParty == "example.com" && $0.passkeyPrivateKeyPEM?.isEmpty == false })
+
+        // The creation date is stamped by the ceremony, not derived from the entry's own
+        // timestamps — a passkey added to a long-existing entry must date from today.
+        let created = entries.first { $0.passkeyRelyingParty == "example.com" }?.passkeyCreatedAt
+        XCTAssertNotNil(created)
+        XCTAssertLessThan(abs(created!.timeIntervalSinceNow), 60)
     }
 
     func testPasskeyCreateConfirmRequiresReplaceFlagWhenEntryAlreadyHasPasskey() {

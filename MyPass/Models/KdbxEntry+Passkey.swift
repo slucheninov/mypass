@@ -9,7 +9,7 @@ import MyPassKit
 /// property here must report a genuinely absent passkey as `nil`. This mirrors how
 /// `totpSecretBase32` already handles the same distinction.
 extension KdbxEntry {
-    private static let passkeyFieldKeys = [
+    static let passkeyFieldKeys = [
         "KPEX_PASSKEY_RELYING_PARTY",
         "KPEX_PASSKEY_CREDENTIAL_ID",
         "KPEX_PASSKEY_PRIVATE_KEY_PEM",
@@ -17,7 +17,14 @@ extension KdbxEntry {
         "KPEX_PASSKEY_USERNAME",
         "KPEX_PASSKEY_FLAG_BE",
         "KPEX_PASSKEY_FLAG_BS",
+        "KPEX_PASSKEY_CREATED",
     ]
+
+    /// `KPEX_PASSKEY_CREATED` is MyPass's own addition — KeePassXC's field set has no
+    /// creation date. It is a plain custom string field, so KeePassXC simply shows it
+    /// alongside the others and ignores it; a passkey imported from KeePassXC has no
+    /// date at all, which reads as `nil` rather than as an error.
+    private static let passkeyDateFormatter = ISO8601DateFormatter()
 
     private func passkeyField(_ key: String) -> String? {
         fields.first(where: { $0.key == key })?.value
@@ -66,6 +73,19 @@ extension KdbxEntry {
     var passkeyUsername: String? {
         get { passkeyField("KPEX_PASSKEY_USERNAME") }
         set { setPasskeyField(newValue, forKey: "KPEX_PASSKEY_USERNAME", isProtected: false) }
+    }
+
+    /// When this passkey was created, for display in the entry card. Absent for any
+    /// passkey MyPass did not create itself (an import from KeePassXC, say).
+    var passkeyCreatedAt: Date? {
+        get { passkeyField("KPEX_PASSKEY_CREATED").flatMap(Self.passkeyDateFormatter.date(from:)) }
+        set {
+            setPasskeyField(
+                newValue.map(Self.passkeyDateFormatter.string(from:)),
+                forKey: "KPEX_PASSKEY_CREATED",
+                isProtected: false
+            )
+        }
     }
 
     /// True when this entry carries usable passkey material — the two fields a

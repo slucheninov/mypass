@@ -137,4 +137,66 @@ final class EntryEditSaveLogicTests: XCTestCase {
         EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: "otpauth://totp/Example:alice?secret=JBSWY3DPEHPK3PXP&issuer=Example")
         XCTAssertEqual(entry.totpSecretBase32, "JBSWY3DPEHPK3PXP")
     }
+
+    // MARK: - Passkey removal
+
+    private func makePasskeyEntry() -> KdbxEntry {
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(), locationChanged: Date(),
+            history: []
+        )
+        entry.title = "Example"
+        entry.password = "hunter2"
+        entry.passkeyRelyingParty = "example.com"
+        entry.passkeyCredentialId = Data([1, 2, 3])
+        entry.passkeyPrivateKeyPEM = "pem"
+        entry.passkeyUsername = "alice"
+        entry.passkeyCreatedAt = Date()
+        return entry
+    }
+
+    func testApplyPasskeyRemovalClearsEveryPasskeyField() {
+        var entry = makePasskeyEntry()
+        EntryEditSaveLogic.applyPasskeyRemoval(to: &entry)
+
+        XCTAssertFalse(entry.hasPasskey)
+        XCTAssertNil(entry.passkeyRelyingParty)
+        XCTAssertNil(entry.passkeyCreatedAt)
+        XCTAssertTrue(entry.fields.filter { $0.key.hasPrefix("KPEX_PASSKEY_") }.isEmpty)
+    }
+
+    /// Every editor rebuilds `fields` as "standard keys, plus the custom rows on screen".
+    /// Passkey fields appear in no custom row — deliberately, so the private key PEM is
+    /// never an editable text box — so if they were not standard keys, the first ordinary
+    /// edit of an entry would silently destroy a working passkey.
+    func testPasskeyFieldsSurviveTheEditorsFieldRebuild() {
+        let entry = makePasskeyEntry()
+        var rebuilt = entry
+        rebuilt.fields.removeAll { !KdbxEntry.standardFieldKeys.contains($0.key) }
+
+        XCTAssertTrue(rebuilt.hasPasskey)
+        XCTAssertEqual(rebuilt.passkeyRelyingParty, "example.com")
+        XCTAssertEqual(rebuilt.passkeyPrivateKeyPEM, "pem")
+        XCTAssertNotNil(rebuilt.passkeyCreatedAt)
+    }
+
+    /// The same property from the other side: passkey fields must not show up as generic
+    /// custom-field rows in the detail card or the editor.
+    func testPasskeyFieldsAreNotOfferedAsCustomFields() {
+        var entry = makePasskeyEntry()
+        entry.fields.append(KdbxField(key: "Recovery code", value: "abc", isProtected: false))
+
+        XCTAssertEqual(entry.additionalFields.map(\.key), ["Recovery code"])
+    }
+
+    func testApplyPasskeyRemovalLeavesTheRestOfTheEntryIntact() {
+        var entry = makePasskeyEntry()
+        entry.totpSecretBase32 = "JBSWY3DPEHPK3PXP"
+        EntryEditSaveLogic.applyPasskeyRemoval(to: &entry)
+
+        XCTAssertEqual(entry.title, "Example")
+        XCTAssertEqual(entry.password, "hunter2")
+        XCTAssertEqual(entry.totpSecretBase32, "JBSWY3DPEHPK3PXP")
+    }
 }

@@ -103,10 +103,18 @@ extension KdbxEntry {
 }
 
 public extension KdbxEntry {
-    static let standardFieldKeys: Set<String> = [
+    /// Fields that have a dedicated UI of their own, so they must never be rendered as
+    /// generic custom-field rows — and, because every editor rebuilds `fields` from those
+    /// rows plus this set, must never be dropped on save either.
+    ///
+    /// The `KPEX_PASSKEY_*` keys are here for both reasons: showing the private key PEM
+    /// as an editable text row would put unrecoverable secret material one keystroke from
+    /// destruction, and omitting them from this set would silently delete a working
+    /// passkey the first time the user edited anything else on the entry.
+    static let standardFieldKeys: Set<String> = Set([
         "Title", "UserName", "Password", "URL", "Notes", "otp", "Favorite",
         "MyPass.EntryType", "MyPass.CardNumber", "MyPass.CardholderName", "MyPass.ExpiryDate", "MyPass.CVV", "MyPass.NotesBody"
-    ]
+    ]).union(KdbxEntry.passkeyFieldKeys)
     static let additionalURLsStringArrayKey = "KP2A_URL"
 
     /// Primary URL (if non-empty) followed by `KP2A_URL` StringArray extras, deduplicated,

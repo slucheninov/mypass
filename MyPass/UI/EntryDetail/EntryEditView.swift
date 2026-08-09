@@ -26,6 +26,10 @@ struct EntryEditView: View {
     @State private var isReplacingTotp: Bool
     @State private var showReplaceTotpAlert = false
     @State private var removeExistingTotp = false
+    /// Deferred like `removeExistingTotp`: pressing Remove marks the passkey for deletion
+    /// but nothing is destroyed until Save, so Cancel is a genuine escape hatch. The
+    /// private key cannot be recovered afterwards, which makes that worth the extra state.
+    @State private var removeExistingPasskey = false
 
     init(
         existingEntry: KdbxEntry?,
@@ -142,6 +146,24 @@ struct EntryEditView: View {
                         }
                     }
 
+                    if existingEntry?.hasPasskey == true {
+                        Divider().overlay(Color.primary.opacity(0.08))
+                        HStack {
+                            if removeExistingPasskey {
+                                Text("Passkey will be removed when you save")
+                                    .foregroundStyle(.secondary)
+                                Spacer()
+                                Button("Undo") { removeExistingPasskey = false }
+                            } else {
+                                Text("Passkey")
+                                Spacer()
+                                Button("Remove", systemImage: "minus.circle") {
+                                    removeExistingPasskey = true
+                                }
+                            }
+                        }
+                    }
+
                     if !extraFields.isEmpty {
                         Divider().overlay(Color.primary.opacity(0.08))
                     }
@@ -253,6 +275,11 @@ struct EntryEditView: View {
         entry.fields.removeAll { !KdbxEntry.standardFieldKeys.contains($0.key) }
         for field in extraFields where !field.key.isEmpty {
             entry.fields.append(KdbxField(key: field.key, value: field.value, isProtected: false))
+        }
+        // After the rebuild, not before: the passkey fields survive it by virtue of being
+        // in `standardFieldKeys`, so this is the one place that deliberately drops them.
+        if removeExistingPasskey {
+            EntryEditSaveLogic.applyPasskeyRemoval(to: &entry)
         }
 
         onSave(entry, selectedGroupID)
