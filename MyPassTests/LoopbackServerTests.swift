@@ -4,6 +4,14 @@ import ExtensionBridgeKit
 @testable import MyPass
 
 final class LoopbackServerTests: XCTestCase {
+    /// Client connections deliberately do **not** run on `.main`. Each test blocks the
+    /// main thread in `wait(for:)`, and under a full-suite run the main queue is busy
+    /// with every other test's main-dispatched work — which delayed these callbacks past
+    /// the 5 s expectation and made this class intermittently fail in the suite while
+    /// passing every time in isolation. The server has always used its own queue; the
+    /// client now does too, so these tests measure the server rather than main-queue load.
+    private let clientQueue = DispatchQueue(label: "com.mypass.tests.loopback-client")
+
     func testIsValidTokenMatchesExactString() {
         XCTAssertTrue(LoopbackServer.isValidToken("abc", expected: "abc"))
     }
@@ -50,7 +58,7 @@ final class LoopbackServerTests: XCTestCase {
                 expectation.fulfill()
             }
         }
-        connection.start(queue: .main)
+        connection.start(queue: clientQueue)
 
         wait(for: [expectation], timeout: 5)
         connection.cancel()
@@ -89,7 +97,7 @@ final class LoopbackServerTests: XCTestCase {
                 expectation.fulfill()
             }
         }
-        connection.start(queue: .main)
+        connection.start(queue: clientQueue)
 
         wait(for: [expectation], timeout: 5)
         connection.cancel()
@@ -129,7 +137,7 @@ final class LoopbackServerTests: XCTestCase {
         holderConnection.stateUpdateHandler = { state in
             if state == .ready { holderReady.fulfill() }
         }
-        holderConnection.start(queue: .main)
+        holderConnection.start(queue: clientQueue)
         wait(for: [holderReady], timeout: 5)
 
         // A second connection arrives once the server is already at its cap;
@@ -139,7 +147,7 @@ final class LoopbackServerTests: XCTestCase {
         let rejected = expectation(description: "second connection closed by server without data")
         let rejectedConnection = NWConnection(host: "127.0.0.1", port: NWEndpoint.Port(rawValue: port)!, using: .tcp)
         rejectedConnection.stateUpdateHandler = { _ in }
-        rejectedConnection.start(queue: .main)
+        rejectedConnection.start(queue: clientQueue)
         rejectedConnection.receive(minimumIncompleteLength: 1, maximumLength: 1) { data, _, isComplete, error in
             if (data == nil || data!.isEmpty) && (isComplete || error != nil) {
                 rejected.fulfill()
@@ -185,7 +193,7 @@ final class LoopbackServerTests: XCTestCase {
                 expectation.fulfill()
             }
         }
-        connection.start(queue: .main)
+        connection.start(queue: clientQueue)
 
         wait(for: [expectation], timeout: 5)
         connection.cancel()

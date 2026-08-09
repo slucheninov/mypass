@@ -30,6 +30,7 @@ struct EntryEditView: View {
     /// but nothing is destroyed until Save, so Cancel is a genuine escape hatch. The
     /// private key cannot be recovered afterwards, which makes that worth the extra state.
     @State private var removeExistingPasskey = false
+    @State private var showPasskeyDetails = false
 
     init(
         existingEntry: KdbxEntry?,
@@ -146,17 +147,26 @@ struct EntryEditView: View {
                         }
                     }
 
-                    if existingEntry?.hasPasskey == true {
+                    if let passkeyEntry = existingEntry, passkeyEntry.hasPasskey {
                         Divider().overlay(Color.primary.opacity(0.08))
                         HStack {
                             if removeExistingPasskey {
                                 Text("Passkey will be removed when you save")
                                     .foregroundStyle(.secondary)
-                                Spacer()
-                                Button("Undo") { removeExistingPasskey = false }
                             } else {
                                 Text("Passkey")
-                                Spacer()
+                            }
+                            Spacer()
+                            // Available in both states on purpose: checking what you are
+                            // about to delete is exactly when you want to look inside.
+                            Button("Show") { showPasskeyDetails = true }
+                                .accessibilityLabel("Show passkey details")
+                                .popover(isPresented: $showPasskeyDetails, arrowEdge: .bottom) {
+                                    PasskeyDetailsPopover(entry: passkeyEntry)
+                                }
+                            if removeExistingPasskey {
+                                Button("Undo") { removeExistingPasskey = false }
+                            } else {
                                 Button("Remove", systemImage: "minus.circle") {
                                     removeExistingPasskey = true
                                 }

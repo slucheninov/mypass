@@ -494,9 +494,14 @@ ssh-keygen -t ed25519 -N "correct-horse-battery-staple" -f /tmp/citadel_smoke_ke
 Worth fixing properly at some point — either gate it like its neighbours, or generate the
 key into the test's own temp directory in `setUp`. Not part of any current plan.
 
-**Flaky:** `LoopbackServerTests.testServerClosesConnectionAndRespondsErrorWhenClaimedFrameLengthExceedsCap`
-timed out once under full-suite load (5 s expectation) and passed both in isolation and on
-a full re-run. Treat a lone failure there as noise; two consecutive ones as real.
+**Fixed 2026-08-09 — was flaky:** `LoopbackServerTests` intermittently timed out under
+full-suite load while passing every time in isolation. Cause: the *client* connections in
+those tests ran their callbacks on `.main`, and each test then blocks the main thread in
+`wait(for:)` — so under a full run they competed with every other test's main-dispatched
+work and missed the 5 s expectation. The server always had its own queue; the client now
+does too (`clientQueue`), so the tests measure the server rather than main-queue load.
+Confirmed with three consecutive green full runs. If anything in this class starts timing
+out again, look for newly added main-queue work in the suite before suspecting the server.
 
 Also: never judge a run by `./scripts/test.sh | tail`. The pipeline reports `tail`'s exit
 code, not the script's, which is how a 4-failure run first read as a pass here.

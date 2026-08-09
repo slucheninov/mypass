@@ -502,7 +502,7 @@ struct EntryDetailView: View {
                 .buttonStyle(.link)
                 .accessibilityLabel("Show passkey details")
                 .popover(isPresented: $showPasskeyDetails, arrowEdge: .bottom) {
-                    passkeyDetailsPopover(for: entry)
+                    PasskeyDetailsPopover(entry: entry, footnote: "Remove this passkey by editing the entry.")
                 }
         }
         .font(.body)
@@ -515,43 +515,6 @@ struct EntryDetailView: View {
     private func passkeyCreatedDescription(_ created: Date?) -> String {
         guard let created else { return "Added" }
         return "Added \(created.formatted(date: .abbreviated, time: .omitted))"
-    }
-
-    @ViewBuilder
-    private func passkeyDetailsPopover(for entry: KdbxEntry) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Passkey")
-                .font(.headline)
-            if let rpId = entry.passkeyRelyingParty {
-                passkeyDetailLine(label: "Site", value: rpId)
-            }
-            if let username = entry.passkeyUsername, !username.isEmpty {
-                passkeyDetailLine(label: "Username", value: username)
-            }
-            if let created = entry.passkeyCreatedAt {
-                passkeyDetailLine(label: "Created", value: created.formatted(date: .abbreviated, time: .shortened))
-            }
-            if let credentialId = entry.passkeyCredentialId {
-                passkeyDetailLine(label: "Credential ID", value: PasskeyBase64URL.encode(credentialId))
-            }
-            Text("Remove this passkey by editing the entry.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-                .padding(.top, 2)
-        }
-        .padding(16)
-        .frame(width: 320, alignment: .leading)
-    }
-
-    private func passkeyDetailLine(label: String, value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(label)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(.caption, design: .monospaced))
-                .textSelection(.enabled)
-        }
     }
 
     private func moveToGroup(_ groupID: UUID, entryID: UUID) {
