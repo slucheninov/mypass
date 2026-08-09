@@ -519,4 +519,329 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(response, .error("entry not found or domain mismatch"))
         XCTAssertFalse(wasInvoked)
     }
+
+    // MARK: - Passkeys
+
+    private func createFixtureRequestJSON(rpId: String = "example.com") -> String {
+        """
+        {
+          "challenge": "\(PasskeyBase64URL.encode(Data([1, 2, 3, 4])))",
+          "rp": { "id": "\(rpId)", "name": "Example" },
+          "user": { "id": "\(PasskeyBase64URL.encode(Data([9, 9])))", "name": "alice", "displayName": "Alice" },
+          "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+          "attestation": "none"
+        }
+        """
+    }
+
+    private func getFixtureRequestJSON(rpId: String = "example.com", allowCredentials: [Data] = []) -> String {
+        let allow = allowCredentials
+            .map { "{ \"type\": \"public-key\", \"id\": \"\(PasskeyBase64URL.encode($0))\" }" }
+            .joined(separator: ", ")
+        return """
+        {
+          "challenge": "\(PasskeyBase64URL.encode(Data([4, 4, 4])))",
+          "rpId": "\(rpId)",
+          "allowCredentials": [\(allow)]
+        }
+        """
+    }
+
+    private func attachPasskey(to id: UUID, rpId: String = "example.com", pem: String = "pem", credentialId: Data? = Data([1, 2, 3])) {
+        session.mutate { db in
+            guard let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) else { return }
+            db.rootGroup.entries[index].passkeyRelyingParty = rpId
+            db.rootGroup.entries[index].passkeyPrivateKeyPEM = pem
+            db.rootGroup.entries[index].passkeyCredentialId = credentialId
+        }
+    }
+
+    func testGetPasskeyProxyStatusReportsUnlockedAndAttachAllowed() {
+        let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true))
+    }
+
+    /// The one message that must answer past the blanket locked gate — otherwise the
+    /// extension can never learn *why* it may not attach.
+    func testGetPasskeyProxyStatusReportsLockedWithoutReturningGenericLockedResponse() {
+        session.lock()
+        let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: false, paired: true, attachAllowed: false))
+    }
+
+    func testGetPasskeyProxyStatusReturnsPairingRequiredWithoutSecret() {
+        let (unpairedService, _, _) = makeServiceWithPairing()
+        XCTAssertEqual(unpairedService.handle(.getPasskeyProxyStatus(token: "t", pairing: nil)), .pairingRequired)
+    }
+
+    func testSetPasskeyProxyEnabledPersistsAndReturnsEnabled() {
+        defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
+        let response = service.handle(.setPasskeyProxyEnabled(token: "t", enabled: true, pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .passkeyProxyEnabled(enabled: true))
+        XCTAssertTrue(UserDefaults.standard.bool(forKey: "passkeyProxyEnabled"))
+    }
+
+    func testSetPasskeyProxyEnabledRequiresPairing() {
+        let (unpairedService, _, _) = makeServiceWithPairing()
+        XCTAssertEqual(
+            unpairedService.handle(.setPasskeyProxyEnabled(token: "t", enabled: true, pairing: nil)),
+            .pairingRequired
+        )
+    }
+
+    func testGetCredentialsSetsHasPasskeyTrueWhenPrivateKeyPresent() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id)
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret))
+        guard case .credentialList(let summaries) = response else { return XCTFail("expected credentialList") }
+        XCTAssertEqual(summaries.first?.hasPasskey, true)
+    }
+
+    func testPasskeyCreateReturnsPendingWithZeroMatches() {
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 1, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending(let requestId, let rpId, let rpName, let matches) = response else {
+            return XCTFail("expected passkeyCreatePending, got \(response)")
+        }
+        XCTAssertEqual(requestId, 1)
+        XCTAssertEqual(rpId, "example.com")
+        XCTAssertEqual(rpName, "Example")
+        XCTAssertTrue(matches.isEmpty)
+    }
+
+    func testPasskeyCreateReturnsUnsupportedAlgorithmError() {
+        let json = """
+        { "challenge": "AAEC", "rp": { "id": "example.com" }, "user": { "id": "AAEC", "name": "a" }, \
+        "pubKeyCredParams": [{ "type": "public-key", "alg": -257 }] }
+        """
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 2, requestDetailsJson: json, originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, let responseJson, let error) = response else {
+            return XCTFail("expected passkeyCreateComplete with error, got \(response)")
+        }
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "NotSupportedError")
+    }
+
+    func testPasskeyCreateDoesNotWriteToTheVault() {
+        let before = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).count
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 20, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).count, before,
+                       "phase 1 must never mutate the vault — only the confirm phase may")
+    }
+
+    func testPasskeyCreateThenConfirmWritesEntryAndReturnsResponseJson() {
+        let prepareResponse = service.handle(.passkeyCreate(
+            token: "t", requestId: 3, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending = prepareResponse else { return XCTFail("expected pending") }
+
+        let confirmResponse = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 3, entryId: nil, replace: false, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(let requestId, let responseJson, let error) = confirmResponse else {
+            return XCTFail("expected passkeyCreateComplete, got \(confirmResponse)")
+        }
+        XCTAssertEqual(requestId, 3)
+        XCTAssertNil(error)
+        XCTAssertNotNil(responseJson)
+
+        let entries = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup)
+        XCTAssertTrue(entries.contains { $0.passkeyRelyingParty == "example.com" && $0.passkeyPrivateKeyPEM?.isEmpty == false })
+    }
+
+    func testPasskeyCreateConfirmRequiresReplaceFlagWhenEntryAlreadyHasPasskey() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id, pem: "existing-pem")
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 4, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        let response = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 4, entryId: id.uuidString, replace: false, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, let responseJson, let error) = response else { return XCTFail("expected complete") }
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "InvalidStateError")
+
+        let entries = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup)
+        XCTAssertEqual(entries.first { $0.uuid == id }?.passkeyPrivateKeyPEM, "existing-pem", "must not overwrite without replace: true")
+    }
+
+    func testPasskeyCreateConfirmOverwritesWhenReplaceIsTrue() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id, pem: "existing-pem")
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 21, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        let response = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 21, entryId: id.uuidString, replace: true, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, let responseJson, let error) = response else { return XCTFail("expected complete") }
+        XCTAssertNil(error)
+        XCTAssertNotNil(responseJson)
+
+        let entry = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == id }
+        XCTAssertNotEqual(entry?.passkeyPrivateKeyPEM, "existing-pem")
+        XCTAssertTrue(entry?.passkeyPrivateKeyPEM?.contains("PRIVATE KEY") == true)
+    }
+
+    func testPasskeyCreateReturnsLockedAndDoesNotWriteWhenVaultIsLocked() {
+        session.lock()
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 5, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .locked)
+    }
+
+    func testPasskeyCreateRequiresPairing() {
+        let (unpairedService, _, _) = makeServiceWithPairing()
+        let response = unpairedService.handle(.passkeyCreate(
+            token: "t", requestId: 22, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: nil
+        ))
+        XCTAssertEqual(response, .pairingRequired)
+    }
+
+    func testPasskeyGetReturnsPendingForMatchingRp() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id)
+        let response = service.handle(.passkeyGet(
+            token: "t", requestId: 6, requestDetailsJson: getFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetPending(_, let rpId, let matches) = response else { return XCTFail("expected pending, got \(response)") }
+        XCTAssertEqual(rpId, "example.com")
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches.first?.hasPasskey, true)
+    }
+
+    func testPasskeyGetFiltersByAllowCredentials() {
+        let matching = addFixtureEntry(title: "Match", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: matching, credentialId: Data([7, 7, 7]))
+        let other = addFixtureEntry(title: "Other", username: "bob", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: other, credentialId: Data([8, 8, 8]))
+
+        let response = service.handle(.passkeyGet(
+            token: "t", requestId: 23, requestDetailsJson: getFixtureRequestJSON(allowCredentials: [Data([7, 7, 7])]),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetPending(_, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
+        XCTAssertEqual(matches.map(\.title), ["Match"])
+    }
+
+    func testPasskeyGetReturnsNotAllowedErrorWhenNoMatch() {
+        let response = service.handle(.passkeyGet(
+            token: "t", requestId: 7, requestDetailsJson: getFixtureRequestJSON(rpId: "no-such-site.com"),
+            originUrl: "https://no-such-site.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetComplete(_, let responseJson, let error) = response else { return XCTFail("expected complete, got \(response)") }
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "NotAllowedError")
+    }
+
+    /// Same choke-point rule the other four bridge requests already follow: a
+    /// soft-deleted entry is invisible to the extension, passkeys included.
+    func testPasskeyGetIgnoresRecycleBinEntries() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id)
+        moveEntryToRecycleBin(id)
+        let response = service.handle(.passkeyGet(
+            token: "t", requestId: 24, requestDetailsJson: getFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetComplete(_, _, let error) = response else { return XCTFail("expected complete, got \(response)") }
+        XCTAssertEqual(error?.name, "NotAllowedError")
+    }
+
+    func testPasskeyCreateIgnoresRecycleBinEntriesWhenListingMatches() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id)
+        moveEntryToRecycleBin(id)
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 25, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
+        XCTAssertTrue(matches.isEmpty)
+    }
+
+    func testPasskeyGetThenApproveSignsAssertion() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 8, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        _ = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 8, entryId: id.uuidString, replace: false, pairing: authorizedPairingSecret
+        ))
+
+        let getPrepare = service.handle(.passkeyGet(
+            token: "t", requestId: 9, requestDetailsJson: getFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetPending = getPrepare else { return XCTFail("expected pending, got \(getPrepare)") }
+
+        let approveResponse = service.handle(.passkeyGetApprove(
+            token: "t", requestId: 9, entryId: id.uuidString, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetComplete(_, let responseJson, let error) = approveResponse else {
+            return XCTFail("expected complete, got \(approveResponse)")
+        }
+        XCTAssertNil(error)
+        XCTAssertNotNil(responseJson)
+    }
+
+    func testPasskeyGetApproveWithoutPendingRequestFails() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id)
+        let response = service.handle(.passkeyGetApprove(
+            token: "t", requestId: 999, entryId: id.uuidString, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetComplete(_, let responseJson, let error) = response else { return XCTFail("expected complete") }
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "NotAllowedError")
+    }
+
+    func testPasskeyCancelClearsPendingStateForBothCreateAndGet() {
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 10, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        let cancelResponse = service.handle(.passkeyCancel(token: "t", requestId: 10, pairing: authorizedPairingSecret))
+        XCTAssertEqual(cancelResponse, .passkeyCancelled(requestId: 10))
+
+        let confirmAfterCancel = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 10, entryId: nil, replace: false, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, let responseJson, let error) = confirmAfterCancel else { return XCTFail("expected complete") }
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "NotAllowedError", "confirming a cancelled request must fail, not silently succeed")
+    }
+
+    /// Locking the vault must invalidate any ceremony that was mid-flight, so a
+    /// confirm arriving after a re-unlock cannot resurrect it.
+    func testLockingTheVaultDropsPendingCeremonies() throws {
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 11, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        session.lock()
+        try session.unlock(password: "correct-horse")
+
+        let response = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 11, entryId: nil, replace: false, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, _, let error) = response else { return XCTFail("expected complete") }
+        XCTAssertEqual(error?.name, "NotAllowedError")
+    }
 }
