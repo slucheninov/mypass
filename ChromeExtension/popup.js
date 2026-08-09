@@ -389,6 +389,38 @@ let routeTotpCandidate = null;
 let restorePendingTotpCandidate = null;
 let handleAddTotpClick = null;
 let requestPageTotpCandidate = null;
+let rehydratePendingPasskeyCeremony = null;
+let renderPasskeyCeremonyPanel = null;
+let renderPasskeyPicker = null;
+let sendPasskeyCreateConfirm = null;
+let sendPasskeyGetApprove = null;
+let sendPasskeyCancel = null;
+let initPasskeySettingsToggle = null;
+
+const PENDING_PASSKEY_KEY = 'pendingPasskeyCeremony';
+
+/// Both values are shown on every confirm panel: the relying party the credential will
+/// be bound to, and the origin the ceremony actually came from. A mismatch between them
+/// is what a phishing attempt looks like, so the user has to be able to see both.
+function passkeyCeremonySummary(pending) {
+  if (!pending) return '';
+  const origin = pending.originUrl || 'unknown origin';
+  return `${pending.rpId} — ${origin}`;
+}
+
+/// Which panel a pending ceremony maps to. Pure so the routing can be tested without a
+/// DOM: more than one match always means the picker, a create onto an entry that already
+/// carries a passkey means the Replace confirm, and a get always requires an explicit
+/// Approve — there is no silent auto-sign path even with exactly one match.
+function choosePasskeyPanel(pending) {
+  if (!pending || (pending.kind !== 'create' && pending.kind !== 'get')) return null;
+  const matches = pending.matches || [];
+  if (matches.length > 1) return 'passkey-picker';
+  if (pending.kind === 'get') {
+    return matches.length === 1 ? 'passkey-use' : null;
+  }
+  return matches.length === 1 && matches[0].hasPasskey ? 'passkey-replace' : 'passkey-save';
+}
 
 if (typeof document !== 'undefined') {
   const lockedPanel = document.getElementById('locked-panel');
@@ -423,6 +455,14 @@ if (typeof document !== 'undefined') {
   const submitCodeBtn = document.getElementById('submit-code-btn');
   const pairingErrorEl = document.getElementById('pairing-error');
 
+  const passkeySavePanel = document.getElementById('passkey-save-panel');
+  const passkeyReplacePanel = document.getElementById('passkey-replace-panel');
+  const passkeyUsePanel = document.getElementById('passkey-use-panel');
+  const passkeyPickerPanel = document.getElementById('passkey-picker-panel');
+  const passkeyPickerListEl = document.getElementById('passkey-picker-list');
+  const passkeySettingsFooter = document.getElementById('passkey-settings-footer');
+  const passkeyProxyToggle = document.getElementById('passkey-proxy-toggle');
+
   const addTotpSection = document.getElementById('add-totp-section');
   const addTotpBtn = document.getElementById('add-totp-btn');
   const totpPasteInput = document.getElementById('totp-paste-input');
@@ -445,15 +485,39 @@ if (typeof document !== 'undefined') {
     appUnavailablePanel,
     emptyPanel,
     listPanel,
-    pairingPanel
+    pairingPanel,
+    passkeySavePanel,
+    passkeyReplacePanel,
+    passkeyUsePanel,
+    passkeyPickerPanel
   ];
+
+  const PASSKEY_PANELS = ['passkey-save', 'passkey-replace', 'passkey-use', 'passkey-picker'];
 
   function showPanel(name) {
     for (const section of PANEL_SECTIONS) {
       section.hidden = true;
     }
     openMypassHelper.hidden = true;
+    // A ceremony owns the whole popup: the Add-2FA input and the settings toggle would
+    // both be distractions next to a confirmation the user is being asked to make.
+    if (PASSKEY_PANELS.includes(name)) {
+      addTotpSection.hidden = true;
+      passkeySettingsFooter.hidden = true;
+    }
     switch (name) {
+      case 'passkey-save':
+        passkeySavePanel.hidden = false;
+        break;
+      case 'passkey-replace':
+        passkeyReplacePanel.hidden = false;
+        break;
+      case 'passkey-use':
+        passkeyUsePanel.hidden = false;
+        break;
+      case 'passkey-picker':
+        passkeyPickerPanel.hidden = false;
+        break;
       case 'locked':
         lockedPanel.hidden = false;
         break;
@@ -856,6 +920,145 @@ if (typeof document !== 'undefined') {
     });
   };
 
+  // --- Passkey ceremony panels ---------------------------------------------------
+  // The pending record lives in chrome.storage.session (written by background.js), not
+  // in this popup's memory: the popup is opened fresh by chrome.action.openPopup() after
+  // the ceremony has already started, and may be closed and reopened mid-ceremony.
+
+  function clearPendingPasskeyCeremony(cb) {
+    const area = getPairingStorageArea();
+    if (!area || !area.remove) {
+      if (cb) cb();
+      return;
+    }
+    area.remove([PENDING_PASSKEY_KEY], () => {
+      if (cb) cb();
+    });
+  }
+
+  sendPasskeyCreateConfirm = function (requestId, entryId, replace) {
+    chrome.runtime.sendMessage(
+      { type: 'passkeyCreateConfirm', requestId, entryId, replace: !!replace },
+      () => clearPendingPasskeyCeremony(() => window.close())
+    );
+  };
+
+  sendPasskeyGetApprove = function (requestId, entryId) {
+    chrome.runtime.sendMessage(
+      { type: 'passkeyGetApprove', requestId, entryId },
+      () => clearPendingPasskeyCeremony(() => window.close())
+    );
+  };
+
+  sendPasskeyCancel = function (requestId) {
+    chrome.runtime.sendMessage(
+      { type: 'passkeyCancelUI', requestId },
+      () => clearPendingPasskeyCeremony(() => window.close())
+    );
+  };
+
+  renderPasskeyPicker = function (pending) {
+    passkeyPickerListEl.innerHTML = '';
+    (pending.matches || []).forEach((credential) => {
+      const item = document.createElement('li');
+      item.className = 'credential-row';
+      item.appendChild(buildLetterAvatarElement(credential.title));
+
+      const textCol = document.createElement('div');
+      textCol.className = 'credential-text';
+      const title = document.createElement('div');
+      title.className = 'credential-title';
+      title.textContent = credential.title;
+      textCol.appendChild(title);
+      if (credential.username) {
+        const username = document.createElement('div');
+        username.className = 'credential-username';
+        username.textContent = credential.username;
+        textCol.appendChild(username);
+      }
+      item.appendChild(textCol);
+
+      item.addEventListener('click', () => {
+        if (pending.kind === 'create') {
+          sendPasskeyCreateConfirm(pending.requestId, credential.id, credential.hasPasskey);
+        } else {
+          sendPasskeyGetApprove(pending.requestId, credential.id);
+        }
+      });
+      passkeyPickerListEl.appendChild(item);
+    });
+  };
+
+  renderPasskeyCeremonyPanel = function (pending) {
+    const panel = choosePasskeyPanel(pending);
+    if (!panel) return false;
+
+    const summaryText = passkeyCeremonySummary(pending);
+    const matches = pending.matches || [];
+    const entryId = matches.length === 1 ? matches[0].id : undefined;
+
+    if (panel === 'passkey-picker') {
+      document.getElementById('passkey-picker-summary').textContent = summaryText;
+      renderPasskeyPicker(pending);
+      document.getElementById('passkey-picker-cancel-btn').onclick = () => sendPasskeyCancel(pending.requestId);
+      showPanel('passkey-picker');
+      return true;
+    }
+
+    if (panel === 'passkey-use') {
+      document.getElementById('passkey-use-summary').textContent = summaryText;
+      document.getElementById('passkey-approve-btn').onclick = () => sendPasskeyGetApprove(pending.requestId, entryId);
+      document.getElementById('passkey-use-cancel-btn').onclick = () => sendPasskeyCancel(pending.requestId);
+      showPanel('passkey-use');
+      return true;
+    }
+
+    const isReplace = panel === 'passkey-replace';
+    document.getElementById(isReplace ? 'passkey-replace-summary' : 'passkey-save-summary').textContent = summaryText;
+    document.getElementById(isReplace ? 'passkey-replace-btn' : 'passkey-save-btn').onclick =
+      () => sendPasskeyCreateConfirm(pending.requestId, entryId, isReplace);
+    document.getElementById(isReplace ? 'passkey-replace-cancel-btn' : 'passkey-cancel-btn').onclick =
+      () => sendPasskeyCancel(pending.requestId);
+    showPanel(panel);
+    return true;
+  };
+
+  // Returns whether a ceremony took over the popup, so the caller can skip the ordinary
+  // credential-list flow entirely rather than racing it — the same sequencing mistake
+  // restorePendingTotpCandidate was fixed for.
+  rehydratePendingPasskeyCeremony = function (cb) {
+    const area = getPairingStorageArea();
+    if (!area || !area.get) {
+      cb(false);
+      return;
+    }
+    area.get([PENDING_PASSKEY_KEY], (result) => {
+      const pending = result && result[PENDING_PASSKEY_KEY];
+      if (!pending) {
+        cb(false);
+        return;
+      }
+      cb(renderPasskeyCeremonyPanel(pending));
+    });
+  };
+
+  // `checked` comes from the extension's own stored flag, not from `attachAllowed` —
+  // attachAllowed is false whenever the vault is locked, which says nothing about
+  // whether the user turned the feature on.
+  initPasskeySettingsToggle = function () {
+    passkeySettingsFooter.hidden = false;
+    chrome.storage.local.get(['passkeyProxyEnabled'], (stored) => {
+      passkeyProxyToggle.checked = !!(stored && stored.passkeyProxyEnabled);
+    });
+    chrome.runtime.sendMessage({ type: 'getPasskeyProxyStatus' }, (status) => {
+      const reachable = !!(status && status.type === 'passkeyProxyStatus');
+      passkeyProxyToggle.disabled = !(reachable && status.unlocked && status.paired);
+    });
+    passkeyProxyToggle.addEventListener('change', () => {
+      chrome.runtime.sendMessage({ type: 'setPasskeyProxyEnabled', enabled: passkeyProxyToggle.checked });
+    });
+  };
+
   addTotpBtn.onclick = () => handleAddTotpClick(currentTabUrl);
 
   // The Add-2FA section starts hidden (popup.html) and only appears when there is an
@@ -875,15 +1078,23 @@ if (typeof document !== 'undefined') {
     });
   };
 
-  chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-    const activeTab = tabs[0];
-    if (!activeTab || !activeTab.url) {
-      appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
-      showAppUnavailableActions(null);
-      return;
-    }
-    queryCredentials(activeTab.url);
-    requestPageTotpCandidate(activeTab.id);
+  // A pending ceremony is checked first and, when present, owns the popup outright: the
+  // popup was opened *by* that ceremony, and the user is being asked to make a security
+  // decision. Running the ordinary credential lookup alongside it would let whichever
+  // callback resolved last win the panel.
+  rehydratePendingPasskeyCeremony((tookOver) => {
+    if (tookOver) return;
+    initPasskeySettingsToggle();
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      const activeTab = tabs[0];
+      if (!activeTab || !activeTab.url) {
+        appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
+        showAppUnavailableActions(null);
+        return;
+      }
+      queryCredentials(activeTab.url);
+      requestPageTotpCandidate(activeTab.id);
+    });
   });
 }
 
@@ -928,6 +1139,16 @@ if (typeof module !== 'undefined') {
     routeTotpCandidate,
     restorePendingTotpCandidate,
     handleAddTotpClick,
-    requestPageTotpCandidate
+    requestPageTotpCandidate,
+    PENDING_PASSKEY_KEY,
+    passkeyCeremonySummary,
+    choosePasskeyPanel,
+    rehydratePendingPasskeyCeremony,
+    renderPasskeyCeremonyPanel,
+    renderPasskeyPicker,
+    sendPasskeyCreateConfirm,
+    sendPasskeyGetApprove,
+    sendPasskeyCancel,
+    initPasskeySettingsToggle
   };
 }

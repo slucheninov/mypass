@@ -4,7 +4,7 @@
 outstanding workstreams is tracked. Tick a box only when the item is implemented **and**
 its tests pass — see "Definition of done" below.
 
-Last updated: 2026-08-08
+Last updated: 2026-08-09
 
 ---
 
@@ -375,31 +375,57 @@ Gate 5 closed 2026-08-08: full `./scripts/test.sh` green, the whole-branch revie
 
 Requires Gate 0 (especially **S1**) and Gate 2. Apply the S4–S8 plan fixes as written.
 
-- [ ] **C1** — `ExtensionBridgeKit`: passkey wire protocol (adapt to A's and B's cases —
-      add, never replace; `entryId` may already exist from B)
-- [ ] **C4** — `ExtensionBridgeService`: passkey handlers, pending-ceremony maps,
-      `hasPasskey` in `getCredentials`, `LoopbackServer` routing
-  - [ ] `getPasskeyProxyStatus` answers even while the vault is locked — the single
-        documented exception to the blanket locked gate
-- [ ] **C5** — `BrowserSettingsPane`: "Use MyPass for Chrome passkeys" toggle (opt-in, default off)
-- [ ] **C6** — `EntryDetailView`: read-only Passkey section + destructive "Remove passkey"
-- [ ] **C7** — `manifest.json`: `webAuthenticationProxy` permission, `minimum_chrome_version`
+- [x] **C1** — `ExtensionBridgeKit`: passkey wire protocol *(shipped: `573f760`)*
+  - [x] Adapted: `getPasskeyProxyStatus` joins `requestUnlock` in U3's
+        `isAnswerableWhileLocked` exemption list rather than being special-cased ahead of
+        the blanket lock guard. That list is now the one place an exception is declared —
+        the factoring the C4 note below asked for.
+  - [x] `hasPasskey` added alongside A's `hasTotp`, neither replacing the other
+- [x] **C4** — `ExtensionBridgeService`: passkey handlers, pending-ceremony maps,
+      `hasPasskey` in `getCredentials`, `LoopbackServer` routing *(shipped: `5bc9cc8`,
+      `c4ff7db`, `00a195a`)*
+  - [x] `getPasskeyProxyStatus` answers even while the vault is locked — the second
+        documented exception to the blanket locked gate, declared in the same list as U3's
+  - [x] Beyond the plan: recycle-bin entries excluded from passkey matching (Gate 5
+        precedent); `passkeyGetApprove` re-resolves `entryId` inside the ceremony's own
+        relying party; locking the vault drops every pending ceremony
+- [x] **C5** — `BrowserSettingsPane`: "Use MyPass for Chrome passkeys" toggle *(shipped: `30ab273`)*
+- [x] **C6** — `EntryDetailView`: read-only Passkey section + destructive "Remove passkey"
+      *(shipped: `a1a2afd`)*
+- [x] **C7** — `manifest.json`: `webAuthenticationProxy` permission, `minimum_chrome_version`
+      *(shipped: `fee7007`)*
   - [x] Per **S2**, raise the declared minimum from `115` to `127`. `webAuthenticationProxy`
         needs 115, but `chrome.action.openPopup()` is policy-installed-only on 118–126,
         so 127 is the real floor for the confirm UX. Alternatively keep 115 and document
         that 115–126 users only ever get the notification fallback.
-- [ ] **C8** — `background.js`: proxy lifecycle, ceremony relay, watchdog
-  - [ ] Incorporates **S4** (complete isUvpaa when disabled)
-  - [ ] Incorporates **S5** (locked / pairingRequired branch)
-  - [ ] Incorporates **S6** (promise wrapper removed)
-  - [ ] Incorporates **S7** (`storage.session` as source of truth)
-- [ ] **C9** — `popup.js` / `popup.html`: confirm / picker / locked / unattached panels,
-      session-pending rehydration
-- [ ] **C10** — Manual e2e fixtures + `RUN.md` checklist (Ukrainian)
-- [ ] **C11** — Full verification run; `passkeyProxy.test.js` wired into `scripts/test.sh`
+- [x] **C8** — `background.js`: proxy lifecycle, ceremony relay, watchdog *(shipped: `2a2130e`)*
+  - [x] Incorporates **S4** (complete isUvpaa when disabled)
+  - [x] Incorporates **S5** (locked / pairingRequired branch — plus an `error` branch the
+        plan missed, see Decisions)
+  - [x] Incorporates **S6** (promise wrapper removed)
+  - [x] Incorporates **S7** (`storage.session` as source of truth, `chrome.alarms` watchdog)
+- [x] **C9** — `popup.js` / `popup.html`: confirm / replace / approve / picker panels,
+      session-pending rehydration, settings toggle *(shipped: `7a40005`)*
+- [x] **C10** — Manual e2e fixtures + `RUN.md` checklist (Ukrainian) *(shipped: `6dcdce3`)*
+- [x] **C11** — Full verification run; `passkeyProxy.test.js` and `passkeyPopup.test.js`
+      wired into `scripts/test.sh`
 
 **⛳ Gate 6** — `./scripts/test.sh` green; a real register-then-sign-in round trip against
 a live WebAuthn test site; vault lock and pairing loss both cancel a pending ceremony.
+
+Automated half done 2026-08-09: `./scripts/test.sh` green unpiped (`EXIT=0`,
+`** TEST SUCCEEDED **`) — 439 app tests, 134 MyPassKit, 86 SyncKit, 59 ExtensionBridgeKit,
+and all eleven JS suites including the two new ones. Criterion 10 ("no key in the
+extension") verified mechanically: `grep -rn "passkeyPrivateKeyPEM\|PRIVATE KEY"
+ChromeExtension/` returns nothing, and no `ExtensionBridgeResponse` case carries PEM.
+Criterion 13 verified the same way: all seven new handler cases open with
+`pairingManager.isAuthorized`.
+
+**Gate 6 stays open** until the manual half is walked against a real Chrome 127+ and a
+real MyPass build — the thirteen new `RUN.md` bullets. Nothing in the proxy lifecycle
+(`attach`/`detach`, `chrome.action.openPopup()`, a real `requestDetailsJson`) is reachable
+from an automated test, so this is a manual-only guarantee, as Stage 3 and Stage 5 both
+proved the hard way.
 
 ---
 
@@ -413,8 +439,8 @@ a live WebAuthn test site; vault lock and pairing loss both cancel a pending cer
 | 3 — Unlock from popup (U1–U9) | 9 | **9 — complete** |
 | 4 — Piece A (A1–A7) | 7 | **7 — complete** |
 | 5 — Piece B (B1–B11) | 11 | **11 — complete** |
-| 6 — Piece C rest (C1, C4–C11) | 9 | 0 |
-| **Total** | **55** | **46** |
+| 6 — Piece C rest (C1, C4–C11) | 9 | **9 — code complete, Gate 6 manual walk open** |
+| **Total** | **55** | **55** |
 
 ## Decisions
 
@@ -439,6 +465,12 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-08 | B follow-ups parked | Final review deferrals (none touch the trust model): per-image QR decode memoization, event.isTrusted on banner buttons, isReplacingTotp recompute on cleared field, picker panel polish, img.onload rescan. |
 | 2026-08-08 | Gate 5 walk findings | The manual walk surfaced four fixes: create-path TOTP proposals dropped the secret (plan B Task 4 defect, `fa50b0d`); recycle-bin entries were matched by all four bridge requests — now filtered at one choke point, plus the `.codes` smart category (`7fb3823`); no way to empty the bin or delete permanently — added with KdbxDeletedObject tombstones consumed by MergeEngine (`4155d84`); no way to remove 2FA in the editor — explicit Remove button, `applyOTP` empty-input semantics untouched (`1b1a313`); `isInRecycleBin` made subtree-recursive to keep the bridge boundary aligned with `emptyRecycleBin` (`c984a41`). |
 | 2026-08-08 | Editor and popup UX | Two further walk findings: the editor showed an empty OTP field for entries that already had 2FA, so the stored secret could be neither seen nor edited — now pre-filled, with proposal prefill still taking precedence so the Replace-2FA alert keeps its meaning (`0b54899`); the popup's Add-2FA section was always visible — now hidden unless the page reports a 2FA candidate (new `queryTotpCandidate` content-script message) or the picker flow opens it (`e36f26d`). |
+| 2026-08-09 | C locked-gate exemption | Plan C's "special-case `getPasskeyProxyStatus` before the blanket guard" was superseded by U3's `isAnswerableWhileLocked`, which landed after plan C was written. Both exemptions are now declared in one exhaustive switch with no `default`, so a new request case must state its position rather than inherit one. |
+| 2026-08-09 | C native-messaging error envelope | Plan C's `background.js` wrapped `sendNativeMessageWithPairing` in try/catch for the "MyPass not running" path, but this codebase's `sendNativeMessage` **resolves** `{type:"error"}` rather than rejecting — the catch could never fire, and an unreachable app would have fallen through to the "unexpected response" branch. `error` is now an explicit branch everywhere a ceremony reply is classified. |
+| 2026-08-09 | C subgroup write bug | Plan C's confirm handler located the target entry with `db.rootGroup.entries.firstIndex`, which finds nothing for an entry in a subgroup: the ceremony returned a success `responseJson` while writing no passkey, leaving the site holding a credential the vault has no key for. Now resolved through `GroupTreeOperations.entryLocation`, with a failed write reported as an error. Regression test added. |
+| 2026-08-09 | C attach gate | Plan C mirrors `passkeyProxyEnabled` in `UserDefaults` and `chrome.storage.local`, but `attachAllowed` reported lock state only — so turning the feature **off in the app** left an already-attached Chrome attached, with MyPass still the exclusive passkey provider. `attachAllowed` now folds in the app's own value, and `isUvpaa` answers from `attachAllowed` rather than `unlocked`. The extension's local flag stays a cache; the app is authoritative. |
+| 2026-08-09 | C popup toggle state | Plan C's snippet set the popup checkbox from `status.attachAllowed`, which is false whenever the vault is locked — the feature would have read as off on every locked-vault popup open. `checked` now comes from the extension's stored flag; `attachAllowed`/`unlocked` only drive whether the control is enabled. |
+| 2026-08-09 | C ceremony owns the popup | A pending ceremony is checked before anything else at popup open and, when found, suppresses the ordinary `getCredentials` flow entirely rather than racing it — the same sequencing failure `restorePendingTotpCandidate` was fixed for in Stage 5. Panel routing was extracted into a pure `choosePasskeyPanel(pending)` so it is testable without a DOM. |
 | 2026-08-08 | Closed-window proposals | Both proposal flows (password and TOTP) were lost whenever the main window was closed at proposal time: `NavigationState.pending*SaveProposal` was set before the fresh `ContentView` subscribed, and SwiftUI's `onChange` does not fire for an initial value, so the window opened on the plain list. Routing moved into `NavigationState.consumePendingProposals()`, called from both `onChange` handlers and from `onAppear` on the unlocked branch — which also covers a proposal that arrives while the vault is locked (`aec5528`). |
 
 ## Known trap when running the suite

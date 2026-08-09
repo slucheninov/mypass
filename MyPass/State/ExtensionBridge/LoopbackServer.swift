@@ -192,6 +192,13 @@ final class LoopbackServer {
         case .startPairing(let token, _): return token
         case .completePairing(let token, _): return token
         case .requestUnlock(let token, _): return token
+        case .getPasskeyProxyStatus(let token, _): return token
+        case .setPasskeyProxyEnabled(let token, _, _): return token
+        case .passkeyCreate(let token, _, _, _, _): return token
+        case .passkeyCreateConfirm(let token, _, _, _, _): return token
+        case .passkeyGet(let token, _, _, _, _): return token
+        case .passkeyGetApprove(let token, _, _, _): return token
+        case .passkeyCancel(let token, _, _): return token
         }
     }
 
