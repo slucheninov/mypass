@@ -15,6 +15,16 @@ assert.strictEqual(
 assert.ok(Array.isArray(manifest.permissions), 'permissions must be an array');
 assert.ok(manifest.permissions.includes('nativeMessaging'), 'missing nativeMessaging permission');
 assert.ok(manifest.permissions.includes('activeTab'), 'missing activeTab permission');
+assert.ok(manifest.permissions.includes('webAuthenticationProxy'), 'missing webAuthenticationProxy permission');
+assert.ok(
+  manifest.permissions.includes('alarms'),
+  'the passkey ceremony watchdog runs on chrome.alarms — a setTimeout does not survive service-worker termination'
+);
+assert.strictEqual(
+  manifest.minimum_chrome_version,
+  '127',
+  'webAuthenticationProxy needs 115, but chrome.action.openPopup() is policy-installed-only on 118-126 and the confirm popup is not optional'
+);
 assert.ok(
   !manifest.permissions.includes('scripting'),
   'scripting permission is unused (content_scripts already covers injection) and should not be requested'

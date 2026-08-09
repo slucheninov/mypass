@@ -10,7 +10,8 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["nativeMessaging", "activeTab", "storage"],
+  "permissions": ["nativeMessaging", "activeTab", "storage", "webAuthenticationProxy", "alarms"],
+  "minimum_chrome_version": "127",
   "background": {
     "service_worker": "background.js"
   },
