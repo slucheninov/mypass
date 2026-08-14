@@ -507,7 +507,7 @@
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
-      isFieldVisible, findFillableFields,
+      isFieldVisible, findFillableFields, findLoginForm,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,

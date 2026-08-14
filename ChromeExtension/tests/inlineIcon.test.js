@@ -11,12 +11,14 @@ function fakeInput(attrs = {}, extra = {}) {
   };
 }
 
-function fakeScope(inputs, formScope) {
+function fakeScope(inputs) {
   return {
     querySelectorAll: (selector) => {
       if (selector === 'input[type="password"]') {
         return inputs.filter((i) => i.getAttribute('type') === 'password');
       }
+      // findOtpField's selector — unfiltered, exercised on every findFillableFields/
+      // findLoginForm call below since both call findOtpField internally.
       if (selector === 'input, textarea') return inputs;
       // the username selector
       return inputs.filter((i) => {
@@ -24,11 +26,10 @@ function fakeScope(inputs, formScope) {
         return t === 'text' || t === 'email' || (i.getAttribute('autocomplete') || '').includes('username');
       });
     },
-    __formScope: formScope,
   };
 }
 
-const { isFieldVisible, findFillableFields } = require('../content.js');
+const { isFieldVisible, findFillableFields, findLoginForm } = require('../content.js');
 
 // isFieldVisible
 assert.strictEqual(isFieldVisible(fakeInput({ type: 'text' })), true, 'plain visible input is fillable');
@@ -64,3 +65,51 @@ const otpFields = findFillableFields(fakeScope([otp]));
 assert.deepStrictEqual(kinds(otpFields), ['otp'], 'one-time-code field is classified otp, not username');
 assert.strictEqual(otpFields.length, 1, 'a field is never emitted twice');
 console.log('inlineIcon.test.js: findFillableFields OK');
+
+// findLoginForm — reads the global `document`, so stub it per case and restore it after.
+const originalDocument = global.document;
+
+// 1. Password field inside a <form> yields {form, passwordInput, usernameInput} with a
+// non-null form and both inputs identified correctly.
+const formInputs = [];
+const formEl = Object.assign(fakeScope(formInputs), { tagName: 'FORM' });
+const pwInForm = fakeInput({ type: 'password' }, { form: formEl });
+const userInForm = fakeInput({ type: 'text', name: 'username' }, { form: formEl });
+formInputs.push(pwInForm, userInForm);
+global.document = fakeScope([userInForm, pwInForm]);
+const withForm = findLoginForm();
+assert.notStrictEqual(withForm, null, 'password field inside a form yields a result');
+assert.strictEqual(withForm.form, formEl, 'form is the enclosing <form> element');
+assert.strictEqual(withForm.passwordInput, pwInForm, 'passwordInput is the password field');
+assert.strictEqual(withForm.usernameInput, userInForm, 'usernameInput is the username field');
+
+// 2. Password field with NO enclosing <form> — deliberate behaviour change from the old
+// findLoginForm, which returned null here and silently made applyFill do nothing on such
+// pages. The new findLoginForm returns a non-null result with form: null so applyFill can
+// still fill the password.
+const pwNoForm = fakeInput({ type: 'password' });
+global.document = fakeScope([pwNoForm]);
+const withoutForm = findLoginForm();
+assert.notStrictEqual(withoutForm, null, 'password field with no enclosing form still yields a result');
+assert.strictEqual(
+  withoutForm.form,
+  null,
+  'deliberate behaviour change: a password field outside any <form> now returns form: null instead of the old null result, so applyFill can still fill it'
+);
+assert.strictEqual(withoutForm.passwordInput, pwNoForm, 'passwordInput is set even without a form');
+
+// 3. No password field on the page.
+global.document = fakeScope([fakeInput({ type: 'text', name: 'username' })]);
+assert.strictEqual(findLoginForm(), null, 'no password field on the page yields null');
+
+// 4. Password plus a username field — usernameInput must be the username field, not the
+// password field.
+const pw2 = fakeInput({ type: 'password' });
+const user2 = fakeInput({ type: 'text', name: 'username' });
+global.document = fakeScope([pw2, user2]);
+const withUsername = findLoginForm();
+assert.strictEqual(withUsername.usernameInput, user2, 'usernameInput is the username field, not the password field');
+assert.notStrictEqual(withUsername.usernameInput, withUsername.passwordInput, 'password and username inputs are distinct fields');
+
+global.document = originalDocument;
+console.log('inlineIcon.test.js: findLoginForm OK');
