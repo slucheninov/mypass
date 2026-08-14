@@ -190,6 +190,14 @@
     };
   }
 
+  // Exported for tests: the wiring that consumes this lives in the browser-only block and is
+  // unreachable from node, which is exactly where the stale-target bug hid.
+  function isFillTargetUsable(target, now, ttlMs) {
+    if (!target || !target.input) return false;
+    if (target.input.isConnected !== true) return false;
+    return (now - target.at) <= ttlMs;
+  }
+
   const OTPAUTH_REGEX = /otpauth:\/\/totp\/[^\s"'<>]+/i;
   const BASE32_REGEX = /^[A-Z2-7]{16,128}$/;
   const MANUAL_KEY_LABEL_REGEX = /secret|manual|setup key|authenticator/i;
@@ -699,7 +707,30 @@
     // instead of guessing the first password field in document order (the bug this fixes).
     // Set unconditionally in onSelect, before handleEntrySelect runs — a rejected untrusted
     // activation simply never produces an applyFill message, so a stale value here is inert.
+    //
+    // A fill request that is never answered (locked vault, native error, origin mismatch)
+    // would otherwise leave the target set forever, and the next unrelated fill — including
+    // one started from the popup, which has no clicked field — would inherit it. The target
+    // is therefore consumed on first use and expires on its own. A native round trip is well
+    // under a second; 5s is generous.
+    //
+    // Nothing ties a target to its own response, so two fills issued back-to-back have their
+    // first response consume whatever target is current at that moment. That is deliberate,
+    // not overlooked: consume-once plus the TTL narrows the failure mode to "the most
+    // recently clicked field wins," which is the right behaviour for a user who just clicked
+    // something newer.
+    const FILL_TARGET_TTL_MS = 5000;
     let pendingFillTarget = null;
+
+    function setPendingFillTarget(input, kind, now) {
+      pendingFillTarget = { input, kind, at: now };
+    }
+
+    function takePendingFillTarget(now) {
+      const target = pendingFillTarget;
+      pendingFillTarget = null;
+      return isFillTargetUsable(target, now, FILL_TARGET_TTL_MS) ? target : null;
+    }
 
     function releaseIcon(input, record) {
       if (record.resizeObserver) record.resizeObserver.disconnect();
@@ -794,7 +825,7 @@
         const { host, shadow } = buildPanelHost(document);
         const content = buildPanelContent(document, routed, {
           onSelect: (event, entryId) => {
-            pendingFillTarget = { input, kind };
+            setPendingFillTarget(input, kind, Date.now());
             if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
               closePanel();
             }
@@ -842,12 +873,14 @@
         // A clicked field (pendingFillTarget) takes priority so the fill lands in the group
         // the user actually clicked, not the first password field in document order. The
         // popup's own fill path has no clicked field and falls back to findLoginForm/
-        // findOtpField exactly as before.
+        // findOtpField exactly as before. Consumed unconditionally, so no applyFill can ever
+        // leave a target behind for a later, unrelated fill to inherit.
         let usernameInput = null;
         let passwordInput = null;
         let otpInput = null;
-        if (pendingFillTarget && pendingFillTarget.input && pendingFillTarget.input.isConnected) {
-          const resolved = resolveFillTargets(pendingFillTarget);
+        const target = takePendingFillTarget(Date.now());
+        if (target) {
+          const resolved = resolveFillTargets(target);
           usernameInput = resolved.usernameInput;
           passwordInput = resolved.passwordInput;
           otpInput = resolved.otpInput;
@@ -859,7 +892,6 @@
           }
           otpInput = findOtpField();
         }
-        pendingFillTarget = null;
 
         if (usernameInput && message.username) {
           setNativeValue(usernameInput, message.username);
@@ -921,6 +953,7 @@
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
       isFieldVisible, findFillableFields, findLoginForm, findFillGroupScope, resolveFillTargets,
+      isFillTargetUsable,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,

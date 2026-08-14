@@ -533,3 +533,38 @@ assert.strictEqual(usernameTargets.passwordInput, pw1, 'the password partner com
 
 global.document = originalDocument;
 console.log('inlineIcon.test.js: fill targeting OK');
+
+// isFillTargetUsable — the consume-once/TTL lifecycle. This wiring (setPendingFillTarget/
+// takePendingFillTarget) lives inside the browser-only message listener and is otherwise
+// untestable from node, which is exactly where the stale-target bug hid: a fillCredential
+// request that never gets an applyFill response (locked vault, native error, hostname
+// mismatch) used to leave the target set forever for a later, unrelated fill — including a
+// popup-initiated one with no clicked field — to inherit.
+const { isFillTargetUsable } = require('../content.js');
+
+const TTL_MS = 5000;
+const connectedInput = { isConnected: true };
+const disconnectedInput = { isConnected: false };
+
+assert.strictEqual(isFillTargetUsable(null, 1000, TTL_MS), false, 'no target at all is unusable');
+assert.strictEqual(
+  isFillTargetUsable({ input: disconnectedInput, kind: 'password', at: 1000 }, 1000, TTL_MS),
+  false,
+  'a target whose input left the document is unusable, even with no time elapsed'
+);
+assert.strictEqual(
+  isFillTargetUsable({ input: connectedInput, kind: 'password', at: 1000 }, 1000 + TTL_MS + 1, TTL_MS),
+  false,
+  'a target older than the TTL is unusable — an unanswered fillCredential must not linger forever'
+);
+assert.strictEqual(
+  isFillTargetUsable({ input: connectedInput, kind: 'password', at: 1000 }, 1000 + TTL_MS, TTL_MS),
+  true,
+  'exactly at the TTL boundary is still usable'
+);
+assert.strictEqual(
+  isFillTargetUsable({ input: connectedInput, kind: 'password', at: 1000 }, 1200, TTL_MS),
+  true,
+  'a fresh, connected target within the TTL is usable'
+);
+console.log('inlineIcon.test.js: fill target lifecycle OK');
