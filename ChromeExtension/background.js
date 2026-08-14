@@ -118,19 +118,55 @@ function resolveSenderFillTarget(sender, requestUrl) {
   return { tabId: sender.tab.id, ok: hostnameMatches(requestUrl, sender.url) };
 }
 
+function buildApplyFillMessage(credentialResponse, requestUrl) {
+  return {
+    type: "applyFill",
+    username: credentialResponse.username,
+    password: credentialResponse.password,
+    totp: credentialResponse.totp || null,
+    url: requestUrl
+  };
+}
+
 function sendApplyFill(tabId, credentialResponse, requestUrl) {
   chrome.tabs.sendMessage(
     tabId,
-    {
-      type: "applyFill",
-      username: credentialResponse.username,
-      password: credentialResponse.password,
-      totp: credentialResponse.totp || null,
-      url: requestUrl
-    },
+    buildApplyFillMessage(credentialResponse, requestUrl),
     () => {
       if (chrome.runtime.lastError) {
         console.warn("MyPass: applyFill delivery failed — " + chrome.runtime.lastError.message);
+      }
+    }
+  );
+}
+
+// Scopes delivery to the exact frame/document that sent the fillCredential request,
+// rather than the tab as a whole. This closes a TOCTOU window: sender.tab.id/sender.url
+// are captured when the request arrives, but delivery happens after an async
+// native-messaging round-trip, during which the tab can navigate to a different
+// (possibly attacker) origin. Without frameId/documentId, chrome.tabs.sendMessage would
+// broadcast tab-wide and land in whatever document now occupies that tab. documentId is
+// what actually closes the hole: a navigated document gets a fresh documentId, so a
+// stale delivery targets a document that no longer exists and simply fails — the
+// resulting chrome.runtime.lastError is the SUCCESS case for this guard, not a delivery
+// bug. frameId additionally stops the tab-wide broadcast to other frames in the same
+// tab. Both options require Chrome 106+; manifest.json pins minimum_chrome_version 127,
+// so no version guard is needed. Only used on the sender (content-script) branch — the
+// popup branch has no sender.frameId/documentId and keeps the original 3-arg call.
+function sendApplyFillToSender(tabId, sender, credentialResponse, requestUrl) {
+  chrome.tabs.sendMessage(
+    tabId,
+    buildApplyFillMessage(credentialResponse, requestUrl),
+    { frameId: sender.frameId, documentId: sender.documentId },
+    () => {
+      if (chrome.runtime.lastError) {
+        // Expected whenever the tab navigated away between request and delivery: the
+        // targeted document no longer exists, so Chrome correctly drops the message
+        // instead of letting it land in whatever document replaced it.
+        console.warn(
+          "MyPass: applyFill delivery to sender document skipped (tab likely navigated away) — " +
+          chrome.runtime.lastError.message
+        );
       }
     }
   );
@@ -146,7 +182,7 @@ function relayFillToActiveTab(credentialResponse, requestUrl, sender) {
       console.warn("MyPass: relayFillToActiveTab aborted — sender origin does not match request origin");
       return;
     }
-    sendApplyFill(senderTarget.tabId, credentialResponse, requestUrl);
+    sendApplyFillToSender(senderTarget.tabId, sender, credentialResponse, requestUrl);
     return;
   }
 

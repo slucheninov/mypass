@@ -342,9 +342,11 @@
 
   // The inline icon is a control the PAGE can see and dispatch events at, unlike the popup.
   // Every activation path therefore requires a user-generated event. This is not defence in
-  // depth: relayFillToActiveTab in background.js resolves its target with
-  // chrome.tabs.query({active: true}) rather than sender.tab.id, which is only sound because
-  // a trusted click implies the tab is the one the user is looking at.
+  // depth against a spoofed tab: relayFillToActiveTab in background.js targets
+  // sender.tab.id/sender.frameId/sender.documentId, i.e. exactly the document that sent the
+  // request, so it needs no help from this gate to find the right tab. The gate exists
+  // because the inline panel is injected into a page the attacker may control: without it,
+  // page script could synthesize a click and trigger a fill/reveal the user never asked for.
   function isTrustedActivation(event) {
     return !!(event && event.isTrusted === true);
   }

@@ -7,6 +7,7 @@ const assert = require('node:assert');
 const sentMessages = [];
 const queriedTabs = [];
 let activeTabQueryResult = [];
+let nextSendMessageLastError = null;
 
 global.chrome = {
   runtime: {
@@ -18,9 +19,18 @@ global.chrome = {
       queriedTabs.push(opts);
       cb(activeTabQueryResult);
     },
-    sendMessage: (tabId, message, cb) => {
-      sentMessages.push({ tabId, message });
-      if (cb) cb();
+    // Real chrome.tabs.sendMessage is called either as (tabId, message, callback) — the
+    // popup branch, unchanged — or (tabId, message, options, callback) — the sender
+    // branch, which now scopes delivery with { frameId, documentId }. Detect which
+    // shape was used by checking whether the 3rd argument is the callback.
+    sendMessage: (tabId, message, optionsOrCallback, maybeCallback) => {
+      const hasOptions = typeof optionsOrCallback !== 'function';
+      const options = hasOptions ? optionsOrCallback : undefined;
+      const callback = hasOptions ? maybeCallback : optionsOrCallback;
+      sentMessages.push({ tabId, message, options });
+      global.chrome.runtime.lastError = nextSendMessageLastError;
+      if (callback) callback();
+      global.chrome.runtime.lastError = null;
     }
   }
 };
@@ -70,16 +80,45 @@ const { resolveSenderFillTarget, relayFillToActiveTab, hostnameMatches } = requi
 
 // --- relayFillToActiveTab: end-to-end branch wiring -----------------------------------
 
-// Content-script sender: message goes straight to sender.tab.id, no chrome.tabs.query.
+// Content-script sender: message goes straight to sender.tab.id, scoped to the exact
+// frame/document that asked (frameId/documentId), no chrome.tabs.query. The scoping is
+// what closes the TOCTOU window between capturing sender.url and delivering after the
+// async native round-trip: a stale documentId simply fails to deliver instead of landing
+// in whatever (possibly attacker) document now occupies the tab.
 {
   sentMessages.length = 0;
   queriedTabs.length = 0;
-  const sender = { tab: { id: 99 }, url: 'https://example.com/login' };
-  relayFillToActiveTab({ username: 'u', password: 'p', totp: null }, 'https://example.com/', sender);
+  const sender = { tab: { id: 99 }, url: 'https://example.com/login', frameId: 0, documentId: 'doc-abc' };
+  relayFillToActiveTab({ username: 'alice', password: 'hunter2', totp: '123456' }, 'https://example.com/', sender);
   assert.strictEqual(queriedTabs.length, 0, 'content-script path must not call chrome.tabs.query');
   assert.strictEqual(sentMessages.length, 1);
   assert.strictEqual(sentMessages[0].tabId, 99);
-  assert.strictEqual(sentMessages[0].message.type, 'applyFill');
+  assert.deepStrictEqual(sentMessages[0].options, { frameId: 0, documentId: 'doc-abc' },
+    'sender-branch delivery must be scoped to the exact frame/document that sent the request');
+  // Full applyFill payload, not just `type` — pins field names so a regression in
+  // sendApplyFill/sendApplyFillToSender's message shape fails loudly, not silently.
+  assert.deepStrictEqual(sentMessages[0].message, {
+    type: 'applyFill',
+    username: 'alice',
+    password: 'hunter2',
+    totp: '123456',
+    url: 'https://example.com/'
+  });
+}
+
+// Content-script sender, but the tab navigated away before delivery: chrome.tabs.sendMessage
+// with a stale documentId fails with chrome.runtime.lastError — that is the SUCCESS case
+// for this guard (the message correctly did not land in the new document), not a bug, so
+// it must not throw.
+{
+  sentMessages.length = 0;
+  nextSendMessageLastError = { message: 'No tab with id: 99, or frame no longer exists.' };
+  const sender = { tab: { id: 99 }, url: 'https://example.com/login', frameId: 0, documentId: 'doc-stale' };
+  assert.doesNotThrow(() => {
+    relayFillToActiveTab({ username: 'alice', password: 'hunter2', totp: null }, 'https://example.com/', sender);
+  });
+  assert.strictEqual(sentMessages.length, 1, 'delivery is still attempted — only the callback observes the error');
+  nextSendMessageLastError = null;
 }
 
 // Content-script sender with a mismatched origin: nothing is sent anywhere.
@@ -92,7 +131,9 @@ const { resolveSenderFillTarget, relayFillToActiveTab, hostnameMatches } = requi
   assert.strictEqual(sentMessages.length, 0);
 }
 
-// No sender.tab (popup): falls back to chrome.tabs.query({active:true, currentWindow:true}).
+// No sender.tab (popup): falls back to chrome.tabs.query({active:true, currentWindow:true}),
+// unchanged from before this fix — including its own hostnameMatches(requestUrl, activeTab.url)
+// guard and the plain 3-arg chrome.tabs.sendMessage call (no frameId/documentId options).
 {
   sentMessages.length = 0;
   queriedTabs.length = 0;
@@ -101,6 +142,32 @@ const { resolveSenderFillTarget, relayFillToActiveTab, hostnameMatches } = requi
   assert.strictEqual(queriedTabs.length, 1);
   assert.strictEqual(sentMessages.length, 1);
   assert.strictEqual(sentMessages[0].tabId, 5);
+  assert.strictEqual(sentMessages[0].options, undefined,
+    'the popup branch must keep the original 3-arg chrome.tabs.sendMessage call, no options object');
+}
+
+// Popup path, active tab on a DIFFERENT host than the request: the origin guard must
+// reject it and send nothing. Without `if (!hostnameMatches(...)) return;` in the popup
+// branch this test fails — see mutation verification in the report.
+{
+  sentMessages.length = 0;
+  queriedTabs.length = 0;
+  activeTabQueryResult = [{ id: 5, url: 'https://evil.example/' }];
+  relayFillToActiveTab({ username: 'u', password: 'p', totp: null }, 'https://example.com/', undefined);
+  assert.strictEqual(queriedTabs.length, 1);
+  assert.strictEqual(sentMessages.length, 0, 'a mismatched active-tab host must not receive the credential');
+}
+
+// Popup path, active tab url is EMPTY: this is the exact shape that caused the original
+// bug (activeTab.url === '' before activeTab was granted) — it must still be rejected on
+// this branch, not just on the sender branch.
+{
+  sentMessages.length = 0;
+  queriedTabs.length = 0;
+  activeTabQueryResult = [{ id: 5, url: '' }];
+  relayFillToActiveTab({ username: 'u', password: 'p', totp: null }, 'https://example.com/', undefined);
+  assert.strictEqual(queriedTabs.length, 1);
+  assert.strictEqual(sentMessages.length, 0, 'an empty active-tab url must never pass the origin check');
 }
 
 // Sanity: hostnameMatches itself still rejects an empty page URL (defense-in-depth check
