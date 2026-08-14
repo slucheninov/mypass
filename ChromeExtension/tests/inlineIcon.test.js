@@ -481,8 +481,21 @@ assert.notStrictEqual(
   secondGroupTargets.passwordInput, group1User,
   'manual-walk defect (multi-form fill-targeting bug): must never touch the first group\'s username field either'
 );
-// Sanity: the first group's own inputs are untouched by anything above (never assigned to).
-assert.ok(group1Pw && group1User, 'the first group\'s inputs remain defined and unmodified reference values');
+// Resolving the first group's own password proves the behaviour is symmetric: it too
+// resolves to itself and only itself, not just group 2's field from above.
+const firstGroupTargets = resolveFillTargets({ input: group1Pw, kind: 'password' });
+assert.strictEqual(
+  firstGroupTargets.passwordInput, group1Pw,
+  'the first group\'s own password-initiated fill targets that exact input'
+);
+assert.strictEqual(
+  firstGroupTargets.usernameInput, null,
+  'the first group\'s password-initiated fill must not also target a username'
+);
+assert.strictEqual(
+  firstGroupTargets.otpInput, null,
+  'the first group\'s password-initiated fill must not also target an otp field'
+);
 
 // 5. A null/malformed target yields all three null.
 assert.deepStrictEqual(
