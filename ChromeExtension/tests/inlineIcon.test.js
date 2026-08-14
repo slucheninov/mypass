@@ -236,3 +236,23 @@ assert.strictEqual(host.style.position, 'absolute');
 assert.ok(host.style.top, 'a top offset is written');
 assert.ok(host.style.left, 'a left offset is written');
 console.log('inlineIcon.test.js: icon host OK');
+
+const { buildPanelContent } = require('../content.js');
+
+const entriesPanel = buildPanelContent(
+  fakeDocument,
+  { panel: 'entries', entries: [withTotp, noTotp] },
+  { onSelect: () => {}, onUnlock: () => {} }
+);
+assert.strictEqual(entriesPanel.rows.length, 2, 'one row per entry');
+
+const emptyPanel = buildPanelContent(fakeDocument, { panel: 'empty', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
+assert.strictEqual(emptyPanel.rows.length, 0, 'the empty state has no selectable rows');
+
+const lockedPanel = buildPanelContent(fakeDocument, { panel: 'locked', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
+assert.strictEqual(lockedPanel.rows.length, 0, 'the locked state offers no entries');
+assert.ok(lockedPanel.unlockButton, 'the locked state offers an unlock button');
+
+const pairingPanel = buildPanelContent(fakeDocument, { panel: 'pairingRequired', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
+assert.strictEqual(pairingPanel.unlockButton, null, 'the pairing state offers no unlock button');
+console.log('inlineIcon.test.js: panel content OK');

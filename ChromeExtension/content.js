@@ -602,6 +602,46 @@
     host.style.left = String(rect.left + scrollX + rect.width - size - inset) + 'px';
   }
 
+  const PANEL_MESSAGES = {
+    empty: 'No entries for this site',
+    locked: 'MyPass is locked',
+    pairingRequired: 'Pair MyPass to use it here',
+    unavailable: 'MyPass is not running',
+  };
+
+  function buildPanelContent(documentRef, routed, callbacks) {
+    const doc = documentRef || document;
+    const root = doc.createElement('div');
+    const rows = [];
+    let unlockButton = null;
+
+    if (routed.panel === 'entries') {
+      for (const entry of routed.entries) {
+        const row = doc.createElement('button');
+        row.setAttribute('type', 'button');
+        row.setAttribute('data-entry-id', entry.id);
+        row.textContent = entry.title + (entry.username ? ' — ' + entry.username : '');
+        row.addEventListener('click', (event) => callbacks.onSelect(event, entry.id));
+        root.appendChild(row);
+        rows.push(row);
+      }
+    } else {
+      const message = doc.createElement('div');
+      message.textContent = PANEL_MESSAGES[routed.panel] || PANEL_MESSAGES.unavailable;
+      root.appendChild(message);
+
+      if (routed.panel === 'locked') {
+        unlockButton = doc.createElement('button');
+        unlockButton.setAttribute('type', 'button');
+        unlockButton.textContent = 'Unlock MyPass';
+        unlockButton.addEventListener('click', (event) => callbacks.onUnlock(event));
+        root.appendChild(unlockButton);
+      }
+    }
+
+    return { root, rows, unlockButton };
+  }
+
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
@@ -613,6 +653,7 @@
       isTrustedActivation, handleIconActivate, handleEntrySelect,
       buildTotpCandidateQueryResponse,
       KEY_ICON_PATH_D, buildKeyGlyph, buildIconHost, positionHostToField,
+      buildPanelContent,
     };
   }
 })();
