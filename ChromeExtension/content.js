@@ -272,6 +272,20 @@
     return 'unknown';
   }
 
+  // Panel state is a function of the connection state and the field kind, never of which
+  // element was clicked. Extracted as a pure function for the same reason Stage 6 extracted
+  // choosePasskeyPanel: routing is the part worth testing, and a DOM makes it untestable.
+  function chooseInlinePanel(response, fieldKind) {
+    const kind = classifyGetCredentialsResponse(response);
+    if (kind === 'locked') return { panel: 'locked', entries: [] };
+    if (kind === 'pairingRequired') return { panel: 'pairingRequired', entries: [] };
+    if (kind !== 'credentialList') return { panel: 'unavailable', entries: [] };
+
+    const all = response.credentials || [];
+    const entries = fieldKind === 'otp' ? all.filter((entry) => entry.hasTotp) : all;
+    return entries.length === 0 ? { panel: 'empty', entries: [] } : { panel: 'entries', entries };
+  }
+
   // Gates the Save-banner's proposeSaveTotp send on the actual getCredentials response
   // instead of treating locked/pairingRequired/error as "zero matches" (which used to fire
   // a blind proposal even while locked or unpaired). Same trust model as the password-save
@@ -511,7 +525,7 @@
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
-      classifyGetCredentialsResponse, routeBannerCredentialsResponse,
+      classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
       buildTotpCandidateQueryResponse,
     };
   }

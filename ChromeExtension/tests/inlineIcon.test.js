@@ -113,3 +113,40 @@ assert.notStrictEqual(withUsername.usernameInput, withUsername.passwordInput, 'p
 
 global.document = originalDocument;
 console.log('inlineIcon.test.js: findLoginForm OK');
+
+const { chooseInlinePanel } = require('../content.js');
+
+const withTotp = { id: '1', title: 'Example', username: 'alice', hasTotp: true };
+const noTotp = { id: '2', title: 'Other', username: 'bob', hasTotp: false };
+const listResponse = { type: 'credentialList', credentials: [withTotp, noTotp] };
+
+assert.deepStrictEqual(
+  chooseInlinePanel(listResponse, 'password'),
+  { panel: 'entries', entries: [withTotp, noTotp] },
+  'password field lists every match'
+);
+
+assert.deepStrictEqual(
+  chooseInlinePanel(listResponse, 'otp'),
+  { panel: 'entries', entries: [withTotp] },
+  'otp field lists only entries that have a TOTP secret'
+);
+
+assert.deepStrictEqual(
+  chooseInlinePanel({ type: 'credentialList', credentials: [noTotp] }, 'otp'),
+  { panel: 'empty', entries: [] },
+  'a non-empty list with no TOTP entries renders empty on an otp field'
+);
+
+assert.deepStrictEqual(
+  chooseInlinePanel({ type: 'credentialList', credentials: [] }, 'password'),
+  { panel: 'empty', entries: [] },
+  'no matches for this site'
+);
+
+assert.strictEqual(chooseInlinePanel({ type: 'locked' }, 'password').panel, 'locked');
+assert.strictEqual(chooseInlinePanel({ type: 'pairingRequired' }, 'password').panel, 'pairingRequired');
+assert.strictEqual(chooseInlinePanel({ type: 'error' }, 'password').panel, 'unavailable');
+assert.strictEqual(chooseInlinePanel(null, 'password').panel, 'unavailable', 'no response is treated as app unavailable');
+assert.strictEqual(chooseInlinePanel({ type: 'somethingNew' }, 'password').panel, 'unavailable', 'unknown response never renders entries');
+console.log('inlineIcon.test.js: chooseInlinePanel OK');
