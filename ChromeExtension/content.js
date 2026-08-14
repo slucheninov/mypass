@@ -286,6 +286,29 @@
     return entries.length === 0 ? { panel: 'empty', entries: [] } : { panel: 'entries', entries };
   }
 
+  // The inline icon is a control the PAGE can see and dispatch events at, unlike the popup.
+  // Every activation path therefore requires a user-generated event. This is not defence in
+  // depth: relayFillToActiveTab in background.js resolves its target with
+  // chrome.tabs.query({active: true}) rather than sender.tab.id, which is only sound because
+  // a trusted click implies the tab is the one the user is looking at.
+  function isTrustedActivation(event) {
+    return !!(event && event.isTrusted === true);
+  }
+
+  function handleIconActivate(event, requestPanel) {
+    if (!isTrustedActivation(event)) return false;
+    requestPanel();
+    return true;
+  }
+
+  // Sends the identical message popup.js:617 sends. The content script never learns the
+  // secret: background.js resolves it natively and delivers it straight back as applyFill.
+  function handleEntrySelect(event, entryId, url, sendMessage) {
+    if (!isTrustedActivation(event)) return false;
+    sendMessage({ type: 'fillCredential', id: entryId, url });
+    return true;
+  }
+
   // Gates the Save-banner's proposeSaveTotp send on the actual getCredentials response
   // instead of treating locked/pairingRequired/error as "zero matches" (which used to fire
   // a blind proposal even while locked or unpaired). Same trust model as the password-save
@@ -526,6 +549,7 @@
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
       classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
+      isTrustedActivation, handleIconActivate, handleEntrySelect,
       buildTotpCandidateQueryResponse,
     };
   }

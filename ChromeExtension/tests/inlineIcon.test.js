@@ -150,3 +150,36 @@ assert.strictEqual(chooseInlinePanel({ type: 'error' }, 'password').panel, 'unav
 assert.strictEqual(chooseInlinePanel(null, 'password').panel, 'unavailable', 'no response is treated as app unavailable');
 assert.strictEqual(chooseInlinePanel({ type: 'somethingNew' }, 'password').panel, 'unavailable', 'unknown response never renders entries');
 console.log('inlineIcon.test.js: chooseInlinePanel OK');
+
+const { isTrustedActivation, handleEntrySelect, handleIconActivate } = require('../content.js');
+
+assert.strictEqual(isTrustedActivation({ isTrusted: true }), true);
+assert.strictEqual(isTrustedActivation({ isTrusted: false }), false, 'synthetic events are rejected');
+assert.strictEqual(isTrustedActivation({}), false, 'a missing isTrusted is rejected, not assumed true');
+assert.strictEqual(isTrustedActivation(null), false, 'no event is rejected');
+
+// handleEntrySelect: the ONLY message it may send, and only on a trusted event.
+const sent = [];
+const record = (message) => sent.push(message);
+
+assert.strictEqual(
+  handleEntrySelect({ isTrusted: false }, 'entry-1', 'https://example.com', record),
+  false,
+  'synthetic click does not fill'
+);
+assert.deepStrictEqual(sent, [], 'synthetic click sends nothing at all');
+
+assert.strictEqual(handleEntrySelect({ isTrusted: true }, 'entry-1', 'https://example.com', record), true);
+assert.deepStrictEqual(
+  sent,
+  [{ type: 'fillCredential', id: 'entry-1', url: 'https://example.com' }],
+  'fill message is exactly what popup.js sends — no secret, no extra field'
+);
+
+// handleIconActivate
+let opened = 0;
+assert.strictEqual(handleIconActivate({ isTrusted: false }, () => { opened += 1; }), false);
+assert.strictEqual(opened, 0, 'synthetic click does not open the panel');
+assert.strictEqual(handleIconActivate({ isTrusted: true }, () => { opened += 1; }), true);
+assert.strictEqual(opened, 1);
+console.log('inlineIcon.test.js: trusted-event gate OK');
