@@ -188,10 +188,15 @@ const { buildIconHost, positionHostToField, KEY_ICON_PATH_D } = require('../cont
 
 const SVG_NS_EXPECTED = 'http://www.w3.org/2000/svg';
 
+function fakeStyle() {
+  const style = { setProperty(prop, value) { style[prop] = value; } };
+  return style;
+}
+
 function fakeElement(tag) {
   const el = {
     tagName: tag.toUpperCase(),
-    style: {},
+    style: fakeStyle(),
     children: [],
     attributes: {},
     shadowMode: null,

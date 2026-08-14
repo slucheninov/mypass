@@ -398,11 +398,16 @@
     document.body.appendChild(banner);
   }
 
-  function observeTotpCandidates(state) {
+  // onMutation defaults to a no-op so this stays callable from tests without a DOM;
+  // the browser-only wiring below passes attachIcons so newly-inserted fields get an
+  // icon on the same debounce that re-checks for TOTP candidates.
+  function observeTotpCandidates(state, onMutation) {
+    const notifyMutation = typeof onMutation === 'function' ? onMutation : () => {};
     let debounceTimer = null;
     const observer = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
+        notifyMutation();
         const detected = detectTotpCandidateWithPriority(document);
         if (shouldShowTotpBanner(detected, state)) {
           showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
@@ -484,6 +489,93 @@
       });
     }
 
+    const attachedIcons = new Map();
+    let openPanel = null;
+    let syncScheduled = false;
+
+    function syncIconPositions() {
+      syncScheduled = false;
+      attachedIcons.forEach((record, input) => {
+        const rect = input.getBoundingClientRect();
+        const offscreen = rect.bottom < 0 || rect.top > window.innerHeight || rect.width === 0;
+        // important for the same reason as buildIconHost/positionHostToField: a plain
+        // assignment here would silently drop the !important flag those set initially.
+        record.host.style.setProperty('display', offscreen ? 'none' : 'block', 'important');
+        if (!offscreen) positionHostToField(record.host, rect, window);
+      });
+    }
+
+    function scheduleSync() {
+      if (syncScheduled) return;
+      syncScheduled = true;
+      window.requestAnimationFrame(syncIconPositions);
+    }
+
+    function attachIconTo(input, kind) {
+      if (attachedIcons.has(input)) return;
+      const { host, button } = buildIconHost(document);
+      button.addEventListener('click', (event) => {
+        handleIconActivate(event, () => togglePanel(input, kind));
+      });
+      document.body.appendChild(host);
+      attachedIcons.set(input, { host, kind });
+
+      const resizeObserver = new ResizeObserver(scheduleSync);
+      resizeObserver.observe(input);
+      attachedIcons.get(input).resizeObserver = resizeObserver;
+      scheduleSync();
+    }
+
+    function attachIcons() {
+      for (const field of findFillableFields(document)) {
+        attachIconTo(field.input, field.kind);
+      }
+    }
+
+    function closePanel() {
+      if (!openPanel) return;
+      openPanel.host.remove();
+      openPanel = null;
+    }
+
+    function togglePanel(input, kind) {
+      if (openPanel && openPanel.input === input) {
+        closePanel();
+        return;
+      }
+      closePanel();
+      // Always re-ask rather than trusting state.lastCredentialList: the vault may have
+      // been unlocked since page load, and a stale locked panel is the exact failure
+      // Stage 3 shipped and had to fix.
+      chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
+        const routed = chooseInlinePanel(response, kind);
+        const { host, shadow } = buildIconHost(document);
+        // Handle for manual verification only (RUN.md) — never used as logic. Identity
+        // against `host` is what closePanel/isOwnHost actually rely on.
+        host.setAttribute('data-mypass-inline-panel', '');
+        const content = buildPanelContent(document, routed, {
+          onSelect: (event, entryId) => {
+            if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
+              closePanel();
+            }
+          },
+          onUnlock: (event) => {
+            if (isTrustedActivation(event)) {
+              chrome.runtime.sendMessage({ type: 'requestUnlock' });
+              closePanel();
+            }
+          },
+        });
+        shadow.appendChild(content.root);
+        const rect = input.getBoundingClientRect();
+        host.style.setProperty('position', 'absolute', 'important');
+        host.style.setProperty('top', String(rect.bottom + window.scrollY + 4) + 'px', 'important');
+        host.style.setProperty('left', String(rect.left + window.scrollX) + 'px', 'important');
+        document.body.appendChild(host);
+        openPanel = { host, input };
+      });
+    }
+
     function attachSubmitListener(loginForm) {
       if (!loginForm.form) return;
       loginForm.form.addEventListener('submit', () => {
@@ -533,12 +625,40 @@
       requestCredentials();
       attachSubmitListener(loginForm);
     }
+    attachIcons();
+
+    window.addEventListener('scroll', scheduleSync, { capture: true, passive: true });
+    window.addEventListener('resize', scheduleSync, { passive: true });
+
+    function isOwnHost(node) {
+      if (!node) return false;
+      if (openPanel && node === openPanel.host) return true;
+      for (const record of attachedIcons.values()) {
+        if (node === record.host) return true;
+      }
+      return false;
+    }
+
+    document.addEventListener('click', (event) => {
+      if (!openPanel) return;
+      // Our own control: let its own handler decide (the icon toggles, a row fills).
+      // Identity, not the marker attribute — a page can forge the attribute on its
+      // own elements, but it cannot forge a reference to a node we created. This runs
+      // in the capture phase (before the icon/panel's own bubble-phase handlers), so
+      // returning early here — rather than closing — is what keeps toggle-to-close
+      // working: the icon's own click handler still gets to run and close the panel.
+      if (isOwnHost(event.target)) return;
+      closePanel();
+    }, true);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closePanel();
+    }, true);
 
     const detected = detectTotpCandidateWithPriority(document);
     if (shouldShowTotpBanner(detected, state)) {
       showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
     }
-    observeTotpCandidates(state);
+    observeTotpCandidates(state, attachIcons);
   }
 
   // Built from DOM nodes rather than an innerHTML string: sites that enforce the
@@ -572,8 +692,12 @@
     const host = doc.createElement('div');
     // z-index one below the banners' 2147483647 so a save banner still wins if they overlap.
     host.setAttribute('data-mypass-inline-icon', '');
-    host.style.position = 'absolute';
-    host.style.zIndex = '2147483646';
+    // setProperty(..., 'important') because a page's own `!important` CSS rule (e.g.
+    // [data-mypass-inline-icon]{display:none!important}) would otherwise beat a plain
+    // inline style and could hide or mislocate the control.
+    host.style.setProperty('position', 'absolute', 'important');
+    host.style.setProperty('z-index', '2147483646', 'important');
+    host.style.setProperty('display', 'block', 'important');
     host.style.pointerEvents = 'auto';
 
     const shadow = host.attachShadow({ mode: 'closed' });
@@ -597,9 +721,10 @@
     const scrollY = viewport && typeof viewport.scrollY === 'number' ? viewport.scrollY : 0;
     const size = 20;
     const inset = 6;
-    host.style.position = 'absolute';
-    host.style.top = String(rect.top + scrollY + (rect.height - size) / 2) + 'px';
-    host.style.left = String(rect.left + scrollX + rect.width - size - inset) + 'px';
+    // important: see the comment in buildIconHost — same page-CSS threat applies here.
+    host.style.setProperty('position', 'absolute', 'important');
+    host.style.setProperty('top', String(rect.top + scrollY + (rect.height - size) / 2) + 'px', 'important');
+    host.style.setProperty('left', String(rect.left + scrollX + rect.width - size - inset) + 'px', 'important');
   }
 
   const PANEL_MESSAGES = {
