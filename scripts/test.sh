@@ -37,6 +37,7 @@ if command -v node >/dev/null 2>&1; then
   node ChromeExtension/tests/totpPicker.test.js
   node ChromeExtension/tests/passkeyProxy.test.js
   node ChromeExtension/tests/passkeyPopup.test.js
+  node ChromeExtension/tests/inlineIcon.test.js
 else
   echo "Warning: node not found — skipping ChromeExtension JS tests." >&2
 fi

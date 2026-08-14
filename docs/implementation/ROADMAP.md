@@ -4,7 +4,7 @@
 outstanding workstreams is tracked. Tick a box only when the item is implemented **and**
 its tests pass — see "Definition of done" below.
 
-Last updated: 2026-08-09
+Last updated: 2026-08-14
 
 ---
 
@@ -429,6 +429,43 @@ proved the hard way.
 
 ---
 
+## Stage 7 — Inline fill icon
+
+Plan: [`2026-08-14-chrome-extension-inline-fill-icon`](../superpowers/plans/2026-08-14-chrome-extension-inline-fill-icon.md),
+7 tasks. Puts a key glyph inside recognised username / password / OTP fields; clicking it
+opens a panel listing the domain's entries and fills the form on selection. All work is
+inside `ChromeExtension/content.js` plus a new test suite — no change to `background.js`,
+`popup.js`, or `manifest.json`.
+
+- [x] **I1** — `findFillableFields` and a safe `findLoginForm` rewrite; characterisation
+      tests added first since `findLoginForm` had no prior coverage
+- [x] **I2** — `chooseInlinePanel` — pure panel routing
+- [x] **I3** — Trusted-event gate and the fill message
+- [x] **I4** — The icon host — closed shadow root, inline SVG, no page mutation
+- [x] **I5** — The panel — render the routed state and wire the fill
+- [x] **I6** — Lifecycle: attach icons, keep them aligned, open and close the panel (no new
+      unit tests — this is the DOM wiring the previous five tasks were extracted out of;
+      verified by the Task 7 manual walk)
+- [x] **I7** — `inlineIcon.test.js` wired into `scripts/test.sh`; `RUN.md` manual checklist;
+      this stage recorded
+
+**⛳ Gate 7 — OPEN.** Automated half green 2026-08-14: `./scripts/test.sh` green unpiped
+(`EXIT=0`, `** TEST SUCCEEDED **`) — 448 app tests, 134 MyPassKit, 86 SyncKit,
+59 ExtensionBridgeKit, and all twelve JS suites including the new `inlineIcon.test.js`
+(8 sections: `isFieldVisible`, `findFillableFields`, `findLoginForm`, `chooseInlinePanel`,
+trusted-event gate, icon host, shadow host separation, panel content).
+
+Gate stays open until the thirteen new `RUN.md` bullets are walked against a real Chrome
+build. Nothing in the positioning (icons tracking fields under scroll/resize/zoom), the
+closed shadow DOM isolation, or a real trusted click is reachable from an automated test —
+the same shape Stages 3, 5, and 6 hit. The thirteenth bullet, added beyond the plan's
+twelve, covers a positioning limitation the Task 6 review flagged: icons are placed in
+document-absolute coordinates, so a field inside a scrollable sub-container or a
+`position: fixed` header can drift from its field when that container (rather than the
+page) scrolls.
+
+---
+
 ## Progress
 
 | Stage | Items | Done |
@@ -440,7 +477,8 @@ proved the hard way.
 | 4 — Piece A (A1–A7) | 7 | **7 — complete** |
 | 5 — Piece B (B1–B11) | 11 | **11 — complete** |
 | 6 — Piece C rest (C1, C4–C11) | 9 | **9 — code complete, Gate 6 manual walk open** |
-| **Total** | **55** | **55** |
+| 7 — Inline fill icon (I1–I7) | 7 | **7 — code complete, Gate 7 manual walk open** |
+| **Total** | **62** | **62** |
 
 ## Decisions
 
@@ -475,6 +513,7 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-09 | C popup toggle state | Plan C's snippet set the popup checkbox from `status.attachAllowed`, which is false whenever the vault is locked — the feature would have read as off on every locked-vault popup open. `checked` now comes from the extension's stored flag; `attachAllowed`/`unlocked` only drive whether the control is enabled. |
 | 2026-08-09 | C ceremony owns the popup | A pending ceremony is checked before anything else at popup open and, when found, suppresses the ordinary `getCredentials` flow entirely rather than racing it — the same sequencing failure `restorePendingTotpCandidate` was fixed for in Stage 5. Panel routing was extracted into a pure `choosePasskeyPanel(pending)` so it is testable without a DOM. |
 | 2026-08-08 | Closed-window proposals | Both proposal flows (password and TOTP) were lost whenever the main window was closed at proposal time: `NavigationState.pending*SaveProposal` was set before the fresh `ContentView` subscribed, and SwiftUI's `onChange` does not fire for an initial value, so the window opened on the plain list. Routing moved into `NavigationState.consumePendingProposals()`, called from both `onChange` handlers and from `onAppear` on the unlocked branch — which also covers a proposal that arrives while the vault is locked (`aec5528`). |
+| 2026-08-14 | Inline fill icon: two constraints not to "optimise" away | (1) The icon renders on every recognised field unconditionally, regardless of match count or lock state — conditional visibility would leak account existence to the site and hand it a fingerprinting signal. (2) Every handler requires `event.isTrusted` — without it, `background.js`'s `relayFillToActiveTab`, which resolves its target via `chrome.tabs.query({active:true})` rather than `sender.tab.id`, becomes reachable by page script (a synthetic click could trigger a fill on whatever tab happens to be active). |
 
 ## Known trap when running the suite
 
