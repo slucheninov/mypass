@@ -183,3 +183,56 @@ assert.strictEqual(opened, 0, 'synthetic click does not open the panel');
 assert.strictEqual(handleIconActivate({ isTrusted: true }, () => { opened += 1; }), true);
 assert.strictEqual(opened, 1);
 console.log('inlineIcon.test.js: trusted-event gate OK');
+
+const { buildIconHost, positionHostToField, KEY_ICON_PATH_D } = require('../content.js');
+
+const SVG_NS_EXPECTED = 'http://www.w3.org/2000/svg';
+
+function fakeElement(tag) {
+  const el = {
+    tagName: tag.toUpperCase(),
+    style: {},
+    children: [],
+    attributes: {},
+    shadowMode: null,
+    setAttribute(name, value) { this.attributes[name] = value; },
+    getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; },
+    appendChild(child) { this.children.push(child); return child; },
+    addEventListener() {},
+    attachShadow(options) {
+      this.shadowMode = options.mode;
+      const root = fakeElement('shadow-root');
+      this.__shadow = root;
+      return root;
+    },
+  };
+  return el;
+}
+
+const fakeDocument = {
+  createElement: (tag) => fakeElement(tag),
+  createElementNS: (ns, tag) => {
+    const el = fakeElement(tag);
+    el.namespaceURI = ns;
+    return el;
+  },
+};
+
+const built = buildIconHost(fakeDocument);
+assert.strictEqual(built.host.shadowMode, 'closed', 'shadow root MUST be closed so the page cannot read the panel');
+assert.ok(built.shadow, 'a shadow root is returned');
+assert.ok(built.button, 'a clickable button lives inside the shadow root');
+assert.ok(/^M/.test(KEY_ICON_PATH_D), 'the glyph is SVG path data');
+assert.ok(!/chrome-extension:/.test(KEY_ICON_PATH_D), 'the glyph never references an extension URL');
+const glyph = built.button.children[0];
+assert.strictEqual(glyph.namespaceURI, SVG_NS_EXPECTED, 'the svg element is namespaced, not an HTML element');
+assert.strictEqual(glyph.children[0].getAttribute('d'), KEY_ICON_PATH_D, 'the path carries the key glyph data');
+assert.strictEqual(built.button.innerHTML, undefined, 'the icon is built from DOM nodes, never innerHTML — Trusted Types sites throw on innerHTML');
+
+// positioning writes only to the host's own style — the page's input is untouched
+const host = fakeElement('div');
+positionHostToField(host, { top: 100, left: 50, width: 200, height: 30 }, { scrollX: 0, scrollY: 0 });
+assert.strictEqual(host.style.position, 'absolute');
+assert.ok(host.style.top, 'a top offset is written');
+assert.ok(host.style.left, 'a left offset is written');
+console.log('inlineIcon.test.js: icon host OK');

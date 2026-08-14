@@ -541,6 +541,67 @@
     observeTotpCandidates(state);
   }
 
+  // Built from DOM nodes rather than an innerHTML string: sites that enforce the
+  // require-trusted-types-for 'script' CSP directive throw on any innerHTML assignment,
+  // and those are exactly the sites this feature most needs to work on.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const KEY_ICON_PATH_D =
+    'M10.5 1a4.5 4.5 0 0 0-4.3 5.9L1 12.1V15h2.9l.6-.6v-1.3h1.3l.9-.9v-1.3h1.3l1.2-1.2A4.5 4.5 0 1 0 10.5 1zm1.4 3.6a1 1 0 1 1 1.4-1.4 1 1 0 0 1-1.4 1.4z';
+
+  function buildKeyGlyph(doc) {
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = doc.createElementNS(SVG_NS, 'path');
+    path.setAttribute('fill', 'currentColor');
+    path.setAttribute('d', KEY_ICON_PATH_D);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  const ICON_HOST_STYLE =
+    ':host{all:initial}' +
+    'button{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:center;' +
+    'width:20px;height:20px;border-radius:4px;color:#6b7280;opacity:0.65;}' +
+    'button:hover,button:focus-visible{opacity:1;background:rgba(127,127,127,0.15);}';
+
+  function buildIconHost(documentRef) {
+    const doc = documentRef || document;
+    const host = doc.createElement('div');
+    // z-index one below the banners' 2147483647 so a save banner still wins if they overlap.
+    host.setAttribute('data-mypass-inline-icon', '');
+    host.style.position = 'absolute';
+    host.style.zIndex = '2147483646';
+    host.style.pointerEvents = 'auto';
+
+    const shadow = host.attachShadow({ mode: 'closed' });
+    const style = doc.createElement('style');
+    style.textContent = ICON_HOST_STYLE;
+    shadow.appendChild(style);
+
+    const button = doc.createElement('button');
+    button.setAttribute('type', 'button');
+    button.setAttribute('aria-label', 'Fill from MyPass');
+    button.appendChild(buildKeyGlyph(doc));
+    shadow.appendChild(button);
+
+    return { host, shadow, button };
+  }
+
+  // Writes to the overlay host only. The page's own input is never given padding, a
+  // wrapper, or any attribute — that is the whole reason for the overlay approach.
+  function positionHostToField(host, rect, viewport) {
+    const scrollX = viewport && typeof viewport.scrollX === 'number' ? viewport.scrollX : 0;
+    const scrollY = viewport && typeof viewport.scrollY === 'number' ? viewport.scrollY : 0;
+    const size = 20;
+    const inset = 6;
+    host.style.position = 'absolute';
+    host.style.top = String(rect.top + scrollY + (rect.height - size) / 2) + 'px';
+    host.style.left = String(rect.left + scrollX + rect.width - size - inset) + 'px';
+  }
+
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
@@ -551,6 +612,7 @@
       classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
       isTrustedActivation, handleIconActivate, handleEntrySelect,
       buildTotpCandidateQueryResponse,
+      KEY_ICON_PATH_D, buildKeyGlyph, buildIconHost, positionHostToField,
     };
   }
 })();
