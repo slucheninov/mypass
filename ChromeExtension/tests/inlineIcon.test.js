@@ -198,7 +198,13 @@ function fakeElement(tag) {
     setAttribute(name, value) { this.attributes[name] = value; },
     getAttribute(name) { return Object.prototype.hasOwnProperty.call(this.attributes, name) ? this.attributes[name] : null; },
     appendChild(child) { this.children.push(child); return child; },
-    addEventListener() {},
+    listeners: {},
+    addEventListener(type, handler) {
+      (this.listeners[type] || (this.listeners[type] = [])).push(handler);
+    },
+    dispatch(type, event) {
+      (this.listeners[type] || []).forEach((handler) => handler(event));
+    },
     attachShadow(options) {
       this.shadowMode = options.mode;
       const root = fakeElement('shadow-root');
@@ -239,20 +245,49 @@ console.log('inlineIcon.test.js: icon host OK');
 
 const { buildPanelContent } = require('../content.js');
 
+const selectCalls = [];
 const entriesPanel = buildPanelContent(
   fakeDocument,
   { panel: 'entries', entries: [withTotp, noTotp] },
-  { onSelect: () => {}, onUnlock: () => {} }
+  { onSelect: (event, entryId) => selectCalls.push({ event, entryId }), onUnlock: () => {} }
 );
 assert.strictEqual(entriesPanel.rows.length, 2, 'one row per entry');
+assert.strictEqual(entriesPanel.rows[0].textContent, 'Example — alice', 'row text is title, em dash, username');
+
+const firstClickEvent = { type: 'click', target: entriesPanel.rows[0] };
+entriesPanel.rows[0].dispatch('click', firstClickEvent);
+assert.strictEqual(selectCalls.length, 1, 'clicking the first row invokes onSelect');
+assert.strictEqual(selectCalls[0].event, firstClickEvent, 'onSelect receives the click event');
+assert.strictEqual(selectCalls[0].entryId, '1', 'the first row reports the first entry id');
+
+const secondClickEvent = { type: 'click', target: entriesPanel.rows[1] };
+entriesPanel.rows[1].dispatch('click', secondClickEvent);
+assert.strictEqual(selectCalls.length, 2, 'clicking the second row invokes onSelect again');
+assert.strictEqual(selectCalls[1].entryId, '2', 'the second row reports the second entry id, not the first (no closure-capture bug)');
 
 const emptyPanel = buildPanelContent(fakeDocument, { panel: 'empty', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
 assert.strictEqual(emptyPanel.rows.length, 0, 'the empty state has no selectable rows');
+assert.strictEqual(emptyPanel.root.children[0].textContent, 'No entries for this site', 'the empty state renders its message');
 
-const lockedPanel = buildPanelContent(fakeDocument, { panel: 'locked', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
+const unlockCalls = [];
+const lockedPanel = buildPanelContent(fakeDocument, { panel: 'locked', entries: [] }, { onSelect: () => {}, onUnlock: (event) => unlockCalls.push(event) });
 assert.strictEqual(lockedPanel.rows.length, 0, 'the locked state offers no entries');
 assert.ok(lockedPanel.unlockButton, 'the locked state offers an unlock button');
+assert.strictEqual(lockedPanel.root.children[0].textContent, 'MyPass is locked', 'the locked state renders its message');
+
+const unlockClickEvent = { type: 'click' };
+lockedPanel.unlockButton.dispatch('click', unlockClickEvent);
+assert.strictEqual(unlockCalls.length, 1, 'clicking the unlock button invokes onUnlock');
+assert.strictEqual(unlockCalls[0], unlockClickEvent, 'onUnlock receives the click event');
 
 const pairingPanel = buildPanelContent(fakeDocument, { panel: 'pairingRequired', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
 assert.strictEqual(pairingPanel.unlockButton, null, 'the pairing state offers no unlock button');
+assert.strictEqual(pairingPanel.root.children[0].textContent, 'Pair MyPass to use it here', 'the pairing state renders its message');
+
+const unavailablePanel = buildPanelContent(fakeDocument, { panel: 'unavailable', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
+assert.strictEqual(unavailablePanel.unlockButton, null, 'the unavailable state offers no unlock button');
+assert.strictEqual(unavailablePanel.root.children[0].textContent, 'MyPass is not running', 'the unavailable state renders its message');
+
+const unknownPanel = buildPanelContent(fakeDocument, { panel: 'someUnknownState', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
+assert.strictEqual(unknownPanel.root.children[0].textContent, 'MyPass is not running', 'an unrecognized panel value falls back to the unavailable message');
 console.log('inlineIcon.test.js: panel content OK');
