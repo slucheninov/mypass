@@ -1,6 +1,14 @@
 name: MyPass
 options:
   bundleIdPrefix: com.mypass
+# A stable signing identity is required, not a convenience. Ad-hoc signing gives every
+# rebuild a fresh cdhash, and the login-keychain ACL guarding the biometric unlock key
+# is bound to exactly that hash — so each build made macOS prompt for the keychain
+# password again. See BiometricKeyStore.swift.
+settings:
+  base:
+    DEVELOPMENT_TEAM: W645B93PPQ
+    CODE_SIGN_STYLE: Automatic
 packages:
   MyPassKit:
     path: Packages/MyPassKit
