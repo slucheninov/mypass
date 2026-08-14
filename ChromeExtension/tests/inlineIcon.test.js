@@ -424,114 +424,83 @@ const unknownPanel = buildPanelContent(fakeDocument, { panel: 'someUnknownState'
 assert.strictEqual(unknownPanel.root.children[0].textContent, 'MyPass is not running', 'an unrecognized panel value falls back to the unavailable message');
 console.log('inlineIcon.test.js: panel content OK');
 
-// findFillGroupScope / resolveFillTargets — the manual-walk fix. applyFill must target the
-// group the user actually clicked, not the first password field in document order.
-const { findFillGroupScope, resolveFillTargets } = require('../content.js');
+// resolveFillTargets — the clicked-field-only fill decision. Clicking an icon must fill ONLY
+// the field whose icon was clicked; the popup's own fill path never calls this function at
+// all (it has no clicked target and falls back to findLoginForm), so that path is unaffected.
+const { resolveFillTargets } = require('../content.js');
 
-// findFillGroupScope reads the global `document` (for the document.body walk terminator),
-// so stub it per case and restore it after, same convention as the findLoginForm block above.
-function fakeGroupNode(children, opts = {}) {
-  return {
-    tagName: opts.tagName || 'DIV',
-    parentElement: opts.parent !== undefined ? opts.parent : null,
-    querySelectorAll(selector) {
-      if (selector === 'input') return children;
-      if (selector === 'input[type="password"]') {
-        return children.filter((i) => i.getAttribute('type') === 'password');
-      }
-      if (selector === 'input, textarea') return children;
-      return children.filter((i) => {
-        const t = i.getAttribute('type');
-        return t === 'text' || t === 'email' || (i.getAttribute('autocomplete') || '').includes('username');
-      });
-    },
-  };
+function fakeFillInput(name) {
+  return { tagName: 'INPUT', name };
 }
 
-function fakeGroupInput(attrs = {}, extra = {}) {
-  return {
-    getAttribute: (name) => (Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null),
-    offsetParent: extra.hidden ? null : {},
-    disabled: !!extra.disabled,
-    readOnly: !!extra.readOnly,
-    closest: (sel) => (sel === 'form' ? extra.form || null : null),
-    parentElement: extra.parent !== undefined ? extra.parent : null,
-    tagName: 'INPUT',
-  };
-}
+// 1. Clicking a password field fills only the password.
+const pwOnly = fakeFillInput('password-field');
+const pwTargets = resolveFillTargets({ input: pwOnly, kind: 'password' });
+assert.strictEqual(pwTargets.passwordInput, pwOnly, 'a password-initiated fill targets the clicked password input');
+assert.strictEqual(pwTargets.usernameInput, null, 'a password-initiated fill must not also target a username');
+assert.strictEqual(pwTargets.otpInput, null, 'a password-initiated fill must not also target an otp field');
 
-const bodySentinel = {};
-global.document = { body: bodySentinel };
+// 2. Clicking a username field fills only the username.
+const usernameOnly = fakeFillInput('username-field');
+const userTargets = resolveFillTargets({ input: usernameOnly, kind: 'username' });
+assert.strictEqual(userTargets.usernameInput, usernameOnly, 'a username-initiated fill targets the clicked username input');
+assert.strictEqual(userTargets.passwordInput, null, 'a username-initiated fill must not also target a password');
+assert.strictEqual(userTargets.otpInput, null, 'a username-initiated fill must not also target an otp field');
 
-// 1. Password inside a <form> — the form is the authoritative scope, no ancestor walk needed.
-const formPw = fakeGroupInput({ type: 'password' });
-const formUser = fakeGroupInput({ type: 'text', name: 'username' });
-const formGroup = fakeGroupNode([formPw, formUser], { tagName: 'FORM', parent: bodySentinel });
-formPw.closest = (sel) => (sel === 'form' ? formGroup : null);
-assert.strictEqual(findFillGroupScope(formPw), formGroup, 'a password inside a form uses the form as its scope');
+// 3. Clicking an otp field fills only the otp code.
+const otpOnly = fakeFillInput('otp-field');
+const otpTargets = resolveFillTargets({ input: otpOnly, kind: 'otp' });
+assert.strictEqual(otpTargets.otpInput, otpOnly, 'an otp-initiated fill targets the clicked otp input');
+assert.strictEqual(otpTargets.usernameInput, null, 'an otp-initiated fill must not also target a username');
+assert.strictEqual(otpTargets.passwordInput, null, 'an otp-initiated fill must not also target a password');
 
-// 2. No form, but the parent div holds two inputs — that div is the group, not the document.
-const divPw = fakeGroupInput({ type: 'password' });
-const divUser = fakeGroupInput({ type: 'text', name: 'username' });
-const divGroup = fakeGroupNode([divPw, divUser], { parent: bodySentinel });
-divPw.parentElement = divGroup;
-divUser.parentElement = divGroup;
-assert.strictEqual(findFillGroupScope(divPw), divGroup, 'a password with no form but a two-input parent uses that parent as the group');
-assert.notStrictEqual(findFillGroupScope(divPw), global.document, 'the group scope is the div, never the whole document');
+// 4. THE MANUAL-WALK DEFECT, pinned under the new behaviour: a page with two separate login
+// groups. Clicking the SECOND group's password must resolve to that exact input, by identity,
+// and must leave the first group's inputs completely untouched. This is the same defect
+// confirmed live in Chrome on inline-icon-noform.html (four password fields, wrong one filled
+// every time) — a future refactor that reintroduces any cross-group lookup must fail this.
+const group1Pw = fakeFillInput('group1-password');
+const group1User = fakeFillInput('group1-username');
+const group2Pw = fakeFillInput('group2-password');
+const group2User = fakeFillInput('group2-username');
 
-// 3. A lone password whose ancestors never hold more than one input — scope is null, and
-// resolveFillTargets must NOT reach across the page for a partner.
-const lonelyPw = fakeGroupInput({ type: 'password' });
-const lonelyOuter = fakeGroupNode([lonelyPw], { parent: bodySentinel });
-const lonelyInner = fakeGroupNode([lonelyPw], { parent: lonelyOuter });
-lonelyPw.parentElement = lonelyInner;
-assert.strictEqual(findFillGroupScope(lonelyPw), null, 'a password whose ancestors never hold more than one input has no group scope');
-const lonelyTargets = resolveFillTargets({ input: lonelyPw, kind: 'password' });
-assert.strictEqual(lonelyTargets.passwordInput, lonelyPw, 'with no group scope, the clicked field still fills itself');
-assert.strictEqual(lonelyTargets.usernameInput, null, 'with no group scope, no partner is guessed from elsewhere on the page');
-
-// 4. THE REGRESSION ITSELF (manual-walk defect): a document with two separate login groups,
-// each holding its own username and password. Clicking the SECOND group's password must
-// resolve to that group's own two inputs — never the first group's — which is exactly the
-// bug confirmed live in Chrome on inline-icon-noform.html (four password fields, wrong one
-// filled every time).
-const pw1 = fakeGroupInput({ type: 'password' });
-const user1 = fakeGroupInput({ type: 'text', name: 'username' });
-const group1 = fakeGroupNode([pw1, user1], { parent: bodySentinel });
-pw1.parentElement = group1;
-user1.parentElement = group1;
-
-const groupBPw = fakeGroupInput({ type: 'password' });
-const groupBUser = fakeGroupInput({ type: 'text', name: 'username' });
-const group2 = fakeGroupNode([groupBPw, groupBUser], { parent: bodySentinel });
-groupBPw.parentElement = group2;
-groupBUser.parentElement = group2;
-
-const secondGroupTargets = resolveFillTargets({ input: groupBPw, kind: 'password' });
+const secondGroupTargets = resolveFillTargets({ input: group2Pw, kind: 'password' });
 assert.strictEqual(
-  secondGroupTargets.passwordInput, groupBPw,
-  'manual-walk defect: clicking the second group\'s password must fill that group\'s own password field'
+  secondGroupTargets.passwordInput, group2Pw,
+  'manual-walk defect (multi-form fill-targeting bug): clicking the second group\'s password must fill that exact input'
 );
 assert.strictEqual(
-  secondGroupTargets.usernameInput, groupBUser,
-  'manual-walk defect: the second group\'s username must come from its own group'
+  secondGroupTargets.usernameInput, null,
+  'manual-walk defect (multi-form fill-targeting bug): clicking a password must never also fill a username, in any group'
 );
 assert.notStrictEqual(
-  secondGroupTargets.usernameInput, user1,
-  'manual-walk defect (multi-form fill-targeting bug): must never reach into the first group for a partner'
-);
-assert.notStrictEqual(
-  secondGroupTargets.passwordInput, pw1,
+  secondGroupTargets.passwordInput, group1Pw,
   'manual-walk defect (multi-form fill-targeting bug): must never fill the first group\'s password field'
 );
+assert.notStrictEqual(
+  secondGroupTargets.passwordInput, group1User,
+  'manual-walk defect (multi-form fill-targeting bug): must never touch the first group\'s username field either'
+);
+// Sanity: the first group's own inputs are untouched by anything above (never assigned to).
+assert.ok(group1Pw && group1User, 'the first group\'s inputs remain defined and unmodified reference values');
 
-// 5. kind === 'username' — the clicked input is the usernameInput, and the password comes
-// from the same group.
-const usernameTargets = resolveFillTargets({ input: user1, kind: 'username' });
-assert.strictEqual(usernameTargets.usernameInput, user1, 'a username-initiated fill uses the clicked input directly');
-assert.strictEqual(usernameTargets.passwordInput, pw1, 'the password partner comes from the same group as the clicked username');
+// 5. A null/malformed target yields all three null.
+assert.deepStrictEqual(
+  resolveFillTargets(null),
+  { usernameInput: null, passwordInput: null, otpInput: null },
+  'a null target resolves to no fill targets'
+);
+assert.deepStrictEqual(
+  resolveFillTargets({}),
+  { usernameInput: null, passwordInput: null, otpInput: null },
+  'a malformed target with no input resolves to no fill targets'
+);
+assert.deepStrictEqual(
+  resolveFillTargets({ kind: 'password' }),
+  { usernameInput: null, passwordInput: null, otpInput: null },
+  'a target missing its input resolves to no fill targets even with a kind present'
+);
 
-global.document = originalDocument;
 console.log('inlineIcon.test.js: fill targeting OK');
 
 // isFillTargetUsable — the consume-once/TTL lifecycle. This wiring (setPendingFillTarget/

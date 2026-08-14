@@ -157,36 +157,18 @@
     };
   }
 
-  // The group a fill belongs to. A <form> is the authoritative grouping when one exists.
-  // Without one, walk up until an ancestor holds more than a single input — that is the
-  // smallest container that can plausibly hold a username/password pair. Returning null
-  // means no group was found, and the caller must then fill ONLY the clicked field:
-  // guessing a partner from across the document is what caused the bug this fixes.
-  function findFillGroupScope(input) {
-    const form = input && input.closest ? input.closest('form') : null;
-    if (form) return form;
-    let node = input && input.parentElement ? input.parentElement : null;
-    while (node && node !== document.body) {
-      if (node.querySelectorAll('input').length > 1) return node;
-      node = node.parentElement;
-    }
-    return null;
-  }
-
-  // Resolves where each value goes for a fill initiated from `target` ({input, kind}).
-  // The clicked field always gets its own kind's value; partners come from the group only.
+  // Fills only the field whose icon was clicked — a deliberate product decision. Clicking the
+  // password icon must not touch the username, and vice versa. The popup's fill path is
+  // unaffected: it has no clicked field and still fills username and password together via
+  // findLoginForm.
   function resolveFillTargets(target) {
-    if (!target || !target.input) return { usernameInput: null, passwordInput: null, otpInput: null };
-    const scope = findFillGroupScope(target.input);
-    const fields = scope ? findFillableFields(scope) : [];
-    const inScope = (kind) => {
-      const found = fields.find((field) => field.kind === kind);
-      return found ? found.input : null;
-    };
+    if (!target || !target.input) {
+      return { usernameInput: null, passwordInput: null, otpInput: null };
+    }
     return {
-      usernameInput: target.kind === 'username' ? target.input : inScope('username'),
-      passwordInput: target.kind === 'password' ? target.input : inScope('password'),
-      otpInput: target.kind === 'otp' ? target.input : (scope ? findOtpField(scope) : null),
+      usernameInput: target.kind === 'username' ? target.input : null,
+      passwordInput: target.kind === 'password' ? target.input : null,
+      otpInput: target.kind === 'otp' ? target.input : null,
     };
   }
 
@@ -959,7 +941,7 @@
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
-      isFieldVisible, findFillableFields, findLoginForm, findFillGroupScope, resolveFillTargets,
+      isFieldVisible, findFillableFields, findLoginForm, resolveFillTargets,
       isFillTargetUsable,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,

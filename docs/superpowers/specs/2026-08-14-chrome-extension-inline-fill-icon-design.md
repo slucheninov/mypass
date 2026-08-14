@@ -22,7 +22,8 @@ page load (`state.lastCredentialList`), and a hardened fill path (`fillCredentia
 
 - A key glyph inside recognised login, password and OTP fields, matching the app's menu-bar
   `key.fill` symbol.
-- One trusted click opens a panel listing this domain's entries; one more fills the form.
+- One trusted click opens a panel listing this domain's entries; one more fills only the
+  field whose icon was clicked.
 - No new channel for secrets: reuse `fillCredential` byte-for-byte as the popup sends it.
 - No mutation of the host page's layout.
 - Page scripts cannot read the panel, style it, or trigger a fill.
@@ -200,7 +201,11 @@ same content-script entry, the way `vendor/jsQR.js` already is.
 2. The icon appears whether or not the domain has matches, and whether or not the vault is
    unlocked.
 3. Clicking the icon opens the panel; clicking outside or pressing Escape closes it.
-4. Selecting an entry fills username and password, and the TOTP field when the entry has one.
+4. Selecting an entry fills only the field whose icon was clicked — the password icon fills
+   password only, the username icon fills username only, the OTP icon fills the TOTP code
+   only. (Reversed during the manual walk on 2026-08-14: the original criterion filled
+   username, password and TOTP together from a single click. Deliberately traded one-click
+   sign-in for precision — see "Deliberate reversal" below.)
 5. A synthetic `click` dispatched by page script neither opens the panel nor fills anything.
 6. Page CSS (`* { display: none !important }`, aggressive `z-index`) does not disturb the
    icon or panel.
@@ -212,6 +217,17 @@ same content-script entry, the way `vendor/jsQR.js` already is.
     attributes. Verified by comparing `outerHTML` before and after injection.
 11. No secret appears in any message the content script sends — only `fillCredential` with
     an `id`.
+
+### Deliberate reversal (2026-08-14)
+
+Criterion 4 originally read: selecting an entry fills username and password, and the TOTP
+field when the entry has one — the popup's group-fill behaviour, reused for the inline icon.
+During the manual walk this was reversed on purpose: the inline icon now fills only the field
+whose icon was clicked. The trade-off was named and accepted explicitly — precision over
+one-click sign-in — so signing in via the inline icon now costs two panel openings (one for
+username, one for password) instead of one. The popup's own fill path is untouched by this
+change: it has no clicked field and still fills username and password together via
+`findLoginForm`.
 
 ## Testing
 
