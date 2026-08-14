@@ -27,6 +27,7 @@ xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=
 
 if command -v node >/dev/null 2>&1; then
   node ChromeExtension/tests/background.manifest.test.js
+  node ChromeExtension/tests/backgroundRelay.test.js
   node ChromeExtension/tests/formDetection.test.js
   node ChromeExtension/tests/pairing.test.js
   node ChromeExtension/tests/letter-avatar.test.js
