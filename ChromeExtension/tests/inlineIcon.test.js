@@ -552,15 +552,18 @@ assert.strictEqual(
   false,
   'a target whose input left the document is unusable, even with no time elapsed'
 );
-assert.strictEqual(
-  isFillTargetUsable({ input: connectedInput, kind: 'password', at: 1000 }, 1000 + TTL_MS + 1, TTL_MS),
-  false,
-  'a target older than the TTL is unusable — an unanswered fillCredential must not linger forever'
-);
+// These two pin the boundary exactly: (now - at) === ttlMs must be usable and
+// (now - at) === ttlMs + 1 must not, which distinguishes a `<=` comparison from a `<` one —
+// swapping the operator flips the first assertion below without touching the second.
 assert.strictEqual(
   isFillTargetUsable({ input: connectedInput, kind: 'password', at: 1000 }, 1000 + TTL_MS, TTL_MS),
   true,
-  'exactly at the TTL boundary is still usable'
+  'a target at exactly the TTL boundary (now - at === ttlMs) is still usable'
+);
+assert.strictEqual(
+  isFillTargetUsable({ input: connectedInput, kind: 'password', at: 1000 }, 1000 + TTL_MS + 1, TTL_MS),
+  false,
+  'a target one millisecond past the TTL boundary is unusable — an unanswered fillCredential must not linger forever'
 );
 assert.strictEqual(
   isFillTargetUsable({ input: connectedInput, kind: 'password', at: 1000 }, 1200, TTL_MS),

@@ -866,6 +866,13 @@
         return;
       }
       if (message.type === 'applyFill') {
+        // Consumed before the origin guard, not after: a rejected message must still clear
+        // the target, or a hostname-mismatched applyFill would leave the clicked field armed
+        // for whatever fill arrives next — including one started from the popup, which has
+        // no clicked field of its own. Every path through this branch consumes it, so no
+        // applyFill — accepted or rejected — can ever leave a target behind.
+        const target = takePendingFillTarget(Date.now());
+
         if (!hostnameMatches(message.url, location.href)) {
           console.warn('MyPass: applyFill rejected — message URL does not match the current page hostname');
           return;
@@ -873,12 +880,10 @@
         // A clicked field (pendingFillTarget) takes priority so the fill lands in the group
         // the user actually clicked, not the first password field in document order. The
         // popup's own fill path has no clicked field and falls back to findLoginForm/
-        // findOtpField exactly as before. Consumed unconditionally, so no applyFill can ever
-        // leave a target behind for a later, unrelated fill to inherit.
+        // findOtpField exactly as before.
         let usernameInput = null;
         let passwordInput = null;
         let otpInput = null;
-        const target = takePendingFillTarget(Date.now());
         if (target) {
           const resolved = resolveFillTargets(target);
           usernameInput = resolved.usernameInput;
