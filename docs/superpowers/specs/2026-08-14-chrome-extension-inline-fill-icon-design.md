@@ -256,6 +256,12 @@ gate, not a formality:
 
 ## Follow-ups
 
+- Split the inline-fill code out of `content.js` into its own `inline-fill.js`, as the
+  file-size guidance in this spec suggests. Deliberately **not** done in the final fix wave:
+  it needs a `manifest.json` change and a second content-script entry, which is new risk at
+  the last gate. The bug that motivated it (module-level consts in their temporal dead zone
+  at `attachIcons()` time) was fixed completely by moving the new declarations above the
+  browser-only block, matching the idiom every other helper in the file already follows.
 - Apply the `isTrusted` guard to the two existing banners (`showSaveBanner`,
   `showTotpSaveBanner`) — currently parked in the roadmap's Decisions table.
 - iframe support, if the coverage gap proves real in use.

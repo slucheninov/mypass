@@ -569,6 +569,15 @@
     return { host, shadow, button };
   }
 
+  // The panel's counterpart to buildIconHost. It exists so the marker/stylesheet pairing is
+  // decided in one exported place rather than at the call site inside the browser-only
+  // block, which no test can reach — that is exactly how the panel ended up wearing the
+  // icon's 20x20 button stylesheet.
+  function buildPanelHost(documentRef) {
+    const doc = documentRef || document;
+    return buildShadowHost(doc, 'data-mypass-inline-panel', PANEL_HOST_STYLE);
+  }
+
   // Writes to the overlay host only. The page's own input is never given padding, a
   // wrapper, or any attribute — that is the whole reason for the overlay approach.
   function positionHostToField(host, rect, viewport) {
@@ -744,7 +753,7 @@
         // Handle for manual verification only (RUN.md) — never used as logic. Identity
         // against `host` is what closePanel/isOwnHost actually rely on. The panel is a
         // list, not a button, so it gets the bare scaffolding — no icon glyph inside it.
-        const { host, shadow } = buildShadowHost(document, 'data-mypass-inline-panel', PANEL_HOST_STYLE);
+        const { host, shadow } = buildPanelHost(document);
         const content = buildPanelContent(document, routed, {
           onSelect: (event, entryId) => {
             if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
@@ -864,7 +873,7 @@
       isTrustedActivation, handleIconActivate, handleEntrySelect,
       buildTotpCandidateQueryResponse,
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
-      buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
+      buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
     };
   }
 })();

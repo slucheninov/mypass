@@ -58,6 +58,38 @@ assert.deepStrictEqual(
   'hidden password field yields nothing'
 );
 
+// MIN_USERNAME_FIELD_SCORE — the floor applies ONLY when the page has no password field.
+// A bare `<input type="text">` (score 1) is a search box or a comment field, not a login.
+assert.deepStrictEqual(
+  findFillableFields(fakeScope([fakeInput({ type: 'text' })])),
+  [],
+  'a bare text input with no password field on the page gets NO icon'
+);
+assert.deepStrictEqual(
+  findFillableFields(fakeScope([fakeInput({ type: 'text' }), fakeInput({ type: 'text' })])),
+  [],
+  'several bare text inputs still get nothing — the floor is on the best candidate'
+);
+// But a password field's presence is itself the evidence, so the floor is waived there:
+// dropping this would regress applyFill on a bare `<input type="text">` +
+// `<input type="password">` login form.
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([fakeInput({ type: 'text' }), fakeInput({ type: 'password' })]))),
+  ['password', 'username'],
+  'a bare text input ALONGSIDE a password field still gets a username icon'
+);
+// The floor lets through the weakest intentional identifier-first signals.
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([fakeInput({ type: 'text', name: 'login' })]))),
+  ['username'],
+  'name=login scores 3 and clears the floor with no password field present'
+);
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([fakeInput({ type: 'text', autocomplete: 'username' })]))),
+  ['username'],
+  'autocomplete=username clears the floor with no password field present'
+);
+
 // An OTP field also matches the username selector — OTP must win, and the field
 // must appear exactly once.
 const otp = fakeInput({ type: 'text', autocomplete: 'one-time-code' });
@@ -184,12 +216,23 @@ assert.strictEqual(handleIconActivate({ isTrusted: true }, () => { opened += 1; 
 assert.strictEqual(opened, 1);
 console.log('inlineIcon.test.js: trusted-event gate OK');
 
-const { buildShadowHost, buildIconHost, positionHostToField, KEY_ICON_PATH_D } = require('../content.js');
+const {
+  buildShadowHost, buildIconHost, buildPanelHost, positionHostToField, KEY_ICON_PATH_D,
+  ICON_HOST_STYLE, PANEL_HOST_STYLE,
+} = require('../content.js');
 
 const SVG_NS_EXPECTED = 'http://www.w3.org/2000/svg';
 
+// Records setProperty's THIRD argument. Without it the entire `!important` page-CSS defence
+// could be deleted from content.js and every suite in this file would stay green.
 function fakeStyle() {
-  const style = { setProperty(prop, value) { style[prop] = value; } };
+  const style = {
+    priority: {},
+    setProperty(prop, value, priority) {
+      style[prop] = value;
+      style.priority[prop] = priority || '';
+    },
+  };
   return style;
 }
 
@@ -240,17 +283,41 @@ assert.strictEqual(glyph.namespaceURI, SVG_NS_EXPECTED, 'the svg element is name
 assert.strictEqual(glyph.children[0].getAttribute('d'), KEY_ICON_PATH_D, 'the path carries the key glyph data');
 assert.strictEqual(built.button.innerHTML, undefined, 'the icon is built from DOM nodes, never innerHTML — Trusted Types sites throw on innerHTML');
 
-// positioning writes only to the host's own style — the page's input is untouched
+// Every layout property on the host must carry `!important`: a page rule such as
+// [data-mypass-inline-icon]{display:none!important} beats a plain inline style.
+for (const prop of ['position', 'z-index', 'display', 'pointer-events']) {
+  assert.strictEqual(
+    built.host.style.priority[prop],
+    'important',
+    `host ${prop} is set !important so a page !important rule cannot override it`
+  );
+}
+
+// positioning writes only to the host's own style — the page's input is untouched.
+// scrollX/scrollY are deliberately NON-ZERO so dropping scroll compensation fails here,
+// and the expected values are pinned exactly so the arithmetic cannot drift.
 const host = fakeElement('div');
-positionHostToField(host, { top: 100, left: 50, width: 200, height: 30 }, { scrollX: 0, scrollY: 0 });
+positionHostToField(host, { top: 100, left: 50, width: 200, height: 30 }, { scrollX: 40, scrollY: 200 });
 assert.strictEqual(host.style.position, 'absolute');
-assert.ok(host.style.top, 'a top offset is written');
-assert.ok(host.style.left, 'a left offset is written');
+// top  = rect.top(100)  + scrollY(200) + (height(30) - size(20)) / 2      = 305
+// left = rect.left(50)  + scrollX(40)  + width(200) - size(20) - inset(6) = 264
+assert.strictEqual(host.style.top, '305px', 'top = rect.top + scrollY + (height - 20) / 2');
+assert.strictEqual(host.style.left, '264px', 'left = rect.left + scrollX + width - 20 - 6');
+assert.strictEqual(host.style.priority.top, 'important', 'top is set !important');
+assert.strictEqual(host.style.priority.left, 'important', 'left is set !important');
+assert.strictEqual(host.style.priority.position, 'important', 'position is set !important');
+
+// The same field with no scroll — proves the two offsets above really came from
+// scrollX/scrollY rather than from constants that happen to match.
+const unscrolledHost = fakeElement('div');
+positionHostToField(unscrolledHost, { top: 100, left: 50, width: 200, height: 30 }, { scrollX: 0, scrollY: 0 });
+assert.strictEqual(unscrolledHost.style.top, '105px', 'without scroll the top is 200px higher');
+assert.strictEqual(unscrolledHost.style.left, '224px', 'without scroll the left is 40px further left');
 console.log('inlineIcon.test.js: icon host OK');
 
 // buildShadowHost is the bare scaffolding shared by the icon and the panel — the panel
 // is a list, not a button, and must never end up with the icon's glyph inside it.
-const bareHost = buildShadowHost(fakeDocument, 'data-mypass-inline-panel');
+const bareHost = buildShadowHost(fakeDocument, 'data-mypass-inline-panel', PANEL_HOST_STYLE);
 assert.strictEqual(bareHost.host.shadowMode, 'closed', 'bare host shadow root MUST be closed too');
 assert.strictEqual(bareHost.shadow.children.length, 1, 'bare shadow root contains only the style element');
 assert.strictEqual(bareHost.shadow.children[0].tagName, 'STYLE', 'the sole child is the style element');
@@ -267,6 +334,39 @@ assert.strictEqual(iconHostBuilt.shadow.children.length, 2, 'icon shadow root st
 assert.ok(iconHostBuilt.shadow.children.some((child) => child.tagName === 'STYLE'), 'icon shadow root still contains the style element');
 assert.ok(iconHostBuilt.shadow.children.includes(iconHostBuilt.button), 'icon shadow root still contains the button');
 assert.strictEqual(iconHostBuilt.button.children[0].namespaceURI, SVG_NS_EXPECTED, 'the button still carries the namespaced svg glyph');
+
+// Each surface installs ITS OWN stylesheet. Handing the panel the icon's sheet rendered
+// every panel row as a 20x20 transparent box with overflowing text. buildPanelHost is what
+// the browser-only togglePanel actually calls, so asserting on it pins the real pairing.
+const panelHostBuilt = buildPanelHost(fakeDocument);
+assert.strictEqual(panelHostBuilt.host.getAttribute('data-mypass-inline-panel'), '', 'the panel host carries the panel marker');
+assert.strictEqual(panelHostBuilt.host.getAttribute('data-mypass-inline-icon'), null, 'the panel host does not carry the icon marker');
+assert.strictEqual(panelHostBuilt.host.shadowMode, 'closed', 'the panel shadow root is closed');
+assert.strictEqual(
+  panelHostBuilt.shadow.children[0].textContent,
+  PANEL_HOST_STYLE,
+  'the panel host installs the PANEL stylesheet, not the icon one'
+);
+assert.strictEqual(
+  iconHostBuilt.shadow.children.find((child) => child.tagName === 'STYLE').textContent,
+  ICON_HOST_STYLE,
+  'the icon host installs the ICON stylesheet'
+);
+assert.strictEqual(bareHost.shadow.children[0].textContent, PANEL_HOST_STYLE, 'buildShadowHost installs whichever sheet it is given');
+assert.notStrictEqual(PANEL_HOST_STYLE, ICON_HOST_STYLE, 'the two stylesheets are genuinely different');
+
+// What the panel stylesheet must actually provide — it is a list surface, not a 20x20 glyph.
+assert.ok(/:host\{all:initial\}/.test(PANEL_HOST_STYLE), 'the panel keeps :host{all:initial} isolation');
+assert.ok(/\.panel\{[^}]*background:#ffffff/.test(PANEL_HOST_STYLE), 'the panel has an opaque background');
+assert.ok(/\.panel\{[^}]*border:1px solid/.test(PANEL_HOST_STYLE), 'the panel has a border');
+assert.ok(/\.panel\{[^}]*border-radius:/.test(PANEL_HOST_STYLE), 'the panel has a border radius');
+assert.ok(/\.panel\{[^}]*min-width:/.test(PANEL_HOST_STYLE), 'the panel has a min width');
+assert.ok(/\.panel\{[^}]*max-width:/.test(PANEL_HOST_STYLE), 'the panel has a max width');
+assert.ok(/\.panel\{[^}]*padding:/.test(PANEL_HOST_STYLE), 'the panel has padding');
+assert.ok(/\.row\{[^}]*width:100%/.test(PANEL_HOST_STYLE), 'panel rows are full width');
+assert.ok(/\.row\{[^}]*text-align:left/.test(PANEL_HOST_STYLE), 'panel rows are left aligned');
+assert.ok(/\.row:hover/.test(PANEL_HOST_STYLE), 'panel rows have a hover state');
+assert.ok(!/\.row\{[^}]*height:20px/.test(PANEL_HOST_STYLE), 'panel rows are never the icon-sized 20x20 box');
 console.log('inlineIcon.test.js: shadow host separation OK');
 
 const { buildPanelContent } = require('../content.js');
@@ -279,6 +379,10 @@ const entriesPanel = buildPanelContent(
 );
 assert.strictEqual(entriesPanel.rows.length, 2, 'one row per entry');
 assert.strictEqual(entriesPanel.rows[0].textContent, 'Example — alice', 'row text is title, em dash, username');
+// The rows are styled by PANEL_HOST_STYLE's class rules, so they must carry those classes.
+assert.strictEqual(entriesPanel.root.getAttribute('class'), 'panel', 'the panel root carries the .panel class');
+assert.strictEqual(entriesPanel.rows[0].getAttribute('class'), 'row', 'each entry row carries the .row class');
+assert.strictEqual(entriesPanel.rows[1].getAttribute('class'), 'row', 'every entry row carries it, not just the first');
 
 const firstClickEvent = { type: 'click', target: entriesPanel.rows[0] };
 entriesPanel.rows[0].dispatch('click', firstClickEvent);
@@ -294,11 +398,13 @@ assert.strictEqual(selectCalls[1].entryId, '2', 'the second row reports the seco
 const emptyPanel = buildPanelContent(fakeDocument, { panel: 'empty', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
 assert.strictEqual(emptyPanel.rows.length, 0, 'the empty state has no selectable rows');
 assert.strictEqual(emptyPanel.root.children[0].textContent, 'No entries for this site', 'the empty state renders its message');
+assert.strictEqual(emptyPanel.root.children[0].getAttribute('class'), 'message', 'the message carries the .message class');
 
 const unlockCalls = [];
 const lockedPanel = buildPanelContent(fakeDocument, { panel: 'locked', entries: [] }, { onSelect: () => {}, onUnlock: (event) => unlockCalls.push(event) });
 assert.strictEqual(lockedPanel.rows.length, 0, 'the locked state offers no entries');
 assert.ok(lockedPanel.unlockButton, 'the locked state offers an unlock button');
+assert.strictEqual(lockedPanel.unlockButton.getAttribute('class'), 'unlock', 'the unlock button carries the .unlock class');
 assert.strictEqual(lockedPanel.root.children[0].textContent, 'MyPass is locked', 'the locked state renders its message');
 
 const unlockClickEvent = { type: 'click' };
