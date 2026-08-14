@@ -85,16 +85,63 @@
     return bestScore >= MIN_OTP_FIELD_SCORE ? best : null;
   }
 
+  function isFieldVisible(input) {
+    if (!input) return false;
+    if (input.offsetParent === null) return false;
+    const disabled = input.getAttribute('disabled') !== null || input.disabled === true;
+    const readOnly = input.getAttribute('readonly') !== null || input.readOnly === true;
+    return !disabled && !readOnly;
+  }
+
+  // Returns every field the inline icon may attach to. Deliberately looser than the old
+  // findLoginForm: a password field no longer has to sit inside a <form>, and a username
+  // field is emitted even when no password field exists, so identifier-first login screens
+  // (username on step 1, password on step 2) are covered.
+  function findFillableFields(root) {
+    const scope = root || document;
+    const fields = [];
+
+    const passwords = Array.from(scope.querySelectorAll('input[type="password"]')).filter(isFieldVisible);
+    for (const password of passwords) {
+      fields.push({ input: password, kind: 'password' });
+    }
+
+    const formScope = (passwords[0] && passwords[0].closest && passwords[0].closest('form')) || scope;
+    const usernameCandidates = Array.from(
+      formScope.querySelectorAll('input[type="text"], input[type="email"], input[autocomplete*="username"]')
+    ).filter(isFieldVisible);
+    const username = findBestUsernameInput(usernameCandidates);
+    if (username) {
+      fields.push({ input: username, kind: 'username' });
+    }
+
+    // An OTP input is type=text or type=tel, so it also satisfies the username selector
+    // above and can win findBestUsernameInput on a 2FA-only page. Classify it as otp and
+    // drop the duplicate rather than letting one element carry two icons.
+    const otp = findOtpField(scope);
+    if (otp) {
+      const duplicate = fields.findIndex((field) => field.input === otp);
+      if (duplicate >= 0) fields.splice(duplicate, 1);
+      fields.push({ input: otp, kind: 'otp' });
+    }
+
+    return fields;
+  }
+
+  // Kept for applyFill's existing contract. Rebuilt on findFillableFields so the two
+  // cannot drift apart. `form` is now nullable: a password field outside any <form> used
+  // to make this return null, which meant applyFill silently did nothing on such pages.
   function findLoginForm() {
-    const passwordInput = document.querySelector('input[type="password"]');
-    if (!passwordInput) return null;
-    const form = passwordInput.closest('form');
-    if (!form) return null;
-    const candidates = Array.from(
-      form.querySelectorAll('input[type="text"], input[type="email"], input[autocomplete*="username"]')
-    );
-    const usernameInput = findBestUsernameInput(candidates);
-    return { form, passwordInput, usernameInput };
+    const fields = findFillableFields(document);
+    const passwordField = fields.find((field) => field.kind === 'password');
+    if (!passwordField) return null;
+    const usernameField = fields.find((field) => field.kind === 'username');
+    const form = passwordField.input.closest ? passwordField.input.closest('form') : null;
+    return {
+      form,
+      passwordInput: passwordField.input,
+      usernameInput: usernameField ? usernameField.input : null,
+    };
   }
 
   const OTPAUTH_REGEX = /otpauth:\/\/totp\/[^\s"'<>]+/i;
@@ -401,6 +448,7 @@
     }
 
     function attachSubmitListener(loginForm) {
+      if (!loginForm.form) return;
       loginForm.form.addEventListener('submit', () => {
         if (!state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0) {
           const username = loginForm.usernameInput ? loginForm.usernameInput.value : '';
@@ -459,6 +507,7 @@
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
+      isFieldVisible, findFillableFields,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
