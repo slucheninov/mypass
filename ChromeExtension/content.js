@@ -157,6 +157,39 @@
     };
   }
 
+  // The group a fill belongs to. A <form> is the authoritative grouping when one exists.
+  // Without one, walk up until an ancestor holds more than a single input — that is the
+  // smallest container that can plausibly hold a username/password pair. Returning null
+  // means no group was found, and the caller must then fill ONLY the clicked field:
+  // guessing a partner from across the document is what caused the bug this fixes.
+  function findFillGroupScope(input) {
+    const form = input && input.closest ? input.closest('form') : null;
+    if (form) return form;
+    let node = input && input.parentElement ? input.parentElement : null;
+    while (node && node !== document.body) {
+      if (node.querySelectorAll('input').length > 1) return node;
+      node = node.parentElement;
+    }
+    return null;
+  }
+
+  // Resolves where each value goes for a fill initiated from `target` ({input, kind}).
+  // The clicked field always gets its own kind's value; partners come from the group only.
+  function resolveFillTargets(target) {
+    if (!target || !target.input) return { usernameInput: null, passwordInput: null, otpInput: null };
+    const scope = findFillGroupScope(target.input);
+    const fields = scope ? findFillableFields(scope) : [];
+    const inScope = (kind) => {
+      const found = fields.find((field) => field.kind === kind);
+      return found ? found.input : null;
+    };
+    return {
+      usernameInput: target.kind === 'username' ? target.input : inScope('username'),
+      passwordInput: target.kind === 'password' ? target.input : inScope('password'),
+      otpInput: target.kind === 'otp' ? target.input : (scope ? findOtpField(scope) : null),
+    };
+  }
+
   const OTPAUTH_REGEX = /otpauth:\/\/totp\/[^\s"'<>]+/i;
   const BASE32_REGEX = /^[A-Z2-7]{16,128}$/;
   const MANUAL_KEY_LABEL_REGEX = /secret|manual|setup key|authenticator/i;
@@ -662,6 +695,11 @@
     let openPanel = null;
     let syncScheduled = false;
     let panelRequestId = 0;
+    // The field whose panel row was just clicked, so applyFill knows which group to fill
+    // instead of guessing the first password field in document order (the bug this fixes).
+    // Set unconditionally in onSelect, before handleEntrySelect runs — a rejected untrusted
+    // activation simply never produces an applyFill message, so a stale value here is inert.
+    let pendingFillTarget = null;
 
     function releaseIcon(input, record) {
       if (record.resizeObserver) record.resizeObserver.disconnect();
@@ -756,6 +794,7 @@
         const { host, shadow } = buildPanelHost(document);
         const content = buildPanelContent(document, routed, {
           onSelect: (event, entryId) => {
+            pendingFillTarget = { input, kind };
             if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
               closePanel();
             }
@@ -800,20 +839,36 @@
           console.warn('MyPass: applyFill rejected — message URL does not match the current page hostname');
           return;
         }
-        const loginForm = findLoginForm();
-        if (loginForm) {
-          if (loginForm.usernameInput && message.username) {
-            setNativeValue(loginForm.usernameInput, message.username);
+        // A clicked field (pendingFillTarget) takes priority so the fill lands in the group
+        // the user actually clicked, not the first password field in document order. The
+        // popup's own fill path has no clicked field and falls back to findLoginForm/
+        // findOtpField exactly as before.
+        let usernameInput = null;
+        let passwordInput = null;
+        let otpInput = null;
+        if (pendingFillTarget && pendingFillTarget.input && pendingFillTarget.input.isConnected) {
+          const resolved = resolveFillTargets(pendingFillTarget);
+          usernameInput = resolved.usernameInput;
+          passwordInput = resolved.passwordInput;
+          otpInput = resolved.otpInput;
+        } else {
+          const loginForm = findLoginForm();
+          if (loginForm) {
+            usernameInput = loginForm.usernameInput;
+            passwordInput = loginForm.passwordInput;
           }
-          if (loginForm.passwordInput && message.password) {
-            setNativeValue(loginForm.passwordInput, message.password);
-          }
+          otpInput = findOtpField();
         }
-        if (message.totp) {
-          const otpField = findOtpField();
-          if (otpField) {
-            setNativeValue(otpField, message.totp);
-          }
+        pendingFillTarget = null;
+
+        if (usernameInput && message.username) {
+          setNativeValue(usernameInput, message.username);
+        }
+        if (passwordInput && message.password) {
+          setNativeValue(passwordInput, message.password);
+        }
+        if (message.totp && otpInput) {
+          setNativeValue(otpInput, message.totp);
         }
       }
     });
@@ -865,7 +920,7 @@
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
-      isFieldVisible, findFillableFields, findLoginForm,
+      isFieldVisible, findFillableFields, findLoginForm, findFillGroupScope, resolveFillTargets,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,

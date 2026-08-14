@@ -423,3 +423,113 @@ assert.strictEqual(unavailablePanel.root.children[0].textContent, 'MyPass is not
 const unknownPanel = buildPanelContent(fakeDocument, { panel: 'someUnknownState', entries: [] }, { onSelect: () => {}, onUnlock: () => {} });
 assert.strictEqual(unknownPanel.root.children[0].textContent, 'MyPass is not running', 'an unrecognized panel value falls back to the unavailable message');
 console.log('inlineIcon.test.js: panel content OK');
+
+// findFillGroupScope / resolveFillTargets — the manual-walk fix. applyFill must target the
+// group the user actually clicked, not the first password field in document order.
+const { findFillGroupScope, resolveFillTargets } = require('../content.js');
+
+// findFillGroupScope reads the global `document` (for the document.body walk terminator),
+// so stub it per case and restore it after, same convention as the findLoginForm block above.
+function fakeGroupNode(children, opts = {}) {
+  return {
+    tagName: opts.tagName || 'DIV',
+    parentElement: opts.parent !== undefined ? opts.parent : null,
+    querySelectorAll(selector) {
+      if (selector === 'input') return children;
+      if (selector === 'input[type="password"]') {
+        return children.filter((i) => i.getAttribute('type') === 'password');
+      }
+      if (selector === 'input, textarea') return children;
+      return children.filter((i) => {
+        const t = i.getAttribute('type');
+        return t === 'text' || t === 'email' || (i.getAttribute('autocomplete') || '').includes('username');
+      });
+    },
+  };
+}
+
+function fakeGroupInput(attrs = {}, extra = {}) {
+  return {
+    getAttribute: (name) => (Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null),
+    offsetParent: extra.hidden ? null : {},
+    disabled: !!extra.disabled,
+    readOnly: !!extra.readOnly,
+    closest: (sel) => (sel === 'form' ? extra.form || null : null),
+    parentElement: extra.parent !== undefined ? extra.parent : null,
+    tagName: 'INPUT',
+  };
+}
+
+const bodySentinel = {};
+global.document = { body: bodySentinel };
+
+// 1. Password inside a <form> — the form is the authoritative scope, no ancestor walk needed.
+const formPw = fakeGroupInput({ type: 'password' });
+const formUser = fakeGroupInput({ type: 'text', name: 'username' });
+const formGroup = fakeGroupNode([formPw, formUser], { tagName: 'FORM', parent: bodySentinel });
+formPw.closest = (sel) => (sel === 'form' ? formGroup : null);
+assert.strictEqual(findFillGroupScope(formPw), formGroup, 'a password inside a form uses the form as its scope');
+
+// 2. No form, but the parent div holds two inputs — that div is the group, not the document.
+const divPw = fakeGroupInput({ type: 'password' });
+const divUser = fakeGroupInput({ type: 'text', name: 'username' });
+const divGroup = fakeGroupNode([divPw, divUser], { parent: bodySentinel });
+divPw.parentElement = divGroup;
+divUser.parentElement = divGroup;
+assert.strictEqual(findFillGroupScope(divPw), divGroup, 'a password with no form but a two-input parent uses that parent as the group');
+assert.notStrictEqual(findFillGroupScope(divPw), global.document, 'the group scope is the div, never the whole document');
+
+// 3. A lone password whose ancestors never hold more than one input — scope is null, and
+// resolveFillTargets must NOT reach across the page for a partner.
+const lonelyPw = fakeGroupInput({ type: 'password' });
+const lonelyOuter = fakeGroupNode([lonelyPw], { parent: bodySentinel });
+const lonelyInner = fakeGroupNode([lonelyPw], { parent: lonelyOuter });
+lonelyPw.parentElement = lonelyInner;
+assert.strictEqual(findFillGroupScope(lonelyPw), null, 'a password whose ancestors never hold more than one input has no group scope');
+const lonelyTargets = resolveFillTargets({ input: lonelyPw, kind: 'password' });
+assert.strictEqual(lonelyTargets.passwordInput, lonelyPw, 'with no group scope, the clicked field still fills itself');
+assert.strictEqual(lonelyTargets.usernameInput, null, 'with no group scope, no partner is guessed from elsewhere on the page');
+
+// 4. THE REGRESSION ITSELF (manual-walk defect): a document with two separate login groups,
+// each holding its own username and password. Clicking the SECOND group's password must
+// resolve to that group's own two inputs — never the first group's — which is exactly the
+// bug confirmed live in Chrome on inline-icon-noform.html (four password fields, wrong one
+// filled every time).
+const pw1 = fakeGroupInput({ type: 'password' });
+const user1 = fakeGroupInput({ type: 'text', name: 'username' });
+const group1 = fakeGroupNode([pw1, user1], { parent: bodySentinel });
+pw1.parentElement = group1;
+user1.parentElement = group1;
+
+const groupBPw = fakeGroupInput({ type: 'password' });
+const groupBUser = fakeGroupInput({ type: 'text', name: 'username' });
+const group2 = fakeGroupNode([groupBPw, groupBUser], { parent: bodySentinel });
+groupBPw.parentElement = group2;
+groupBUser.parentElement = group2;
+
+const secondGroupTargets = resolveFillTargets({ input: groupBPw, kind: 'password' });
+assert.strictEqual(
+  secondGroupTargets.passwordInput, groupBPw,
+  'manual-walk defect: clicking the second group\'s password must fill that group\'s own password field'
+);
+assert.strictEqual(
+  secondGroupTargets.usernameInput, groupBUser,
+  'manual-walk defect: the second group\'s username must come from its own group'
+);
+assert.notStrictEqual(
+  secondGroupTargets.usernameInput, user1,
+  'manual-walk defect (multi-form fill-targeting bug): must never reach into the first group for a partner'
+);
+assert.notStrictEqual(
+  secondGroupTargets.passwordInput, pw1,
+  'manual-walk defect (multi-form fill-targeting bug): must never fill the first group\'s password field'
+);
+
+// 5. kind === 'username' — the clicked input is the usernameInput, and the password comes
+// from the same group.
+const usernameTargets = resolveFillTargets({ input: user1, kind: 'username' });
+assert.strictEqual(usernameTargets.usernameInput, user1, 'a username-initiated fill uses the clicked input directly');
+assert.strictEqual(usernameTargets.passwordInput, pw1, 'the password partner comes from the same group as the clicked username');
+
+global.document = originalDocument;
+console.log('inlineIcon.test.js: fill targeting OK');
