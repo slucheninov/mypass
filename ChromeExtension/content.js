@@ -407,7 +407,11 @@
     const observer = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
-        notifyMutation();
+        try {
+          notifyMutation();
+        } catch (error) {
+          console.warn('MyPass: inline icon attach failed — ' + error.message);
+        }
         const detected = detectTotpCandidateWithPriority(document);
         if (shouldShowTotpBanner(detected, state)) {
           showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
@@ -492,10 +496,22 @@
     const attachedIcons = new Map();
     let openPanel = null;
     let syncScheduled = false;
+    let panelRequestId = 0;
+
+    function releaseIcon(input, record) {
+      if (record.resizeObserver) record.resizeObserver.disconnect();
+      record.host.remove();
+      attachedIcons.delete(input);
+    }
 
     function syncIconPositions() {
       syncScheduled = false;
       attachedIcons.forEach((record, input) => {
+        if (!input.isConnected) {
+          if (openPanel && openPanel.input === input) closePanel();
+          releaseIcon(input, record);
+          return;
+        }
         const rect = input.getBoundingClientRect();
         const offscreen = rect.bottom < 0 || rect.top > window.innerHeight || rect.width === 0;
         // important for the same reason as buildIconHost/positionHostToField: a plain
@@ -517,6 +533,9 @@
       button.addEventListener('click', (event) => {
         handleIconActivate(event, () => togglePanel(input, kind));
       });
+      // Position synchronously before the first paint so the icon never flashes at the
+      // body origin and then jumps into place on the next rAF.
+      positionHostToField(host, input.getBoundingClientRect(), window);
       document.body.appendChild(host);
       attachedIcons.set(input, { host, kind });
 
@@ -533,21 +552,27 @@
     }
 
     function closePanel() {
+      // Bumping here is what makes Escape / outside-click cancel an in-flight request,
+      // not just remove an already-built panel.
+      panelRequestId += 1;
       if (!openPanel) return;
       openPanel.host.remove();
       openPanel = null;
     }
 
     function togglePanel(input, kind) {
-      if (openPanel && openPanel.input === input) {
-        closePanel();
-        return;
-      }
+      const wasOpenForThisInput = !!(openPanel && openPanel.input === input);
       closePanel();
+      if (wasOpenForThisInput) return;
+
+      panelRequestId += 1;
+      const requestId = panelRequestId;
       // Always re-ask rather than trusting state.lastCredentialList: the vault may have
       // been unlocked since page load, and a stale locked panel is the exact failure
       // Stage 3 shipped and had to fix.
       chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
+        // Superseded by a later open, or cancelled by a close, while we were waiting.
+        if (requestId !== panelRequestId) return;
         const routed = chooseInlinePanel(response, kind);
         // Handle for manual verification only (RUN.md) — never used as logic. Identity
         // against `host` is what closePanel/isOwnHost actually rely on. The panel is a
@@ -702,7 +727,7 @@
     host.style.setProperty('position', 'absolute', 'important');
     host.style.setProperty('z-index', '2147483646', 'important');
     host.style.setProperty('display', 'block', 'important');
-    host.style.pointerEvents = 'auto';
+    host.style.setProperty('pointer-events', 'auto', 'important');
 
     const shadow = host.attachShadow({ mode: 'closed' });
     const style = doc.createElement('style');
