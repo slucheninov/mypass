@@ -184,7 +184,7 @@ assert.strictEqual(handleIconActivate({ isTrusted: true }, () => { opened += 1; 
 assert.strictEqual(opened, 1);
 console.log('inlineIcon.test.js: trusted-event gate OK');
 
-const { buildIconHost, positionHostToField, KEY_ICON_PATH_D } = require('../content.js');
+const { buildShadowHost, buildIconHost, positionHostToField, KEY_ICON_PATH_D } = require('../content.js');
 
 const SVG_NS_EXPECTED = 'http://www.w3.org/2000/svg';
 
@@ -247,6 +247,27 @@ assert.strictEqual(host.style.position, 'absolute');
 assert.ok(host.style.top, 'a top offset is written');
 assert.ok(host.style.left, 'a left offset is written');
 console.log('inlineIcon.test.js: icon host OK');
+
+// buildShadowHost is the bare scaffolding shared by the icon and the panel — the panel
+// is a list, not a button, and must never end up with the icon's glyph inside it.
+const bareHost = buildShadowHost(fakeDocument, 'data-mypass-inline-panel');
+assert.strictEqual(bareHost.host.shadowMode, 'closed', 'bare host shadow root MUST be closed too');
+assert.strictEqual(bareHost.shadow.children.length, 1, 'bare shadow root contains only the style element');
+assert.strictEqual(bareHost.shadow.children[0].tagName, 'STYLE', 'the sole child is the style element');
+assert.ok(
+  !bareHost.shadow.children.some((child) => child.tagName === 'BUTTON'),
+  'no button anywhere in the bare shadow root'
+);
+assert.strictEqual(bareHost.host.getAttribute('data-mypass-inline-panel'), '', 'the bare host carries whichever marker it was given');
+assert.strictEqual(bareHost.host.getAttribute('data-mypass-inline-icon'), null, 'the bare host does not also carry the icon marker');
+
+const iconHostBuilt = buildIconHost(fakeDocument);
+assert.strictEqual(iconHostBuilt.host.getAttribute('data-mypass-inline-icon'), '', 'the icon host carries the icon marker');
+assert.strictEqual(iconHostBuilt.shadow.children.length, 2, 'icon shadow root still contains both the style and the button');
+assert.ok(iconHostBuilt.shadow.children.some((child) => child.tagName === 'STYLE'), 'icon shadow root still contains the style element');
+assert.ok(iconHostBuilt.shadow.children.includes(iconHostBuilt.button), 'icon shadow root still contains the button');
+assert.strictEqual(iconHostBuilt.button.children[0].namespaceURI, SVG_NS_EXPECTED, 'the button still carries the namespaced svg glyph');
+console.log('inlineIcon.test.js: shadow host separation OK');
 
 const { buildPanelContent } = require('../content.js');
 

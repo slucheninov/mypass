@@ -549,10 +549,10 @@
       // Stage 3 shipped and had to fix.
       chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
         const routed = chooseInlinePanel(response, kind);
-        const { host, shadow } = buildIconHost(document);
         // Handle for manual verification only (RUN.md) — never used as logic. Identity
-        // against `host` is what closePanel/isOwnHost actually rely on.
-        host.setAttribute('data-mypass-inline-panel', '');
+        // against `host` is what closePanel/isOwnHost actually rely on. The panel is a
+        // list, not a button, so it gets the bare scaffolding — no icon glyph inside it.
+        const { host, shadow } = buildShadowHost(document, 'data-mypass-inline-panel');
         const content = buildPanelContent(document, routed, {
           onSelect: (event, entryId) => {
             if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
@@ -687,11 +687,15 @@
     'width:20px;height:20px;border-radius:4px;color:#6b7280;opacity:0.65;}' +
     'button:hover,button:focus-visible{opacity:1;background:rgba(127,127,127,0.15);}';
 
-  function buildIconHost(documentRef) {
+  // The shared scaffolding behind both surfaces: a light-DOM host carrying our marker,
+  // an isolating closed shadow root, and the layout styles marked important so a page
+  // rule cannot hide or move the control. The icon adds a button on top of this; the
+  // panel adds its rows. Neither should carry the other's contents.
+  function buildShadowHost(documentRef, markerAttribute) {
     const doc = documentRef || document;
     const host = doc.createElement('div');
     // z-index one below the banners' 2147483647 so a save banner still wins if they overlap.
-    host.setAttribute('data-mypass-inline-icon', '');
+    host.setAttribute(markerAttribute, '');
     // setProperty(..., 'important') because a page's own `!important` CSS rule (e.g.
     // [data-mypass-inline-icon]{display:none!important}) would otherwise beat a plain
     // inline style and could hide or mislocate the control.
@@ -705,12 +709,17 @@
     style.textContent = ICON_HOST_STYLE;
     shadow.appendChild(style);
 
+    return { host, shadow };
+  }
+
+  function buildIconHost(documentRef) {
+    const doc = documentRef || document;
+    const { host, shadow } = buildShadowHost(doc, 'data-mypass-inline-icon');
     const button = doc.createElement('button');
     button.setAttribute('type', 'button');
     button.setAttribute('aria-label', 'Fill from MyPass');
     button.appendChild(buildKeyGlyph(doc));
     shadow.appendChild(button);
-
     return { host, shadow, button };
   }
 
@@ -777,7 +786,7 @@
       classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
       isTrustedActivation, handleIconActivate, handleEntrySelect,
       buildTotpCandidateQueryResponse,
-      KEY_ICON_PATH_D, buildKeyGlyph, buildIconHost, positionHostToField,
+      KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelContent,
     };
   }
