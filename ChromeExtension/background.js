@@ -182,6 +182,16 @@ function relayFillToActiveTab(credentialResponse, requestUrl, sender) {
       console.warn("MyPass: relayFillToActiveTab aborted — sender origin does not match request origin");
       return;
     }
+    // Chrome treats an undefined optional property as absent, so
+    // {frameId: undefined, documentId: undefined} would silently degrade
+    // chrome.tabs.sendMessage back into the unscoped, tab-wide broadcast this scoping
+    // exists to prevent — reaching the exact TOCTOU hole by omission rather than by
+    // attack. A security guard must refuse rather than downgrade, so bail here rather
+    // than let sendApplyFillToSender fall back to an unscoped send.
+    if (!sender.documentId) {
+      console.warn("MyPass: applyFill aborted — no documentId on the sender; refusing an unscoped tab-wide delivery");
+      return;
+    }
     sendApplyFillToSender(senderTarget.tabId, sender, credentialResponse, requestUrl);
     return;
   }

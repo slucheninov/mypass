@@ -121,6 +121,20 @@ const { resolveSenderFillTarget, relayFillToActiveTab, hostnameMatches } = requi
   nextSendMessageLastError = null;
 }
 
+// Content-script sender with a valid, matching origin but NO documentId: Chrome treats
+// an undefined optional property as absent, so {frameId, documentId: undefined} would
+// silently degrade chrome.tabs.sendMessage back into the unscoped, tab-wide broadcast
+// the scoping exists to prevent — reaching the TOCTOU hole by omission rather than by
+// attack. The guard must refuse rather than downgrade: nothing may be sent.
+{
+  sentMessages.length = 0;
+  queriedTabs.length = 0;
+  const sender = { tab: { id: 99 }, url: 'https://example.com/login', frameId: 0 }; // documentId omitted
+  relayFillToActiveTab({ username: 'u', password: 'p', totp: null }, 'https://example.com/', sender);
+  assert.strictEqual(queriedTabs.length, 0);
+  assert.strictEqual(sentMessages.length, 0, 'a sender with no documentId must not receive an unscoped delivery');
+}
+
 // Content-script sender with a mismatched origin: nothing is sent anywhere.
 {
   sentMessages.length = 0;
