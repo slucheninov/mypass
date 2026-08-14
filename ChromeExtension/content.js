@@ -5,6 +5,13 @@
   // candidates are picked.
   const MIN_OTP_FIELD_SCORE = 4;
 
+  // Minimum username score, applied ONLY on pages with no password field (see
+  // findFillableFields). A bare `<input type="text">` scores 1, so without a floor every
+  // search box and comment field on the web would get a key icon. 3 is the weakest
+  // intentional signal: `name`/`id` matching user|login|email (2) plus the type bonus (1),
+  // or type=email (3+1).
+  const MIN_USERNAME_FIELD_SCORE = 3;
+
   function scoreUsernameLikeness(input) {
     let score = 0;
     const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
@@ -111,7 +118,13 @@
       formScope.querySelectorAll('input[type="text"], input[type="email"], input[autocomplete*="username"]')
     ).filter(isFieldVisible);
     const username = findBestUsernameInput(usernameCandidates);
-    if (username) {
+    // The score floor applies ONLY when there is no password field on the page. When a
+    // password field IS present, its presence is itself strong evidence that the nearby text
+    // input is the username, so today's floor-free behaviour is kept — otherwise a bare
+    // `<input type="text">` login form would silently lose username autofill, which would be
+    // a regression of applyFill. Without a password field there is no such evidence, and the
+    // identifier-first relaxation above would otherwise put an icon on every search box.
+    if (username && (passwords.length > 0 || scoreUsernameLikeness(username) >= MIN_USERNAME_FIELD_SCORE)) {
       fields.push({ input: username, kind: 'username' });
     }
 
@@ -472,6 +485,149 @@
     document.body.appendChild(banner);
   }
 
+  // Built from DOM nodes rather than an innerHTML string: sites that enforce the
+  // require-trusted-types-for 'script' CSP directive throw on any innerHTML assignment,
+  // and those are exactly the sites this feature most needs to work on.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const KEY_ICON_PATH_D =
+    'M10.5 1a4.5 4.5 0 0 0-4.3 5.9L1 12.1V15h2.9l.6-.6v-1.3h1.3l.9-.9v-1.3h1.3l1.2-1.2A4.5 4.5 0 1 0 10.5 1zm1.4 3.6a1 1 0 1 1 1.4-1.4 1 1 0 0 1-1.4 1.4z';
+
+  function buildKeyGlyph(doc) {
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = doc.createElementNS(SVG_NS, 'path');
+    path.setAttribute('fill', 'currentColor');
+    path.setAttribute('d', KEY_ICON_PATH_D);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  const ICON_HOST_STYLE =
+    ':host{all:initial}' +
+    'button{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:center;' +
+    'width:20px;height:20px;border-radius:4px;color:#6b7280;opacity:0.65;}' +
+    'button:hover,button:focus-visible{opacity:1;background:rgba(127,127,127,0.15);}';
+
+  // The panel is a list surface, not a 20x20 glyph button, so it needs its own stylesheet:
+  // handing it ICON_HOST_STYLE rendered every row as a 20x20 box with overflowing text on a
+  // fully transparent host. Deliberately the same restrained language as popup.html — system
+  // font, #fff on a #d2d2d7 hairline, 8px radius, #f5f5f7 hover, #007aff for the one action.
+  const PANEL_HOST_STYLE =
+    ':host{all:initial}' +
+    '.panel{box-sizing:border-box;min-width:220px;max-width:320px;padding:4px;' +
+    'background:#ffffff;color:#1d1d1f;border:1px solid #d2d2d7;border-radius:8px;' +
+    'box-shadow:0 4px 16px rgba(0,0,0,0.18);' +
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;" +
+    'line-height:1.35;}' +
+    '.row{all:unset;box-sizing:border-box;display:block;width:100%;padding:7px 10px;' +
+    'border-radius:6px;cursor:pointer;text-align:left;color:#1d1d1f;' +
+    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '.row:hover,.row:focus-visible{background:#f5f5f7;}' +
+    '.message{padding:7px 10px;color:#6e6e73;}' +
+    '.unlock{all:unset;box-sizing:border-box;display:block;width:100%;margin-top:2px;' +
+    'padding:7px 10px;border-radius:6px;cursor:pointer;text-align:center;' +
+    'background:#007aff;color:#ffffff;}' +
+    '.unlock:hover,.unlock:focus-visible{background:#0069db;}';
+
+  // The shared scaffolding behind both surfaces: a light-DOM host carrying our marker,
+  // an isolating closed shadow root, and the layout styles marked important so a page
+  // rule cannot hide or move the control. The icon adds a button on top of this; the
+  // panel adds its rows. Neither should carry the other's contents — hence styleText is a
+  // parameter, not a shared constant: each surface installs its own stylesheet.
+  function buildShadowHost(documentRef, markerAttribute, styleText) {
+    const doc = documentRef || document;
+    const host = doc.createElement('div');
+    host.setAttribute(markerAttribute, '');
+    // setProperty(..., 'important') because a page's own `!important` CSS rule (e.g.
+    // [data-mypass-inline-icon]{display:none!important}) would otherwise beat a plain
+    // inline style and could hide or mislocate the control.
+    host.style.setProperty('position', 'absolute', 'important');
+    // z-index one below the banners' 2147483647 so a save banner still wins if they overlap.
+    host.style.setProperty('z-index', '2147483646', 'important');
+    host.style.setProperty('display', 'block', 'important');
+    host.style.setProperty('pointer-events', 'auto', 'important');
+
+    const shadow = host.attachShadow({ mode: 'closed' });
+    const style = doc.createElement('style');
+    style.textContent = typeof styleText === 'string' ? styleText : '';
+    shadow.appendChild(style);
+
+    return { host, shadow };
+  }
+
+  function buildIconHost(documentRef) {
+    const doc = documentRef || document;
+    const { host, shadow } = buildShadowHost(doc, 'data-mypass-inline-icon', ICON_HOST_STYLE);
+    const button = doc.createElement('button');
+    button.setAttribute('type', 'button');
+    button.setAttribute('aria-label', 'Fill from MyPass');
+    button.appendChild(buildKeyGlyph(doc));
+    shadow.appendChild(button);
+    return { host, shadow, button };
+  }
+
+  // Writes to the overlay host only. The page's own input is never given padding, a
+  // wrapper, or any attribute — that is the whole reason for the overlay approach.
+  function positionHostToField(host, rect, viewport) {
+    const scrollX = viewport && typeof viewport.scrollX === 'number' ? viewport.scrollX : 0;
+    const scrollY = viewport && typeof viewport.scrollY === 'number' ? viewport.scrollY : 0;
+    const size = 20;
+    const inset = 6;
+    // important: see the comment in buildIconHost — same page-CSS threat applies here.
+    host.style.setProperty('position', 'absolute', 'important');
+    host.style.setProperty('top', String(rect.top + scrollY + (rect.height - size) / 2) + 'px', 'important');
+    host.style.setProperty('left', String(rect.left + scrollX + rect.width - size - inset) + 'px', 'important');
+  }
+
+  const PANEL_MESSAGES = {
+    empty: 'No entries for this site',
+    locked: 'MyPass is locked',
+    pairingRequired: 'Pair MyPass to use it here',
+    unavailable: 'MyPass is not running',
+  };
+
+  function buildPanelContent(documentRef, routed, callbacks) {
+    const doc = documentRef || document;
+    const root = doc.createElement('div');
+    // Class names, not inline styles: the rules live in PANEL_HOST_STYLE inside the panel's
+    // own closed shadow root, where no page rule can reach them.
+    root.setAttribute('class', 'panel');
+    const rows = [];
+    let unlockButton = null;
+
+    if (routed.panel === 'entries') {
+      for (const entry of routed.entries) {
+        const row = doc.createElement('button');
+        row.setAttribute('type', 'button');
+        row.setAttribute('class', 'row');
+        row.setAttribute('data-entry-id', entry.id);
+        row.textContent = entry.title + (entry.username ? ' — ' + entry.username : '');
+        row.addEventListener('click', (event) => callbacks.onSelect(event, entry.id));
+        root.appendChild(row);
+        rows.push(row);
+      }
+    } else {
+      const message = doc.createElement('div');
+      message.setAttribute('class', 'message');
+      message.textContent = PANEL_MESSAGES[routed.panel] || PANEL_MESSAGES.unavailable;
+      root.appendChild(message);
+
+      if (routed.panel === 'locked') {
+        unlockButton = doc.createElement('button');
+        unlockButton.setAttribute('type', 'button');
+        unlockButton.setAttribute('class', 'unlock');
+        unlockButton.textContent = 'Unlock MyPass';
+        unlockButton.addEventListener('click', (event) => callbacks.onUnlock(event));
+        root.appendChild(unlockButton);
+      }
+    }
+
+    return { root, rows, unlockButton };
+  }
+
   if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
     const state = {
       lastCredentialList: [],
@@ -504,14 +660,24 @@
       attachedIcons.delete(input);
     }
 
+    // Drops hosts and ResizeObservers whose input has left the document. Called from both
+    // syncIconPositions and attachIcons: an SPA that removes fields without adding any and
+    // without a scroll fires no scroll/resize, and a disconnected input fires no
+    // ResizeObserver either, so syncIconPositions alone would never run and the stale hosts
+    // would persist. attachIcons is the MutationObserver's debounced callback, which does
+    // run on exactly that DOM change.
+    function pruneDetachedIcons() {
+      attachedIcons.forEach((record, input) => {
+        if (input.isConnected) return;
+        if (openPanel && openPanel.input === input) closePanel();
+        releaseIcon(input, record);
+      });
+    }
+
     function syncIconPositions() {
       syncScheduled = false;
+      pruneDetachedIcons();
       attachedIcons.forEach((record, input) => {
-        if (!input.isConnected) {
-          if (openPanel && openPanel.input === input) closePanel();
-          releaseIcon(input, record);
-          return;
-        }
         const rect = input.getBoundingClientRect();
         const offscreen = rect.bottom < 0 || rect.top > window.innerHeight || rect.width === 0;
         // important for the same reason as buildIconHost/positionHostToField: a plain
@@ -537,7 +703,7 @@
       // body origin and then jumps into place on the next rAF.
       positionHostToField(host, input.getBoundingClientRect(), window);
       document.body.appendChild(host);
-      attachedIcons.set(input, { host, kind });
+      attachedIcons.set(input, { host });
 
       const resizeObserver = new ResizeObserver(scheduleSync);
       resizeObserver.observe(input);
@@ -546,6 +712,7 @@
     }
 
     function attachIcons() {
+      pruneDetachedIcons();
       for (const field of findFillableFields(document)) {
         attachIconTo(field.input, field.kind);
       }
@@ -577,7 +744,7 @@
         // Handle for manual verification only (RUN.md) — never used as logic. Identity
         // against `host` is what closePanel/isOwnHost actually rely on. The panel is a
         // list, not a button, so it gets the bare scaffolding — no icon glyph inside it.
-        const { host, shadow } = buildShadowHost(document, 'data-mypass-inline-panel');
+        const { host, shadow } = buildShadowHost(document, 'data-mypass-inline-panel', PANEL_HOST_STYLE);
         const content = buildPanelContent(document, routed, {
           onSelect: (event, entryId) => {
             if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
@@ -686,121 +853,6 @@
     observeTotpCandidates(state, attachIcons);
   }
 
-  // Built from DOM nodes rather than an innerHTML string: sites that enforce the
-  // require-trusted-types-for 'script' CSP directive throw on any innerHTML assignment,
-  // and those are exactly the sites this feature most needs to work on.
-  const SVG_NS = 'http://www.w3.org/2000/svg';
-  const KEY_ICON_PATH_D =
-    'M10.5 1a4.5 4.5 0 0 0-4.3 5.9L1 12.1V15h2.9l.6-.6v-1.3h1.3l.9-.9v-1.3h1.3l1.2-1.2A4.5 4.5 0 1 0 10.5 1zm1.4 3.6a1 1 0 1 1 1.4-1.4 1 1 0 0 1-1.4 1.4z';
-
-  function buildKeyGlyph(doc) {
-    const svg = doc.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 16 16');
-    svg.setAttribute('width', '14');
-    svg.setAttribute('height', '14');
-    svg.setAttribute('aria-hidden', 'true');
-    const path = doc.createElementNS(SVG_NS, 'path');
-    path.setAttribute('fill', 'currentColor');
-    path.setAttribute('d', KEY_ICON_PATH_D);
-    svg.appendChild(path);
-    return svg;
-  }
-
-  const ICON_HOST_STYLE =
-    ':host{all:initial}' +
-    'button{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:center;' +
-    'width:20px;height:20px;border-radius:4px;color:#6b7280;opacity:0.65;}' +
-    'button:hover,button:focus-visible{opacity:1;background:rgba(127,127,127,0.15);}';
-
-  // The shared scaffolding behind both surfaces: a light-DOM host carrying our marker,
-  // an isolating closed shadow root, and the layout styles marked important so a page
-  // rule cannot hide or move the control. The icon adds a button on top of this; the
-  // panel adds its rows. Neither should carry the other's contents.
-  function buildShadowHost(documentRef, markerAttribute) {
-    const doc = documentRef || document;
-    const host = doc.createElement('div');
-    // z-index one below the banners' 2147483647 so a save banner still wins if they overlap.
-    host.setAttribute(markerAttribute, '');
-    // setProperty(..., 'important') because a page's own `!important` CSS rule (e.g.
-    // [data-mypass-inline-icon]{display:none!important}) would otherwise beat a plain
-    // inline style and could hide or mislocate the control.
-    host.style.setProperty('position', 'absolute', 'important');
-    host.style.setProperty('z-index', '2147483646', 'important');
-    host.style.setProperty('display', 'block', 'important');
-    host.style.setProperty('pointer-events', 'auto', 'important');
-
-    const shadow = host.attachShadow({ mode: 'closed' });
-    const style = doc.createElement('style');
-    style.textContent = ICON_HOST_STYLE;
-    shadow.appendChild(style);
-
-    return { host, shadow };
-  }
-
-  function buildIconHost(documentRef) {
-    const doc = documentRef || document;
-    const { host, shadow } = buildShadowHost(doc, 'data-mypass-inline-icon');
-    const button = doc.createElement('button');
-    button.setAttribute('type', 'button');
-    button.setAttribute('aria-label', 'Fill from MyPass');
-    button.appendChild(buildKeyGlyph(doc));
-    shadow.appendChild(button);
-    return { host, shadow, button };
-  }
-
-  // Writes to the overlay host only. The page's own input is never given padding, a
-  // wrapper, or any attribute — that is the whole reason for the overlay approach.
-  function positionHostToField(host, rect, viewport) {
-    const scrollX = viewport && typeof viewport.scrollX === 'number' ? viewport.scrollX : 0;
-    const scrollY = viewport && typeof viewport.scrollY === 'number' ? viewport.scrollY : 0;
-    const size = 20;
-    const inset = 6;
-    // important: see the comment in buildIconHost — same page-CSS threat applies here.
-    host.style.setProperty('position', 'absolute', 'important');
-    host.style.setProperty('top', String(rect.top + scrollY + (rect.height - size) / 2) + 'px', 'important');
-    host.style.setProperty('left', String(rect.left + scrollX + rect.width - size - inset) + 'px', 'important');
-  }
-
-  const PANEL_MESSAGES = {
-    empty: 'No entries for this site',
-    locked: 'MyPass is locked',
-    pairingRequired: 'Pair MyPass to use it here',
-    unavailable: 'MyPass is not running',
-  };
-
-  function buildPanelContent(documentRef, routed, callbacks) {
-    const doc = documentRef || document;
-    const root = doc.createElement('div');
-    const rows = [];
-    let unlockButton = null;
-
-    if (routed.panel === 'entries') {
-      for (const entry of routed.entries) {
-        const row = doc.createElement('button');
-        row.setAttribute('type', 'button');
-        row.setAttribute('data-entry-id', entry.id);
-        row.textContent = entry.title + (entry.username ? ' — ' + entry.username : '');
-        row.addEventListener('click', (event) => callbacks.onSelect(event, entry.id));
-        root.appendChild(row);
-        rows.push(row);
-      }
-    } else {
-      const message = doc.createElement('div');
-      message.textContent = PANEL_MESSAGES[routed.panel] || PANEL_MESSAGES.unavailable;
-      root.appendChild(message);
-
-      if (routed.panel === 'locked') {
-        unlockButton = doc.createElement('button');
-        unlockButton.setAttribute('type', 'button');
-        unlockButton.textContent = 'Unlock MyPass';
-        unlockButton.addEventListener('click', (event) => callbacks.onUnlock(event));
-        root.appendChild(unlockButton);
-      }
-    }
-
-    return { root, rows, unlockButton };
-  }
-
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
@@ -812,7 +864,7 @@
       isTrustedActivation, handleIconActivate, handleEntrySelect,
       buildTotpCandidateQueryResponse,
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
-      buildPanelContent,
+      buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
     };
   }
 })();
