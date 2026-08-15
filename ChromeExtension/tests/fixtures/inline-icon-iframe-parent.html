@@ -66,10 +66,19 @@ cd ChromeExtension/tests/fixtures &amp;&amp; python3 -m http.server 8766</pre>
 
   <h2>5. This page's own field</h2>
   <p>Expect: its own icon, filling with entries for <code>localhost</code>.</p>
-  <form>
+  <!-- The submit button is not decoration: it makes this form the CONTROL for the
+       "no banner inside a frame" check. Submitting here (with no saved entry for
+       localhost) must SHOW the save banner. Without that control, a missing banner in
+       frame 1 is indistinguishable from a banner mechanism that is simply dead — a locked
+       vault, an unpaired extension, or an already-saved entry all suppress it too. A form
+       with two inputs and no submit button cannot be submitted by pressing Enter, so
+       without this button the control could not be run at all. -->
+  <form onsubmit="event.preventDefault(); document.getElementById('parent-result').textContent='submitted';">
     <input type="text" name="username" placeholder="Username">
     <input type="password" name="password" placeholder="Password">
+    <button type="submit">Sign in</button>
   </form>
+  <div id="parent-result"></div>
 
   <p><strong>Also expect:</strong> no save-password and no save-2FA banner ever appears
      inside any frame, including after <em>submitting</em> the form inside frame 1 — banners
