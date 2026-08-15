@@ -128,10 +128,24 @@ function buildApplyFillMessage(credentialResponse, requestUrl) {
   };
 }
 
+// The popup branch. The popup has no sender.frameId/documentId of its own, but it is
+// always acting on the top-level document of the active tab — that is the only page it
+// can show entries for — so delivery is scoped to frameId 0.
+//
+// This is NOT cosmetic. Before content_scripts gained `all_frames: true`, only the top
+// frame ran content.js, so only the top frame had an applyFill listener and the 3-arg
+// (unscoped) call was a broadcast with exactly one possible recipient. With all_frames
+// EVERY frame has that listener: a tab-wide broadcast hands the decrypted password to
+// every subframe at once. A subframe sharing the top page's hostname passes content.js's
+// hostnameMatches check (which compares hostname only — not scheme, not port), has no
+// pending fill target, and falls through to findLoginForm()/findOtpField(), writing the
+// password into a field the user never chose. frameId: 0 keeps the credential in the one
+// document the popup was actually acting on.
 function sendApplyFill(tabId, credentialResponse, requestUrl) {
   chrome.tabs.sendMessage(
     tabId,
     buildApplyFillMessage(credentialResponse, requestUrl),
+    { frameId: 0 },
     () => {
       if (chrome.runtime.lastError) {
         console.warn("MyPass: applyFill delivery failed — " + chrome.runtime.lastError.message);
@@ -152,7 +166,8 @@ function sendApplyFill(tabId, credentialResponse, requestUrl) {
 // bug. frameId additionally stops the tab-wide broadcast to other frames in the same
 // tab. Both options require Chrome 106+; manifest.json pins minimum_chrome_version 127,
 // so no version guard is needed. Only used on the sender (content-script) branch — the
-// popup branch has no sender.frameId/documentId and keeps the original 3-arg call.
+// popup branch has no sender.frameId/documentId and scopes to frameId 0 instead, see
+// sendApplyFill above.
 function sendApplyFillToSender(tabId, sender, credentialResponse, requestUrl) {
   chrome.tabs.sendMessage(
     tabId,

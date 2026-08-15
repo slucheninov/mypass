@@ -24,6 +24,25 @@
   // or type=email (3+1).
   const MIN_USERNAME_FIELD_SCORE = 3;
 
+  // Which behaviours may run outside the top frame. Stated once, as data, rather than as
+  // `window.top === window` scattered through the file: the policy is then testable without
+  // a DOM, and adding a behaviour forces a decision about frames instead of inheriting one.
+  // Unknown names are NOT enabled — a banner added later without a policy entry must not
+  // quietly start rendering inside every ad frame on the web.
+  const FRAME_FEATURE_POLICY = {
+    inlineIcon: 'allFrames',
+    saveBanner: 'topOnly',
+    totpBanner: 'topOnly',
+    totpScan: 'topOnly',
+    totpCandidateQuery: 'topOnly',
+  };
+
+  function isFeatureEnabledInFrame(feature, isTopFrame) {
+    const policy = FRAME_FEATURE_POLICY[feature];
+    if (!policy) return false;
+    return policy === 'allFrames' || isTopFrame === true;
+  }
+
   // Text of the <label> associated with `input`, lowercased, or '' if none is found.
   // Tries input.closest('label') first (wrapped case: <label>Email <input></label>), then
   // falls back to label[for="<id>"] queried against `scope` — the SAME scope the caller
@@ -466,10 +485,10 @@
     saveButton.textContent = 'Save';
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
     saveButton.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
+      sendRuntimeMessage({ type: 'getCredentials', url }, (response) => {
         routeBannerCredentialsResponse(
           response, url, otpauthOrSecret, state, priority,
-          (message) => chrome.runtime.sendMessage(message)
+          (message) => sendRuntimeMessage(message)
         );
       });
       banner.remove();
@@ -490,27 +509,57 @@
     document.body.appendChild(banner);
   }
 
+  // The mutation sweep serves two consumers with OPPOSITE frame rules: attaching icons must
+  // happen in every frame — that is the whole feature — while the TOTP banner is top-frame
+  // work. Built as an injectable factory so a test can prove which half is gated; wiring
+  // these backwards is silent and a DOM-level test cannot see it.
+  function buildMutationSweep(options) {
+    const onAttachIcons = typeof options.onAttachIcons === 'function' ? options.onAttachIcons : () => {};
+    const onScanForBanner = typeof options.onScanForBanner === 'function' ? options.onScanForBanner : () => {};
+    const isTopFrame = options.isTopFrame;
+    return function sweep() {
+      try {
+        onAttachIcons();
+      } catch (error) {
+        console.warn('MyPass: inline icon attach failed — ' + error.message);
+      }
+      if (isFeatureEnabledInFrame('totpBanner', isTopFrame)) {
+        onScanForBanner();
+      }
+    };
+  }
+
   // onMutation defaults to a no-op so this stays callable from tests without a DOM;
   // the browser-only wiring below passes attachIcons so newly-inserted fields get an
-  // icon on the same debounce that re-checks for TOTP candidates.
-  function observeTotpCandidates(state, onMutation) {
+  // icon on the same debounce that re-checks for TOTP candidates. The frame gating itself
+  // lives in buildMutationSweep above, where it can be exercised with spies instead of a DOM.
+  function observeTotpCandidates(state, onMutation, isTopFrame) {
     const notifyMutation = typeof onMutation === 'function' ? onMutation : () => {};
-    let debounceTimer = null;
-    const observer = new MutationObserver(() => {
-      if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        try {
-          notifyMutation();
-        } catch (error) {
-          console.warn('MyPass: inline icon attach failed — ' + error.message);
-        }
+    const sweep = buildMutationSweep({
+      onAttachIcons: notifyMutation,
+      onScanForBanner: () => {
         const detected = detectTotpCandidateWithPriority(document);
         if (shouldShowTotpBanner(detected, state)) {
           showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
         }
-      }, 400);
+      },
+      isTopFrame,
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    // With all_frames: true this now runs in EVERY frame, and not every frame holds an
+    // HTML document. An SVG or XML document is an ordinary iframe target and has no
+    // document.body at all, so MutationObserver.observe(undefined) would throw an
+    // uncaught TypeError there — precisely the "errors on a page full of ad iframes"
+    // failure this feature must not produce. Such a document has no fillable fields and
+    // no banner to show, so there is nothing to watch for: return null rather than throw.
+    // Callers treat the observer as optional.
+    const body = (typeof document !== 'undefined' && document) ? document.body : null;
+    if (!body) return null;
+    let debounceTimer = null;
+    const observer = new MutationObserver(() => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(sweep, 400);
+    });
+    observer.observe(body, { childList: true, subtree: true });
     return observer;
   }
 
@@ -546,7 +595,7 @@
     saveButton.textContent = 'Save';
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
     saveButton.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: 'proposeSaveLogin', url, username, password });
+      sendRuntimeMessage({ type: 'proposeSaveLogin', url, username, password });
       banner.remove();
       state.bannerShown = false;
     });
@@ -821,7 +870,42 @@
     return { root, rows, unlockButton, ringCircles };
   }
 
+  // Set by the browser-only wiring below, once icons/observers/panel actually exist to tear
+  // down. Stays a no-op under node and in the sliver of time before that wiring runs — there
+  // is nothing to release yet in either case.
+  let handleExtensionContextLost = () => {};
+
+  // An unpacked extension reload destroys the context of content scripts already injected
+  // into open tabs, while leaving their DOM on the page. `chrome.runtime.id` is the cheapest
+  // reliable signal: it is undefined once the context is gone, and reading it never throws.
+  // Every message this script sends must be guarded by it, or a stale icon throws
+  // "Extension context invalidated" on click instead of quietly doing nothing.
+  function isExtensionContextAlive(chromeRef) {
+    const ref = chromeRef || (typeof chrome !== 'undefined' ? chrome : null);
+    return !!(ref && ref.runtime && ref.runtime.id);
+  }
+
+  // The single choke point every chrome.runtime.sendMessage call in this file goes through.
+  // When the context is dead the send is skipped — never attempted, never thrown — and
+  // handleExtensionContextLost runs so any injected UI (icons, an open panel, observers, the
+  // ring ticker) is torn down instead of being left on the page looking alive. `chromeRef` is
+  // test-only plumbing, mirroring isExtensionContextAlive above; real call sites omit it and
+  // get the global `chrome`.
+  function sendRuntimeMessage(message, callback, chromeRef) {
+    const ref = chromeRef || (typeof chrome !== 'undefined' ? chrome : null);
+    if (!isExtensionContextAlive(ref)) {
+      handleExtensionContextLost();
+      return;
+    }
+    ref.runtime.sendMessage(message, callback);
+  }
+
   if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
+    // Reference comparison only — reading properties of a cross-origin window.top throws,
+    // comparing the reference does not.
+    const IS_TOP_FRAME = window.top === window;
+    const runsHere = (feature) => isFeatureEnabledInFrame(feature, IS_TOP_FRAME);
+
     const state = {
       lastCredentialList: [],
       bannerShown: false,
@@ -831,7 +915,7 @@
     };
 
     function requestCredentials() {
-      chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
+      sendRuntimeMessage({ type: 'getCredentials', url: location.href }, (response) => {
         // Track lock-state separately from "empty list": a `locked` response
         // also carries no credentials, but is NOT the same as "genuinely no
         // matches for this site" — conflating the two lets the save-banner
@@ -846,6 +930,9 @@
     let openPanel = null;
     let syncScheduled = false;
     let panelRequestId = 0;
+    // The MutationObserver returned by observeTotpCandidates() below, captured so
+    // teardownExtensionContext can disconnect it once the extension context dies.
+    let mutationObserver = null;
     // The field whose panel row was just clicked, so applyFill knows which group to fill
     // instead of guessing the first password field in document order (the bug this fixes).
     // Set unconditionally in onSelect, before handleEntrySelect runs — a rejected untrusted
@@ -916,6 +1003,11 @@
 
     function attachIconTo(input, kind) {
       if (attachedIcons.has(input)) return;
+      // Same reason as observeTotpCandidates: a bodyless document (SVG/XML in an iframe)
+      // has nowhere to mount the host. Such a document cannot contain an <input> either,
+      // so this should be unreachable — but "should be" is not a guarantee worth an
+      // uncaught TypeError in a stranger's ad frame.
+      if (!document.body) return;
       const { host, button } = buildIconHost(document);
       button.addEventListener('click', (event) => {
         handleIconActivate(event, () => togglePanel(input, kind));
@@ -963,6 +1055,19 @@
       openPanel = null;
     }
 
+    // Runs once sendRuntimeMessage detects the extension context is gone (an unpacked
+    // reload orphaned this content script while its DOM stayed on the page). Reuses the
+    // existing release machinery rather than a parallel teardown path: closePanel() already
+    // clears the ring ticker unconditionally, and releaseIcon() is the same function
+    // pruneDetachedIcons uses per-icon. Idempotent — closePanel/releaseIcon/disconnect are
+    // all safe to call again, and a second pass here simply finds nothing left to do.
+    function teardownExtensionContext() {
+      closePanel();
+      Array.from(attachedIcons.entries()).forEach(([input, record]) => releaseIcon(input, record));
+      if (mutationObserver) mutationObserver.disconnect();
+    }
+    handleExtensionContextLost = teardownExtensionContext;
+
     function togglePanel(input, kind) {
       const wasOpenForThisInput = !!(openPanel && openPanel.input === input);
       closePanel();
@@ -973,7 +1078,7 @@
       // Always re-ask rather than trusting state.lastCredentialList: the vault may have
       // been unlocked since page load, and a stale locked panel is the exact failure
       // Stage 3 shipped and had to fix.
-      chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
+      sendRuntimeMessage({ type: 'getCredentials', url: location.href }, (response) => {
         // Superseded by a later open, or cancelled by a close, while we were waiting.
         if (requestId !== panelRequestId) return;
         const routed = chooseInlinePanel(response, kind);
@@ -984,13 +1089,13 @@
         const content = buildPanelContent(document, routed, {
           onSelect: (event, entryId) => {
             setPendingFillTarget(input, kind, Date.now());
-            if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
+            if (handleEntrySelect(event, entryId, location.href, (m) => sendRuntimeMessage(m))) {
               closePanel();
             }
           },
           onUnlock: (event) => {
             if (isTrustedActivation(event)) {
-              chrome.runtime.sendMessage({ type: 'requestUnlock' });
+              sendRuntimeMessage({ type: 'requestUnlock' });
               closePanel();
             }
           },
@@ -1020,7 +1125,10 @@
     function attachSubmitListener(loginForm) {
       if (!loginForm.form) return;
       loginForm.form.addEventListener('submit', () => {
-        if (!state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0) {
+        if (
+          runsHere('saveBanner') &&
+          !state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0
+        ) {
           const username = loginForm.usernameInput ? loginForm.usernameInput.value : '';
           const password = loginForm.passwordInput.value;
           if (password) {
@@ -1032,6 +1140,10 @@
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === 'queryTotpCandidate') {
+        // Only the top frame replies, or the popup sees multiple frames' responses race —
+        // no sendResponse at all here, not a "false" response, so the popup keeps waiting
+        // on whichever frame is actually allowed to answer.
+        if (!runsHere('totpCandidateQuery')) return;
         sendResponse(buildTotpCandidateQueryResponse(document));
         return;
       }
@@ -1117,11 +1229,13 @@
       if (event.key === 'Escape') closePanel();
     }, true);
 
-    const detected = detectTotpCandidateWithPriority(document);
-    if (shouldShowTotpBanner(detected, state)) {
-      showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+    if (runsHere('totpScan')) {
+      const detected = detectTotpCandidateWithPriority(document);
+      if (shouldShowTotpBanner(detected, state)) {
+        showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+      }
     }
-    observeTotpCandidates(state, attachIcons);
+    mutationObserver = observeTotpCandidates(state, attachIcons, IS_TOP_FRAME);
   }
 
   if (typeof module !== 'undefined') {
@@ -1138,6 +1252,8 @@
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
+      FRAME_FEATURE_POLICY, isFeatureEnabledInFrame, buildMutationSweep, observeTotpCandidates,
+      isExtensionContextAlive, sendRuntimeMessage,
     };
   }
 })();

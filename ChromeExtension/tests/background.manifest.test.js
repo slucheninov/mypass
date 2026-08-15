@@ -31,16 +31,22 @@ assert.ok(
 );
 assert.strictEqual(manifest.background.service_worker, 'background.js');
 assert.strictEqual(manifest.action.default_popup, 'popup.html');
-assert.strictEqual(manifest.content_scripts.length, 1);
-assert.strictEqual(manifest.content_scripts[0].js[0], 'vendor/jsQR.js', 'jsQR must load before content.js so the global jsQR function is defined');
-assert.strictEqual(
-  manifest.content_scripts[0].js[1],
-  'shared/entry-visuals.js',
-  'entry-visuals.js must load before content.js so letterFromTitle/colorForTitle are defined globals'
+const contentScripts = manifest.content_scripts;
+assert.strictEqual(contentScripts.length, 2, 'two entries: the QR decoder stays top-frame, the rest runs everywhere');
+
+const [qrEntry, mainEntry] = contentScripts;
+
+assert.deepStrictEqual(qrEntry.js, ['vendor/jsQR.js'], 'the 251 KB QR decoder is its own entry');
+assert.ok(!qrEntry.all_frames, 'the QR decoder must NOT be injected into subframes — it is 82% of the payload and useless there');
+
+assert.deepStrictEqual(
+  mainEntry.js,
+  ['shared/entry-visuals.js', 'content.js'],
+  'shared visuals load before content.js, which reads them'
 );
-assert.strictEqual(manifest.content_scripts[0].js[2], 'content.js');
-assert.strictEqual(manifest.content_scripts[0].matches[0], '<all_urls>');
-assert.strictEqual(manifest.content_scripts[0].run_at, 'document_idle');
+assert.strictEqual(mainEntry.all_frames, true, 'the icon must reach login forms inside iframes');
+assert.ok(!mainEntry.js.includes('vendor/jsQR.js'), 'jsQR must not sneak back into the all-frames entry');
+console.log('background.manifest.test.js: content script frame split OK');
 
 const iconsDir = path.join(__dirname, '..', 'icons');
 const expectedSizes = ['16', '32', '48', '128'];

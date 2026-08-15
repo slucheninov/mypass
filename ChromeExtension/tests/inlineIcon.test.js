@@ -693,3 +693,165 @@ assert.strictEqual(
   'a fresh, connected target within the TTL is usable'
 );
 console.log('inlineIcon.test.js: fill target lifecycle OK');
+
+const { isFeatureEnabledInFrame, FRAME_FEATURE_POLICY } = require('../content.js');
+
+// In the top frame everything runs.
+for (const feature of Object.keys(FRAME_FEATURE_POLICY)) {
+  assert.strictEqual(isFeatureEnabledInFrame(feature, true), true, feature + ' runs in the top frame');
+}
+
+// In a subframe only the inline icon does.
+assert.strictEqual(isFeatureEnabledInFrame('inlineIcon', false), true, 'the icon is the whole point — it runs in subframes');
+assert.strictEqual(isFeatureEnabledInFrame('saveBanner', false), false, 'a password save banner must never render inside a subframe');
+assert.strictEqual(isFeatureEnabledInFrame('totpBanner', false), false, 'a 2FA save banner must never render inside a subframe');
+assert.strictEqual(isFeatureEnabledInFrame('totpScan', false), false, 'the TOTP candidate scan is top-frame work');
+assert.strictEqual(
+  isFeatureEnabledInFrame('totpCandidateQuery', false),
+  false,
+  'only one frame may answer the popup, or responses collide'
+);
+
+// Fail closed: a feature nobody gave a policy to must NOT start running in ad frames.
+assert.strictEqual(
+  isFeatureEnabledInFrame('somethingAddedLater', false),
+  false,
+  'an unknown feature fails closed in subframes rather than silently running everywhere'
+);
+assert.strictEqual(isFeatureEnabledInFrame('somethingAddedLater', true), false, 'an unknown feature is not enabled anywhere');
+console.log('inlineIcon.test.js: frame policy OK');
+
+const { buildMutationSweep } = require('../content.js');
+
+// In a subframe, icons still get attached but the banner scan is skipped entirely.
+{
+  let attachCalls = 0;
+  let scanCalls = 0;
+  const sweep = buildMutationSweep({
+    onAttachIcons: () => { attachCalls += 1; },
+    onScanForBanner: () => { scanCalls += 1; },
+    isTopFrame: false,
+  });
+  sweep();
+  assert.strictEqual(attachCalls, 1, 'attachIcons runs once in a subframe — the icon is the whole point');
+  assert.strictEqual(scanCalls, 0, 'the banner scan must not run in a subframe');
+}
+
+// In the top frame, both halves run.
+{
+  let attachCalls = 0;
+  let scanCalls = 0;
+  const sweep = buildMutationSweep({
+    onAttachIcons: () => { attachCalls += 1; },
+    onScanForBanner: () => { scanCalls += 1; },
+    isTopFrame: true,
+  });
+  sweep();
+  assert.strictEqual(attachCalls, 1, 'attachIcons runs once in the top frame');
+  assert.strictEqual(scanCalls, 1, 'the banner scan runs once in the top frame');
+}
+
+// Ordering: icons are attached before the banner scan runs.
+{
+  const order = [];
+  const sweep = buildMutationSweep({
+    onAttachIcons: () => { order.push('attach'); },
+    onScanForBanner: () => { order.push('scan'); },
+    isTopFrame: true,
+  });
+  sweep();
+  assert.deepStrictEqual(order, ['attach', 'scan'], 'attachIcons must run before the banner scan');
+}
+
+// A throwing attachIcons must not take the banner scan down with it — the try/catch is
+// a deliberate earlier fix in this feature's history, not an accident to regress.
+{
+  let scanCalls = 0;
+  const sweep = buildMutationSweep({
+    onAttachIcons: () => { throw new Error('attach failed'); },
+    onScanForBanner: () => { scanCalls += 1; },
+    isTopFrame: true,
+  });
+  sweep();
+  assert.strictEqual(scanCalls, 1, 'a throwing attachIcons must not prevent the banner scan from running');
+}
+console.log('inlineIcon.test.js: mutation sweep framing OK');
+
+const { observeTotpCandidates } = require('../content.js');
+
+// A frame is not always an HTML document. SVG and XML documents are ordinary iframe
+// targets and have no document.body, so MutationObserver.observe(undefined) throws an
+// uncaught TypeError there — the exact "errors on a page with several ad iframes"
+// failure this feature must not produce, and one that only appears now that content
+// scripts run with all_frames: true.
+{
+  const savedDocument = global.document;
+  const savedObserver = global.MutationObserver;
+  let observeCalls = 0;
+
+  // Mirrors the browser: observe() rejects a non-Node target with a TypeError rather
+  // than quietly ignoring it. Without this the guard could "pass" for the wrong reason.
+  global.MutationObserver = class {
+    constructor(callback) { this.callback = callback; }
+    observe(target) {
+      observeCalls += 1;
+      if (!target) throw new TypeError("Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'.");
+    }
+    disconnect() {}
+  };
+
+  // An SVG/XML document: everything a document normally has, except a body.
+  global.document = { querySelectorAll: () => [], querySelector: () => null };
+  const state = { totpBannerShown: false, totpBannerDismissed: null };
+
+  let result;
+  assert.doesNotThrow(
+    () => { result = observeTotpCandidates(state, () => {}, false); },
+    'observing a document with no body must not throw — SVG/XML frames have no document.body'
+  );
+  assert.strictEqual(result, null, 'a bodyless document yields no observer for callers to hold');
+  assert.strictEqual(observeCalls, 0, 'observe() must not even be attempted without a body');
+
+  // Control: with a body present the observer is still created and still attached to it,
+  // so the guard cannot pass by disabling the feature everywhere.
+  const body = { nodeType: 1 };
+  global.document = { body, querySelectorAll: () => [], querySelector: () => null };
+  const observer = observeTotpCandidates(state, () => {}, false);
+  assert.ok(observer, 'a normal HTML document must still get its observer');
+  assert.strictEqual(observeCalls, 1, 'observe() runs exactly once when a body exists');
+
+  global.document = savedDocument;
+  global.MutationObserver = savedObserver;
+}
+console.log('inlineIcon.test.js: bodyless-frame observer guard OK');
+
+const { isExtensionContextAlive, sendRuntimeMessage } = require('../content.js');
+
+// isExtensionContextAlive: chrome.runtime.id is the live signal. Reading a missing
+// `runtime` (or a missing chrome altogether) must never throw — that is the entire point
+// of this helper existing instead of a bare `chrome.runtime.id` check at each call site.
+assert.strictEqual(isExtensionContextAlive({ runtime: { id: 'abc' } }), true, 'a present runtime.id means the context is alive');
+assert.strictEqual(isExtensionContextAlive({ runtime: {} }), false, 'a runtime with no id means the context is gone');
+assert.strictEqual(isExtensionContextAlive({}), false, 'no runtime at all means the context is gone');
+assert.doesNotThrow(() => isExtensionContextAlive(null), 'a null chromeRef must not throw');
+assert.strictEqual(isExtensionContextAlive(null), false, 'a null chromeRef means the context is gone');
+assert.doesNotThrow(() => isExtensionContextAlive(undefined), 'an undefined chromeRef must not throw');
+assert.strictEqual(isExtensionContextAlive(undefined), false, 'an undefined chromeRef means the context is gone (no global chrome under node)');
+console.log('inlineIcon.test.js: isExtensionContextAlive OK');
+
+// sendRuntimeMessage: the single choke point every chrome.runtime.sendMessage call in
+// content.js goes through. Assert on a recorded call list, not just a boolean, so the test
+// actually proves the send reached (or didn't reach) chrome.runtime.sendMessage.
+{
+  const sentMessages = [];
+  const aliveChrome = { runtime: { id: 'abc', sendMessage: (message, callback) => { sentMessages.push(message); if (callback) callback({ ok: true }); } } };
+  sendRuntimeMessage({ type: 'getCredentials', url: 'https://example.com' }, () => {}, aliveChrome);
+  assert.deepStrictEqual(sentMessages, [{ type: 'getCredentials', url: 'https://example.com' }], 'a live context sends the message through to chrome.runtime.sendMessage');
+}
+{
+  const sentMessages = [];
+  const deadChrome = { runtime: { id: undefined, sendMessage: (message) => { sentMessages.push(message); } } };
+  sendRuntimeMessage({ type: 'getCredentials', url: 'https://example.com' }, () => {}, deadChrome);
+  assert.deepStrictEqual(sentMessages, [], 'a dead context must not reach chrome.runtime.sendMessage at all');
+}
+console.log('inlineIcon.test.js: extension context guard OK');
