@@ -720,3 +720,59 @@ assert.strictEqual(
 );
 assert.strictEqual(isFeatureEnabledInFrame('somethingAddedLater', true), false, 'an unknown feature is not enabled anywhere');
 console.log('inlineIcon.test.js: frame policy OK');
+
+const { buildMutationSweep } = require('../content.js');
+
+// In a subframe, icons still get attached but the banner scan is skipped entirely.
+{
+  let attachCalls = 0;
+  let scanCalls = 0;
+  const sweep = buildMutationSweep({
+    onAttachIcons: () => { attachCalls += 1; },
+    onScanForBanner: () => { scanCalls += 1; },
+    isTopFrame: false,
+  });
+  sweep();
+  assert.strictEqual(attachCalls, 1, 'attachIcons runs once in a subframe — the icon is the whole point');
+  assert.strictEqual(scanCalls, 0, 'the banner scan must not run in a subframe');
+}
+
+// In the top frame, both halves run.
+{
+  let attachCalls = 0;
+  let scanCalls = 0;
+  const sweep = buildMutationSweep({
+    onAttachIcons: () => { attachCalls += 1; },
+    onScanForBanner: () => { scanCalls += 1; },
+    isTopFrame: true,
+  });
+  sweep();
+  assert.strictEqual(attachCalls, 1, 'attachIcons runs once in the top frame');
+  assert.strictEqual(scanCalls, 1, 'the banner scan runs once in the top frame');
+}
+
+// Ordering: icons are attached before the banner scan runs.
+{
+  const order = [];
+  const sweep = buildMutationSweep({
+    onAttachIcons: () => { order.push('attach'); },
+    onScanForBanner: () => { order.push('scan'); },
+    isTopFrame: true,
+  });
+  sweep();
+  assert.deepStrictEqual(order, ['attach', 'scan'], 'attachIcons must run before the banner scan');
+}
+
+// A throwing attachIcons must not take the banner scan down with it — the try/catch is
+// a deliberate earlier fix in this feature's history, not an accident to regress.
+{
+  let scanCalls = 0;
+  const sweep = buildMutationSweep({
+    onAttachIcons: () => { throw new Error('attach failed'); },
+    onScanForBanner: () => { scanCalls += 1; },
+    isTopFrame: true,
+  });
+  sweep();
+  assert.strictEqual(scanCalls, 1, 'a throwing attachIcons must not prevent the banner scan from running');
+}
+console.log('inlineIcon.test.js: mutation sweep framing OK');

@@ -509,29 +509,46 @@
     document.body.appendChild(banner);
   }
 
+  // The mutation sweep serves two consumers with OPPOSITE frame rules: attaching icons must
+  // happen in every frame — that is the whole feature — while the TOTP banner is top-frame
+  // work. Built as an injectable factory so a test can prove which half is gated; wiring
+  // these backwards is silent and a DOM-level test cannot see it.
+  function buildMutationSweep(options) {
+    const onAttachIcons = typeof options.onAttachIcons === 'function' ? options.onAttachIcons : () => {};
+    const onScanForBanner = typeof options.onScanForBanner === 'function' ? options.onScanForBanner : () => {};
+    const isTopFrame = options.isTopFrame;
+    return function sweep() {
+      try {
+        onAttachIcons();
+      } catch (error) {
+        console.warn('MyPass: inline icon attach failed — ' + error.message);
+      }
+      if (isFeatureEnabledInFrame('totpBanner', isTopFrame)) {
+        onScanForBanner();
+      }
+    };
+  }
+
   // onMutation defaults to a no-op so this stays callable from tests without a DOM;
   // the browser-only wiring below passes attachIcons so newly-inserted fields get an
-  // icon on the same debounce that re-checks for TOTP candidates. isTopFrame gates ONLY
-  // the banner half of the callback below — attachIcons (via notifyMutation) must keep
-  // running in every frame, since the inline icon is the whole point of this feature.
+  // icon on the same debounce that re-checks for TOTP candidates. The frame gating itself
+  // lives in buildMutationSweep above, where it can be exercised with spies instead of a DOM.
   function observeTotpCandidates(state, onMutation, isTopFrame) {
     const notifyMutation = typeof onMutation === 'function' ? onMutation : () => {};
+    const sweep = buildMutationSweep({
+      onAttachIcons: notifyMutation,
+      onScanForBanner: () => {
+        const detected = detectTotpCandidateWithPriority(document);
+        if (shouldShowTotpBanner(detected, state)) {
+          showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+        }
+      },
+      isTopFrame,
+    });
     let debounceTimer = null;
     const observer = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
-      debounceTimer = setTimeout(() => {
-        try {
-          notifyMutation();
-        } catch (error) {
-          console.warn('MyPass: inline icon attach failed — ' + error.message);
-        }
-        if (isFeatureEnabledInFrame('totpBanner', isTopFrame)) {
-          const detected = detectTotpCandidateWithPriority(document);
-          if (shouldShowTotpBanner(detected, state)) {
-            showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
-          }
-        }
-      }, 400);
+      debounceTimer = setTimeout(sweep, 400);
     });
     observer.observe(document.body, { childList: true, subtree: true });
     return observer;
@@ -1175,7 +1192,7 @@
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
-      FRAME_FEATURE_POLICY, isFeatureEnabledInFrame,
+      FRAME_FEATURE_POLICY, isFeatureEnabledInFrame, buildMutationSweep,
     };
   }
 })();
