@@ -1,9 +1,28 @@
 (function () {
+  // letterFromTitle/colorForTitle decide an entry's avatar letter and colour — single-sourced
+  // in shared/entry-visuals.js (see its header comment) so the popup and this panel can never
+  // disagree about the same entry's colour. manifest.json loads entry-visuals.js as a
+  // preceding <script>, so in a page these are already globals by the time this IIFE runs;
+  // node has no such script tag (tests `require('../content.js')` directly), so require them
+  // there instead — the same three-world seam entry-visuals.js itself is built for.
+  const entryVisuals = typeof require === 'function'
+    ? require('./shared/entry-visuals.js')
+    : { letterFromTitle: window.letterFromTitle, colorForTitle: window.colorForTitle };
+  const letterFromTitle = entryVisuals.letterFromTitle;
+  const colorForTitle = entryVisuals.colorForTitle;
+
   // Minimum OTP field score threshold for selection. The weakest intentional OTP signal
   // (inputmode=numeric + maxlength ∈ [6,7,8]) scores 4. A bare type=text input scores 1
   // and must not be selected on a login-only page. Score >= 4 ensures only deliberate OTP
   // candidates are picked.
   const MIN_OTP_FIELD_SCORE = 4;
+
+  // Minimum username score, applied ONLY on pages with no password field (see
+  // findFillableFields). A bare `<input type="text">` scores 1, so without a floor every
+  // search box and comment field on the web would get a key icon. 3 is the weakest
+  // intentional signal: `name`/`id` matching user|login|email (2) plus the type bonus (1),
+  // or type=email (3+1).
+  const MIN_USERNAME_FIELD_SCORE = 3;
 
   function scoreUsernameLikeness(input) {
     let score = 0;
@@ -85,16 +104,92 @@
     return bestScore >= MIN_OTP_FIELD_SCORE ? best : null;
   }
 
+  function isFieldVisible(input) {
+    if (!input) return false;
+    if (input.offsetParent === null) return false;
+    const disabled = input.getAttribute('disabled') !== null || input.disabled === true;
+    const readOnly = input.getAttribute('readonly') !== null || input.readOnly === true;
+    return !disabled && !readOnly;
+  }
+
+  // Returns every field the inline icon may attach to. Deliberately looser than the old
+  // findLoginForm: a password field no longer has to sit inside a <form>, and a username
+  // field is emitted even when no password field exists, so identifier-first login screens
+  // (username on step 1, password on step 2) are covered.
+  function findFillableFields(root) {
+    const scope = root || document;
+    const fields = [];
+
+    const passwords = Array.from(scope.querySelectorAll('input[type="password"]')).filter(isFieldVisible);
+    for (const password of passwords) {
+      fields.push({ input: password, kind: 'password' });
+    }
+
+    const formScope = (passwords[0] && passwords[0].closest && passwords[0].closest('form')) || scope;
+    const usernameCandidates = Array.from(
+      formScope.querySelectorAll('input[type="text"], input[type="email"], input[autocomplete*="username"]')
+    ).filter(isFieldVisible);
+    const username = findBestUsernameInput(usernameCandidates);
+    // The score floor applies ONLY when there is no password field on the page. When a
+    // password field IS present, its presence is itself strong evidence that the nearby text
+    // input is the username, so today's floor-free behaviour is kept — otherwise a bare
+    // `<input type="text">` login form would silently lose username autofill, which would be
+    // a regression of applyFill. Without a password field there is no such evidence, and the
+    // identifier-first relaxation above would otherwise put an icon on every search box.
+    if (username && (passwords.length > 0 || scoreUsernameLikeness(username) >= MIN_USERNAME_FIELD_SCORE)) {
+      fields.push({ input: username, kind: 'username' });
+    }
+
+    // An OTP input is type=text or type=tel, so it also satisfies the username selector
+    // above and can win findBestUsernameInput on a 2FA-only page. Classify it as otp and
+    // drop the duplicate rather than letting one element carry two icons.
+    const otp = findOtpField(scope);
+    if (otp) {
+      const duplicate = fields.findIndex((field) => field.input === otp);
+      if (duplicate >= 0) fields.splice(duplicate, 1);
+      fields.push({ input: otp, kind: 'otp' });
+    }
+
+    return fields;
+  }
+
+  // Kept for applyFill's existing contract. Rebuilt on findFillableFields so the two
+  // cannot drift apart. `form` is now nullable: a password field outside any <form> used
+  // to make this return null, which meant applyFill silently did nothing on such pages.
   function findLoginForm() {
-    const passwordInput = document.querySelector('input[type="password"]');
-    if (!passwordInput) return null;
-    const form = passwordInput.closest('form');
-    if (!form) return null;
-    const candidates = Array.from(
-      form.querySelectorAll('input[type="text"], input[type="email"], input[autocomplete*="username"]')
-    );
-    const usernameInput = findBestUsernameInput(candidates);
-    return { form, passwordInput, usernameInput };
+    const fields = findFillableFields(document);
+    const passwordField = fields.find((field) => field.kind === 'password');
+    if (!passwordField) return null;
+    const usernameField = fields.find((field) => field.kind === 'username');
+    const form = passwordField.input.closest ? passwordField.input.closest('form') : null;
+    return {
+      form,
+      passwordInput: passwordField.input,
+      usernameInput: usernameField ? usernameField.input : null,
+    };
+  }
+
+  // Fills only the field whose icon was clicked — a deliberate product decision. Clicking the
+  // password icon must not touch the username, and vice versa. The popup's fill path is
+  // unaffected: it has no clicked field and still fills username and password together via
+  // findLoginForm.
+  function resolveFillTargets(target) {
+    if (!target || !target.input) {
+      return { usernameInput: null, passwordInput: null, otpInput: null };
+    }
+    return {
+      usernameInput: target.kind === 'username' ? target.input : null,
+      passwordInput: target.kind === 'password' ? target.input : null,
+      otpInput: target.kind === 'otp' ? target.input : null,
+    };
+  }
+
+  // Exported for tests: the wiring that consumes this lives in the browser-only block and is
+  // unreachable from node, which is exactly where the stale-target bug hid.
+  function isFillTargetUsable(target, now, ttlMs) {
+    if (!target || !target.input) return false;
+    if (target.input.isConnected !== true) return false;
+    return (now - target.at) <= ttlMs;
   }
 
   const OTPAUTH_REGEX = /otpauth:\/\/totp\/[^\s"'<>]+/i;
@@ -225,6 +320,45 @@
     return 'unknown';
   }
 
+  // Panel state is a function of the connection state and the field kind, never of which
+  // element was clicked. Extracted as a pure function for the same reason Stage 6 extracted
+  // choosePasskeyPanel: routing is the part worth testing, and a DOM makes it untestable.
+  function chooseInlinePanel(response, fieldKind) {
+    const kind = classifyGetCredentialsResponse(response);
+    if (kind === 'locked') return { panel: 'locked', entries: [] };
+    if (kind === 'pairingRequired') return { panel: 'pairingRequired', entries: [] };
+    if (kind !== 'credentialList') return { panel: 'unavailable', entries: [] };
+
+    const all = response.credentials || [];
+    const entries = fieldKind === 'otp' ? all.filter((entry) => entry.hasTotp) : all;
+    return entries.length === 0 ? { panel: 'empty', entries: [] } : { panel: 'entries', entries };
+  }
+
+  // The inline icon is a control the PAGE can see and dispatch events at, unlike the popup.
+  // Every activation path therefore requires a user-generated event. This is not defence in
+  // depth against a spoofed tab: relayFillToActiveTab in background.js targets
+  // sender.tab.id/sender.frameId/sender.documentId, i.e. exactly the document that sent the
+  // request, so it needs no help from this gate to find the right tab. The gate exists
+  // because the inline panel is injected into a page the attacker may control: without it,
+  // page script could synthesize a click and trigger a fill/reveal the user never asked for.
+  function isTrustedActivation(event) {
+    return !!(event && event.isTrusted === true);
+  }
+
+  function handleIconActivate(event, requestPanel) {
+    if (!isTrustedActivation(event)) return false;
+    requestPanel();
+    return true;
+  }
+
+  // Sends the identical message popup.js:617 sends. The content script never learns the
+  // secret: background.js resolves it natively and delivers it straight back as applyFill.
+  function handleEntrySelect(event, entryId, url, sendMessage) {
+    if (!isTrustedActivation(event)) return false;
+    sendMessage({ type: 'fillCredential', id: entryId, url });
+    return true;
+  }
+
   // Gates the Save-banner's proposeSaveTotp send on the actual getCredentials response
   // instead of treating locked/pairingRequired/error as "zero matches" (which used to fire
   // a blind proposal even while locked or unpaired). Same trust model as the password-save
@@ -314,11 +448,20 @@
     document.body.appendChild(banner);
   }
 
-  function observeTotpCandidates(state) {
+  // onMutation defaults to a no-op so this stays callable from tests without a DOM;
+  // the browser-only wiring below passes attachIcons so newly-inserted fields get an
+  // icon on the same debounce that re-checks for TOTP candidates.
+  function observeTotpCandidates(state, onMutation) {
+    const notifyMutation = typeof onMutation === 'function' ? onMutation : () => {};
     let debounceTimer = null;
     const observer = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(() => {
+        try {
+          notifyMutation();
+        } catch (error) {
+          console.warn('MyPass: inline icon attach failed — ' + error.message);
+        }
         const detected = detectTotpCandidateWithPriority(document);
         if (shouldShowTotpBanner(detected, state)) {
           showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
@@ -379,6 +522,248 @@
     document.body.appendChild(banner);
   }
 
+  // Built from DOM nodes rather than an innerHTML string: sites that enforce the
+  // require-trusted-types-for 'script' CSP directive throw on any innerHTML assignment,
+  // and those are exactly the sites this feature most needs to work on.
+  const SVG_NS = 'http://www.w3.org/2000/svg';
+  const KEY_ICON_PATH_D =
+    'M10.5 1a4.5 4.5 0 0 0-4.3 5.9L1 12.1V15h2.9l.6-.6v-1.3h1.3l.9-.9v-1.3h1.3l1.2-1.2A4.5 4.5 0 1 0 10.5 1zm1.4 3.6a1 1 0 1 1 1.4-1.4 1 1 0 0 1-1.4 1.4z';
+
+  function buildKeyGlyph(doc) {
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 16 16');
+    svg.setAttribute('width', '14');
+    svg.setAttribute('height', '14');
+    svg.setAttribute('aria-hidden', 'true');
+    const path = doc.createElementNS(SVG_NS, 'path');
+    path.setAttribute('fill', 'currentColor');
+    path.setAttribute('d', KEY_ICON_PATH_D);
+    svg.appendChild(path);
+    return svg;
+  }
+
+  const ICON_HOST_STYLE =
+    ':host{all:initial}' +
+    'button{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:center;' +
+    'width:20px;height:20px;border-radius:4px;color:#6b7280;opacity:0.65;}' +
+    'button:hover,button:focus-visible{opacity:1;background:rgba(127,127,127,0.15);}';
+
+  // The panel is a list surface, not a 20x20 glyph button, so it needs its own stylesheet:
+  // handing it ICON_HOST_STYLE rendered every row as a 20x20 box with overflowing text on a
+  // fully transparent host. Deliberately the same restrained language as popup.html — system
+  // font, #fff on a #d2d2d7 hairline, 8px radius, #f5f5f7 hover, #007aff for the one action.
+  const PANEL_HOST_STYLE =
+    ':host{all:initial}' +
+    '.panel{box-sizing:border-box;min-width:220px;max-width:320px;padding:4px;' +
+    'background:#ffffff;color:#1d1d1f;border:1px solid #d2d2d7;border-radius:8px;' +
+    'box-shadow:0 4px 16px rgba(0,0,0,0.18);' +
+    "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;" +
+    'line-height:1.35;}' +
+    '.row{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;' +
+    'width:100%;padding:7px 10px;border-radius:6px;cursor:pointer;text-align:left;' +
+    'color:#1d1d1f;overflow:hidden;}' +
+    '.row:hover,.row:focus-visible{background:#f5f5f7;}' +
+    '.avatar{flex-shrink:0;width:28px;height:28px;border-radius:7px;' +
+    'display:flex;align-items:center;justify-content:center;}' +
+    '.avatar span{color:#ffffff;font-size:13px;font-weight:600;line-height:1;}' +
+    '.entry-text{min-width:0;flex:1 1 auto;overflow:hidden;}' +
+    '.entry-title{font-size:13px;font-weight:600;line-height:1.3;' +
+    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '.entry-username{font-size:11px;color:#6e6e73;line-height:1.25;margin-top:1px;' +
+    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '.ring{flex-shrink:0;width:18px;height:18px;}' +
+    '.ring svg{display:block;width:100%;height:100%;}' +
+    '.message{padding:7px 10px;color:#6e6e73;}' +
+    '.unlock{all:unset;box-sizing:border-box;display:block;width:100%;margin-top:2px;' +
+    'padding:7px 10px;border-radius:6px;cursor:pointer;text-align:center;' +
+    'background:#007aff;color:#ffffff;}' +
+    '.unlock:hover,.unlock:focus-visible{background:#0069db;}';
+
+  // The shared scaffolding behind both surfaces: a light-DOM host carrying our marker,
+  // an isolating closed shadow root, and the layout styles marked important so a page
+  // rule cannot hide or move the control. The icon adds a button on top of this; the
+  // panel adds its rows. Neither should carry the other's contents — hence styleText is a
+  // parameter, not a shared constant: each surface installs its own stylesheet.
+  function buildShadowHost(documentRef, markerAttribute, styleText) {
+    const doc = documentRef || document;
+    const host = doc.createElement('div');
+    host.setAttribute(markerAttribute, '');
+    // setProperty(..., 'important') because a page's own `!important` CSS rule (e.g.
+    // [data-mypass-inline-icon]{display:none!important}) would otherwise beat a plain
+    // inline style and could hide or mislocate the control.
+    host.style.setProperty('position', 'absolute', 'important');
+    // z-index one below the banners' 2147483647 so a save banner still wins if they overlap.
+    host.style.setProperty('z-index', '2147483646', 'important');
+    host.style.setProperty('display', 'block', 'important');
+    host.style.setProperty('pointer-events', 'auto', 'important');
+
+    const shadow = host.attachShadow({ mode: 'closed' });
+    const style = doc.createElement('style');
+    style.textContent = typeof styleText === 'string' ? styleText : '';
+    shadow.appendChild(style);
+
+    return { host, shadow };
+  }
+
+  function buildIconHost(documentRef) {
+    const doc = documentRef || document;
+    const { host, shadow } = buildShadowHost(doc, 'data-mypass-inline-icon', ICON_HOST_STYLE);
+    const button = doc.createElement('button');
+    button.setAttribute('type', 'button');
+    button.setAttribute('aria-label', 'Fill from MyPass');
+    button.appendChild(buildKeyGlyph(doc));
+    shadow.appendChild(button);
+    return { host, shadow, button };
+  }
+
+  // The panel's counterpart to buildIconHost. It exists so the marker/stylesheet pairing is
+  // decided in one exported place rather than at the call site inside the browser-only
+  // block, which no test can reach — that is exactly how the panel ended up wearing the
+  // icon's 20x20 button stylesheet.
+  function buildPanelHost(documentRef) {
+    const doc = documentRef || document;
+    return buildShadowHost(doc, 'data-mypass-inline-panel', PANEL_HOST_STYLE);
+  }
+
+  // Writes to the overlay host only. The page's own input is never given padding, a
+  // wrapper, or any attribute — that is the whole reason for the overlay approach.
+  function positionHostToField(host, rect, viewport) {
+    const scrollX = viewport && typeof viewport.scrollX === 'number' ? viewport.scrollX : 0;
+    const scrollY = viewport && typeof viewport.scrollY === 'number' ? viewport.scrollY : 0;
+    const size = 20;
+    const inset = 6;
+    // important: see the comment in buildIconHost — same page-CSS threat applies here.
+    host.style.setProperty('position', 'absolute', 'important');
+    host.style.setProperty('top', String(rect.top + scrollY + (rect.height - size) / 2) + 'px', 'important');
+    host.style.setProperty('left', String(rect.left + scrollX + rect.width - size - inset) + 'px', 'important');
+  }
+
+  const PANEL_MESSAGES = {
+    empty: 'No entries for this site',
+    locked: 'MyPass is locked',
+    pairingRequired: 'Pair MyPass to use it here',
+    unavailable: 'MyPass is not running',
+  };
+
+  // Countdown ring geometry for the row's TOTP indicator. Deliberately smaller than the
+  // popup's own 32px ring (this is a compact list row), but the same visual language: a green
+  // stroke that empties as the current 30s TOTP period runs out.
+  const PANEL_RING_PERIOD_SECONDS = 30;
+  const PANEL_RING_RADIUS = 8;
+  const PANEL_RING_CIRCUMFERENCE = 2 * Math.PI * PANEL_RING_RADIUS;
+
+  // Wall-clock only — this NEVER reads the entry's secret. It is derived purely from
+  // Date.now(), the same clock every TOTP authenticator already relies on, so it can convey
+  // "the code is about to rotate" without ever knowing what the code is.
+  function panelRingFraction(nowMs) {
+    return 1 - ((nowMs / 1000) % PANEL_RING_PERIOD_SECONDS) / PANEL_RING_PERIOD_SECONDS;
+  }
+
+  // Built entirely from createElementNS + setAttribute, never innerHTML — the same
+  // Trusted-Types reason as buildKeyGlyph above; this feature was already bitten by exactly
+  // that on a require-trusted-types-for 'script' site. The ring is an INDICATOR ONLY: it
+  // carries no text, no title/code, and — critically — no click listener of its own. It must
+  // never call getTotp or otherwise reveal/copy the code; the panel's whole trust model is
+  // that no secret is ever held here. Clicks still reach the row because the ring is nested
+  // inside the row <button> and clicks bubble — the ring itself just never listens.
+  function buildPanelRing(doc) {
+    const wrapper = doc.createElement('div');
+    wrapper.setAttribute('class', 'ring');
+
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 20 20');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+
+    const circle = doc.createElementNS(SVG_NS, 'circle');
+    circle.setAttribute('cx', '10');
+    circle.setAttribute('cy', '10');
+    circle.setAttribute('r', String(PANEL_RING_RADIUS));
+    circle.setAttribute('fill', 'none');
+    circle.setAttribute('stroke', '#34c759');
+    circle.setAttribute('stroke-width', '2');
+    circle.setAttribute('stroke-linecap', 'round');
+    circle.setAttribute('transform', 'rotate(-90 10 10)');
+    circle.setAttribute('stroke-dasharray', String(PANEL_RING_CIRCUMFERENCE));
+    const fraction = panelRingFraction(Date.now());
+    circle.style.strokeDashoffset = String(PANEL_RING_CIRCUMFERENCE * (1 - fraction));
+
+    svg.appendChild(circle);
+    wrapper.appendChild(svg);
+    return { wrapper, circle };
+  }
+
+  function buildPanelContent(documentRef, routed, callbacks) {
+    const doc = documentRef || document;
+    const root = doc.createElement('div');
+    // Class names, not inline styles: the rules live in PANEL_HOST_STYLE inside the panel's
+    // own closed shadow root, where no page rule can reach them.
+    root.setAttribute('class', 'panel');
+    const rows = [];
+    // Every ring's <circle> element, so the caller (togglePanel) can animate them on a single
+    // shared ticker while the panel is open — buildPanelContent itself stays a pure, timer-free
+    // function so it remains directly callable from node tests.
+    const ringCircles = [];
+    let unlockButton = null;
+
+    if (routed.panel === 'entries') {
+      for (const entry of routed.entries) {
+        const row = doc.createElement('button');
+        row.setAttribute('type', 'button');
+        row.setAttribute('class', 'row');
+        row.setAttribute('data-entry-id', entry.id);
+
+        const avatar = doc.createElement('div');
+        avatar.setAttribute('class', 'avatar');
+        avatar.style.backgroundColor = colorForTitle(entry.title);
+        const avatarLetter = doc.createElement('span');
+        avatarLetter.textContent = letterFromTitle(entry.title);
+        avatar.appendChild(avatarLetter);
+        row.appendChild(avatar);
+
+        const textCol = doc.createElement('div');
+        textCol.setAttribute('class', 'entry-text');
+        const titleEl = doc.createElement('div');
+        titleEl.setAttribute('class', 'entry-title');
+        titleEl.textContent = entry.title;
+        textCol.appendChild(titleEl);
+        if (entry.username) {
+          const usernameEl = doc.createElement('div');
+          usernameEl.setAttribute('class', 'entry-username');
+          usernameEl.textContent = entry.username;
+          textCol.appendChild(usernameEl);
+        }
+        row.appendChild(textCol);
+
+        if (entry.hasTotp) {
+          const ring = buildPanelRing(doc);
+          row.appendChild(ring.wrapper);
+          ringCircles.push(ring.circle);
+        }
+
+        row.addEventListener('click', (event) => callbacks.onSelect(event, entry.id));
+        root.appendChild(row);
+        rows.push(row);
+      }
+    } else {
+      const message = doc.createElement('div');
+      message.setAttribute('class', 'message');
+      message.textContent = PANEL_MESSAGES[routed.panel] || PANEL_MESSAGES.unavailable;
+      root.appendChild(message);
+
+      if (routed.panel === 'locked') {
+        unlockButton = doc.createElement('button');
+        unlockButton.setAttribute('type', 'button');
+        unlockButton.setAttribute('class', 'unlock');
+        unlockButton.textContent = 'Unlock MyPass';
+        unlockButton.addEventListener('click', (event) => callbacks.onUnlock(event));
+        root.appendChild(unlockButton);
+      }
+    }
+
+    return { root, rows, unlockButton, ringCircles };
+  }
+
   if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
     const state = {
       lastCredentialList: [],
@@ -400,7 +785,183 @@
       });
     }
 
+    const attachedIcons = new Map();
+    let openPanel = null;
+    let syncScheduled = false;
+    let panelRequestId = 0;
+    // The field whose panel row was just clicked, so applyFill knows which group to fill
+    // instead of guessing the first password field in document order (the bug this fixes).
+    // Set unconditionally in onSelect, before handleEntrySelect runs — a rejected untrusted
+    // activation simply never produces an applyFill message, so a stale value here is inert.
+    //
+    // A fill request that is never answered (locked vault, native error, origin mismatch)
+    // would otherwise leave the target set forever, and the next unrelated fill — including
+    // one started from the popup, which has no clicked field — would inherit it. The target
+    // is therefore consumed on first use and expires on its own. A native round trip is well
+    // under a second; 5s is generous.
+    //
+    // Nothing ties a target to its own response, so two fills issued back-to-back have their
+    // first response consume whatever target is current at that moment. That is deliberate,
+    // not overlooked: consume-once plus the TTL narrows the failure mode to "the most
+    // recently clicked field wins," which is the right behaviour for a user who just clicked
+    // something newer.
+    const FILL_TARGET_TTL_MS = 5000;
+    let pendingFillTarget = null;
+
+    function setPendingFillTarget(input, kind, now) {
+      pendingFillTarget = { input, kind, at: now };
+    }
+
+    function takePendingFillTarget(now) {
+      const target = pendingFillTarget;
+      pendingFillTarget = null;
+      return isFillTargetUsable(target, now, FILL_TARGET_TTL_MS) ? target : null;
+    }
+
+    function releaseIcon(input, record) {
+      if (record.resizeObserver) record.resizeObserver.disconnect();
+      record.host.remove();
+      attachedIcons.delete(input);
+    }
+
+    // Drops hosts and ResizeObservers whose input has left the document. Called from both
+    // syncIconPositions and attachIcons: an SPA that removes fields without adding any and
+    // without a scroll fires no scroll/resize, and a disconnected input fires no
+    // ResizeObserver either, so syncIconPositions alone would never run and the stale hosts
+    // would persist. attachIcons is the MutationObserver's debounced callback, which does
+    // run on exactly that DOM change.
+    function pruneDetachedIcons() {
+      attachedIcons.forEach((record, input) => {
+        if (input.isConnected) return;
+        if (openPanel && openPanel.input === input) closePanel();
+        releaseIcon(input, record);
+      });
+    }
+
+    function syncIconPositions() {
+      syncScheduled = false;
+      pruneDetachedIcons();
+      attachedIcons.forEach((record, input) => {
+        const rect = input.getBoundingClientRect();
+        const offscreen = rect.bottom < 0 || rect.top > window.innerHeight || rect.width === 0;
+        // important for the same reason as buildIconHost/positionHostToField: a plain
+        // assignment here would silently drop the !important flag those set initially.
+        record.host.style.setProperty('display', offscreen ? 'none' : 'block', 'important');
+        if (!offscreen) positionHostToField(record.host, rect, window);
+      });
+    }
+
+    function scheduleSync() {
+      if (syncScheduled) return;
+      syncScheduled = true;
+      window.requestAnimationFrame(syncIconPositions);
+    }
+
+    function attachIconTo(input, kind) {
+      if (attachedIcons.has(input)) return;
+      const { host, button } = buildIconHost(document);
+      button.addEventListener('click', (event) => {
+        handleIconActivate(event, () => togglePanel(input, kind));
+      });
+      // Position synchronously before the first paint so the icon never flashes at the
+      // body origin and then jumps into place on the next rAF.
+      positionHostToField(host, input.getBoundingClientRect(), window);
+      document.body.appendChild(host);
+      attachedIcons.set(input, { host });
+
+      const resizeObserver = new ResizeObserver(scheduleSync);
+      resizeObserver.observe(input);
+      attachedIcons.get(input).resizeObserver = resizeObserver;
+      scheduleSync();
+    }
+
+    function attachIcons() {
+      pruneDetachedIcons();
+      for (const field of findFillableFields(document)) {
+        attachIconTo(field.input, field.kind);
+      }
+    }
+
+    // The single ticker driving every ring in the currently-open panel. Kept outside
+    // openPanel so closePanel can always reach it and clear it unconditionally — panels open
+    // and close constantly, and an interval left running after close is a leak.
+    let panelRingTimer = null;
+
+    function stopPanelRingAnimation() {
+      if (panelRingTimer === null) return;
+      clearInterval(panelRingTimer);
+      panelRingTimer = null;
+    }
+
+    function closePanel() {
+      // Bumping here is what makes Escape / outside-click cancel an in-flight request,
+      // not just remove an already-built panel.
+      panelRequestId += 1;
+      // Wired in unconditionally (not inside the `if (!openPanel)` branch below) so the ring
+      // ticker can never outlive the panel it belonged to, no matter which path led here.
+      // stopPanelRingAnimation is itself a no-op once already stopped, so this is idempotent.
+      stopPanelRingAnimation();
+      if (!openPanel) return;
+      openPanel.host.remove();
+      openPanel = null;
+    }
+
+    function togglePanel(input, kind) {
+      const wasOpenForThisInput = !!(openPanel && openPanel.input === input);
+      closePanel();
+      if (wasOpenForThisInput) return;
+
+      panelRequestId += 1;
+      const requestId = panelRequestId;
+      // Always re-ask rather than trusting state.lastCredentialList: the vault may have
+      // been unlocked since page load, and a stale locked panel is the exact failure
+      // Stage 3 shipped and had to fix.
+      chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
+        // Superseded by a later open, or cancelled by a close, while we were waiting.
+        if (requestId !== panelRequestId) return;
+        const routed = chooseInlinePanel(response, kind);
+        // Handle for manual verification only (RUN.md) — never used as logic. Identity
+        // against `host` is what closePanel/isOwnHost actually rely on. The panel is a
+        // list, not a button, so it gets the bare scaffolding — no icon glyph inside it.
+        const { host, shadow } = buildPanelHost(document);
+        const content = buildPanelContent(document, routed, {
+          onSelect: (event, entryId) => {
+            setPendingFillTarget(input, kind, Date.now());
+            if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
+              closePanel();
+            }
+          },
+          onUnlock: (event) => {
+            if (isTrustedActivation(event)) {
+              chrome.runtime.sendMessage({ type: 'requestUnlock' });
+              closePanel();
+            }
+          },
+        });
+        shadow.appendChild(content.root);
+        const rect = input.getBoundingClientRect();
+        host.style.setProperty('position', 'absolute', 'important');
+        host.style.setProperty('top', String(rect.bottom + window.scrollY + 4) + 'px', 'important');
+        host.style.setProperty('left', String(rect.left + window.scrollX) + 'px', 'important');
+        document.body.appendChild(host);
+        openPanel = { host, input };
+
+        // Animate the countdown ring(s) on a single shared 1Hz ticker while the panel stays
+        // open — purely cosmetic, driven by the wall clock (panelRingFraction), never by the
+        // entry's secret. No-op when this panel has no TOTP entries.
+        if (content.ringCircles.length > 0) {
+          panelRingTimer = setInterval(() => {
+            const offset = PANEL_RING_CIRCUMFERENCE * (1 - panelRingFraction(Date.now()));
+            for (const circle of content.ringCircles) {
+              circle.style.strokeDashoffset = String(offset);
+            }
+          }, 1000);
+        }
+      });
+    }
+
     function attachSubmitListener(loginForm) {
+      if (!loginForm.form) return;
       loginForm.form.addEventListener('submit', () => {
         if (!state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0) {
           const username = loginForm.usernameInput ? loginForm.usernameInput.value : '';
@@ -418,24 +979,46 @@
         return;
       }
       if (message.type === 'applyFill') {
+        // Consumed before the origin guard, not after: a rejected message must still clear
+        // the target, or a hostname-mismatched applyFill would leave the clicked field armed
+        // for whatever fill arrives next — including one started from the popup, which has
+        // no clicked field of its own. Every path through this branch consumes it, so no
+        // applyFill — accepted or rejected — can ever leave a target behind.
+        const target = takePendingFillTarget(Date.now());
+
         if (!hostnameMatches(message.url, location.href)) {
           console.warn('MyPass: applyFill rejected — message URL does not match the current page hostname');
           return;
         }
-        const loginForm = findLoginForm();
-        if (loginForm) {
-          if (loginForm.usernameInput && message.username) {
-            setNativeValue(loginForm.usernameInput, message.username);
+        // A clicked field (pendingFillTarget) takes priority so the fill lands in the group
+        // the user actually clicked, not the first password field in document order. The
+        // popup's own fill path has no clicked field and falls back to findLoginForm/
+        // findOtpField exactly as before.
+        let usernameInput = null;
+        let passwordInput = null;
+        let otpInput = null;
+        if (target) {
+          const resolved = resolveFillTargets(target);
+          usernameInput = resolved.usernameInput;
+          passwordInput = resolved.passwordInput;
+          otpInput = resolved.otpInput;
+        } else {
+          const loginForm = findLoginForm();
+          if (loginForm) {
+            usernameInput = loginForm.usernameInput;
+            passwordInput = loginForm.passwordInput;
           }
-          if (loginForm.passwordInput && message.password) {
-            setNativeValue(loginForm.passwordInput, message.password);
-          }
+          otpInput = findOtpField();
         }
-        if (message.totp) {
-          const otpField = findOtpField();
-          if (otpField) {
-            setNativeValue(otpField, message.totp);
-          }
+
+        if (usernameInput && message.username) {
+          setNativeValue(usernameInput, message.username);
+        }
+        if (passwordInput && message.password) {
+          setNativeValue(passwordInput, message.password);
+        }
+        if (message.totp && otpInput) {
+          setNativeValue(otpInput, message.totp);
         }
       }
     });
@@ -448,22 +1031,56 @@
       requestCredentials();
       attachSubmitListener(loginForm);
     }
+    attachIcons();
+
+    window.addEventListener('scroll', scheduleSync, { capture: true, passive: true });
+    window.addEventListener('resize', scheduleSync, { passive: true });
+
+    function isOwnHost(node) {
+      if (!node) return false;
+      if (openPanel && node === openPanel.host) return true;
+      for (const record of attachedIcons.values()) {
+        if (node === record.host) return true;
+      }
+      return false;
+    }
+
+    document.addEventListener('click', (event) => {
+      if (!openPanel) return;
+      // Our own control: let its own handler decide (the icon toggles, a row fills).
+      // Identity, not the marker attribute — a page can forge the attribute on its
+      // own elements, but it cannot forge a reference to a node we created. This runs
+      // in the capture phase (before the icon/panel's own bubble-phase handlers), so
+      // returning early here — rather than closing — is what keeps toggle-to-close
+      // working: the icon's own click handler still gets to run and close the panel.
+      if (isOwnHost(event.target)) return;
+      closePanel();
+    }, true);
+    document.addEventListener('keydown', (event) => {
+      if (event.key === 'Escape') closePanel();
+    }, true);
 
     const detected = detectTotpCandidateWithPriority(document);
     if (shouldShowTotpBanner(detected, state)) {
       showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
     }
-    observeTotpCandidates(state);
+    observeTotpCandidates(state, attachIcons);
   }
 
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
+      isFieldVisible, findFillableFields, findLoginForm, resolveFillTargets,
+      isFillTargetUsable,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
-      classifyGetCredentialsResponse, routeBannerCredentialsResponse,
+      classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
+      isTrustedActivation, handleIconActivate, handleEntrySelect,
       buildTotpCandidateQueryResponse,
+      KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
+      buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
+      panelRingFraction,
     };
   }
 })();

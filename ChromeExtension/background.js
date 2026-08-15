@@ -91,7 +91,114 @@ function hostnameMatches(messageUrl, pageUrl) {
   }
 }
 
-function relayFillToActiveTab(credentialResponse, requestUrl) {
+// Pure decision function so the branch selection is unit-testable without a chrome.tabs
+// mock. `manifest.json` grants only `activeTab` (no `host_permissions`), and Chrome only
+// grants activeTab after a gesture on the extension itself (toolbar icon, context menu,
+// command) — a click on the inline in-page icon does NOT count. That left the old
+// chrome.tabs.query({active:true}) path reading an empty activeTab.url on a fresh page,
+// so hostnameMatches always failed and nothing filled, until some other gesture (e.g.
+// opening the popup) granted activeTab for that tab.
+//
+// `sender.tab` and `sender.url` on a chrome.runtime.onMessage sender are populated by
+// Chrome for any message from a content script's own execution context, with NO
+// permission grant required — that's independent of activeTab entirely. So when the
+// request came from a content script we already know, with certainty, which tab and
+// which origin asked, and chrome.tabs.query/tab.url are not needed at all.
+//
+// Returns:
+//   null                     — no sender.tab (e.g. the popup): caller must fall back to
+//                               the chrome.tabs.query({active:true}) path, which works
+//                               there because opening the popup granted activeTab.
+//   { tabId, ok: true }      — content-script sender, origin verified, safe to target.
+//   { tabId, ok: false }     — content-script sender, but requestUrl's host does not
+//                               match sender.url's host (or sender.url is empty/absent) —
+//                               reject outright, do NOT fall back to the active tab.
+function resolveSenderFillTarget(sender, requestUrl) {
+  if (!sender || !sender.tab || sender.tab.id === undefined) return null;
+  return { tabId: sender.tab.id, ok: hostnameMatches(requestUrl, sender.url) };
+}
+
+function buildApplyFillMessage(credentialResponse, requestUrl) {
+  return {
+    type: "applyFill",
+    username: credentialResponse.username,
+    password: credentialResponse.password,
+    totp: credentialResponse.totp || null,
+    url: requestUrl
+  };
+}
+
+function sendApplyFill(tabId, credentialResponse, requestUrl) {
+  chrome.tabs.sendMessage(
+    tabId,
+    buildApplyFillMessage(credentialResponse, requestUrl),
+    () => {
+      if (chrome.runtime.lastError) {
+        console.warn("MyPass: applyFill delivery failed — " + chrome.runtime.lastError.message);
+      }
+    }
+  );
+}
+
+// Scopes delivery to the exact frame/document that sent the fillCredential request,
+// rather than the tab as a whole. This closes a TOCTOU window: sender.tab.id/sender.url
+// are captured when the request arrives, but delivery happens after an async
+// native-messaging round-trip, during which the tab can navigate to a different
+// (possibly attacker) origin. Without frameId/documentId, chrome.tabs.sendMessage would
+// broadcast tab-wide and land in whatever document now occupies that tab. documentId is
+// what actually closes the hole: a navigated document gets a fresh documentId, so a
+// stale delivery targets a document that no longer exists and simply fails — the
+// resulting chrome.runtime.lastError is the SUCCESS case for this guard, not a delivery
+// bug. frameId additionally stops the tab-wide broadcast to other frames in the same
+// tab. Both options require Chrome 106+; manifest.json pins minimum_chrome_version 127,
+// so no version guard is needed. Only used on the sender (content-script) branch — the
+// popup branch has no sender.frameId/documentId and keeps the original 3-arg call.
+function sendApplyFillToSender(tabId, sender, credentialResponse, requestUrl) {
+  chrome.tabs.sendMessage(
+    tabId,
+    buildApplyFillMessage(credentialResponse, requestUrl),
+    { frameId: sender.frameId, documentId: sender.documentId },
+    () => {
+      if (chrome.runtime.lastError) {
+        // Expected whenever the tab navigated away between request and delivery: the
+        // targeted document no longer exists, so Chrome correctly drops the message
+        // instead of letting it land in whatever document replaced it.
+        console.warn(
+          "MyPass: applyFill delivery to sender document skipped (tab likely navigated away) — " +
+          chrome.runtime.lastError.message
+        );
+      }
+    }
+  );
+}
+
+function relayFillToActiveTab(credentialResponse, requestUrl, sender) {
+  const senderTarget = resolveSenderFillTarget(sender, requestUrl);
+
+  if (senderTarget) {
+    // The request came from a content script — target it directly, no chrome.tabs.query
+    // and no reliance on "the active tab is the tab that asked" (it might not be).
+    if (!senderTarget.ok) {
+      console.warn("MyPass: relayFillToActiveTab aborted — sender origin does not match request origin");
+      return;
+    }
+    // Chrome treats an undefined optional property as absent, so
+    // {frameId: undefined, documentId: undefined} would silently degrade
+    // chrome.tabs.sendMessage back into the unscoped, tab-wide broadcast this scoping
+    // exists to prevent — reaching the exact TOCTOU hole by omission rather than by
+    // attack. A security guard must refuse rather than downgrade, so bail here rather
+    // than let sendApplyFillToSender fall back to an unscoped send.
+    if (!sender.documentId) {
+      console.warn("MyPass: applyFill aborted — no documentId on the sender; refusing an unscoped tab-wide delivery");
+      return;
+    }
+    sendApplyFillToSender(senderTarget.tabId, sender, credentialResponse, requestUrl);
+    return;
+  }
+
+  // No sender.tab — the request came from the popup, which has no content-script
+  // sender info at all. Fall back to the original active-tab lookup; this only works
+  // because opening the popup is itself the user gesture that granted activeTab.
   chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     const activeTab = tabs[0];
     if (!activeTab || activeTab.id === undefined) return;
@@ -106,21 +213,7 @@ function relayFillToActiveTab(credentialResponse, requestUrl) {
       return;
     }
 
-    chrome.tabs.sendMessage(
-      activeTab.id,
-      {
-        type: "applyFill",
-        username: credentialResponse.username,
-        password: credentialResponse.password,
-        totp: credentialResponse.totp || null,
-        url: requestUrl
-      },
-      () => {
-        if (chrome.runtime.lastError) {
-          console.warn("MyPass: applyFill delivery failed — " + chrome.runtime.lastError.message);
-        }
-      }
-    );
+    sendApplyFill(activeTab.id, credentialResponse, requestUrl);
   });
 }
 
@@ -384,7 +477,7 @@ function handleRuntimeMessage(message, sender, sendResponse) {
 
   sendNativeMessageWithPairing(message).then((response) => {
     if (message.type === "fillCredential" && response && response.type === "credential") {
-      relayFillToActiveTab(response, message.url);
+      relayFillToActiveTab(response, message.url, sender);
       sendResponse(stripCredentialSecrets(response));
       return;
     }
@@ -456,6 +549,9 @@ if (typeof module !== "undefined") {
     clearStaleSecretOnPairingRequired,
     detectBrowserName,
     sendPairingCompletion,
-    handleRuntimeMessage
+    handleRuntimeMessage,
+    hostnameMatches,
+    resolveSenderFillTarget,
+    relayFillToActiveTab
   };
 }
