@@ -776,3 +776,51 @@ const { buildMutationSweep } = require('../content.js');
   assert.strictEqual(scanCalls, 1, 'a throwing attachIcons must not prevent the banner scan from running');
 }
 console.log('inlineIcon.test.js: mutation sweep framing OK');
+
+const { observeTotpCandidates } = require('../content.js');
+
+// A frame is not always an HTML document. SVG and XML documents are ordinary iframe
+// targets and have no document.body, so MutationObserver.observe(undefined) throws an
+// uncaught TypeError there — the exact "errors on a page with several ad iframes"
+// failure this feature must not produce, and one that only appears now that content
+// scripts run with all_frames: true.
+{
+  const savedDocument = global.document;
+  const savedObserver = global.MutationObserver;
+  let observeCalls = 0;
+
+  // Mirrors the browser: observe() rejects a non-Node target with a TypeError rather
+  // than quietly ignoring it. Without this the guard could "pass" for the wrong reason.
+  global.MutationObserver = class {
+    constructor(callback) { this.callback = callback; }
+    observe(target) {
+      observeCalls += 1;
+      if (!target) throw new TypeError("Failed to execute 'observe' on 'MutationObserver': parameter 1 is not of type 'Node'.");
+    }
+    disconnect() {}
+  };
+
+  // An SVG/XML document: everything a document normally has, except a body.
+  global.document = { querySelectorAll: () => [], querySelector: () => null };
+  const state = { totpBannerShown: false, totpBannerDismissed: null };
+
+  let result;
+  assert.doesNotThrow(
+    () => { result = observeTotpCandidates(state, () => {}, false); },
+    'observing a document with no body must not throw — SVG/XML frames have no document.body'
+  );
+  assert.strictEqual(result, null, 'a bodyless document yields no observer for callers to hold');
+  assert.strictEqual(observeCalls, 0, 'observe() must not even be attempted without a body');
+
+  // Control: with a body present the observer is still created and still attached to it,
+  // so the guard cannot pass by disabling the feature everywhere.
+  const body = { nodeType: 1 };
+  global.document = { body, querySelectorAll: () => [], querySelector: () => null };
+  const observer = observeTotpCandidates(state, () => {}, false);
+  assert.ok(observer, 'a normal HTML document must still get its observer');
+  assert.strictEqual(observeCalls, 1, 'observe() runs exactly once when a body exists');
+
+  global.document = savedDocument;
+  global.MutationObserver = savedObserver;
+}
+console.log('inlineIcon.test.js: bodyless-frame observer guard OK');

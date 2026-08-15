@@ -545,12 +545,21 @@
       },
       isTopFrame,
     });
+    // With all_frames: true this now runs in EVERY frame, and not every frame holds an
+    // HTML document. An SVG or XML document is an ordinary iframe target and has no
+    // document.body at all, so MutationObserver.observe(undefined) would throw an
+    // uncaught TypeError there — precisely the "errors on a page full of ad iframes"
+    // failure this feature must not produce. Such a document has no fillable fields and
+    // no banner to show, so there is nothing to watch for: return null rather than throw.
+    // Callers treat the observer as optional.
+    const body = (typeof document !== 'undefined' && document) ? document.body : null;
+    if (!body) return null;
     let debounceTimer = null;
     const observer = new MutationObserver(() => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(sweep, 400);
     });
-    observer.observe(document.body, { childList: true, subtree: true });
+    observer.observe(body, { childList: true, subtree: true });
     return observer;
   }
 
@@ -961,6 +970,11 @@
 
     function attachIconTo(input, kind) {
       if (attachedIcons.has(input)) return;
+      // Same reason as observeTotpCandidates: a bodyless document (SVG/XML in an iframe)
+      // has nowhere to mount the host. Such a document cannot contain an <input> either,
+      // so this should be unreachable — but "should be" is not a guarantee worth an
+      // uncaught TypeError in a stranger's ad frame.
+      if (!document.body) return;
       const { host, button } = buildIconHost(document);
       button.addEventListener('click', (event) => {
         handleIconActivate(event, () => togglePanel(input, kind));
@@ -1192,7 +1206,7 @@
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
-      FRAME_FEATURE_POLICY, isFeatureEnabledInFrame, buildMutationSweep,
+      FRAME_FEATURE_POLICY, isFeatureEnabledInFrame, buildMutationSweep, observeTotpCandidates,
     };
   }
 })();

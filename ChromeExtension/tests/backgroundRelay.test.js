@@ -20,9 +20,11 @@ global.chrome = {
       cb(activeTabQueryResult);
     },
     // Real chrome.tabs.sendMessage is called either as (tabId, message, callback) — the
-    // popup branch, unchanged — or (tabId, message, options, callback) — the sender
-    // branch, which now scopes delivery with { frameId, documentId }. Detect which
-    // shape was used by checking whether the 3rd argument is the callback.
+    // unscoped, tab-wide broadcast no branch may use any more — or as
+    // (tabId, message, options, callback): the sender branch scopes with
+    // { frameId, documentId }, the popup branch with { frameId: 0 }. Detect which shape
+    // was used by checking whether the 3rd argument is the callback, so a regression back
+    // to the 3-arg broadcast records `options: undefined` and fails the assertions below.
     sendMessage: (tabId, message, optionsOrCallback, maybeCallback) => {
       const hasOptions = typeof optionsOrCallback !== 'function';
       const options = hasOptions ? optionsOrCallback : undefined;
@@ -146,8 +148,17 @@ const { resolveSenderFillTarget, relayFillToActiveTab, hostnameMatches } = requi
 }
 
 // No sender.tab (popup): falls back to chrome.tabs.query({active:true, currentWindow:true}),
-// unchanged from before this fix — including its own hostnameMatches(requestUrl, activeTab.url)
-// guard and the plain 3-arg chrome.tabs.sendMessage call (no frameId/documentId options).
+// including its own hostnameMatches(requestUrl, activeTab.url) guard — and delivery is
+// scoped to the TOP FRAME.
+//
+// The exact value matters, not merely "some options object was passed". Once content
+// scripts run with all_frames: true, every frame in the tab has an applyFill listener, so
+// the old unscoped 3-arg call handed the decrypted password to all of them at once; a
+// same-hostname subframe passes content.js's hostnameMatches check and fills a field the
+// user never chose. The popup can only ever be acting on the top-level document, so
+// frameId 0 is the whole permitted audience. Asserting the literal { frameId: 0 } is what
+// keeps this test able to catch an accidental re-scoping (to another frame, or back to a
+// broadcast) rather than just an accidental un-scoping.
 {
   sentMessages.length = 0;
   queriedTabs.length = 0;
@@ -156,8 +167,8 @@ const { resolveSenderFillTarget, relayFillToActiveTab, hostnameMatches } = requi
   assert.strictEqual(queriedTabs.length, 1);
   assert.strictEqual(sentMessages.length, 1);
   assert.strictEqual(sentMessages[0].tabId, 5);
-  assert.strictEqual(sentMessages[0].options, undefined,
-    'the popup branch must keep the original 3-arg chrome.tabs.sendMessage call, no options object');
+  assert.deepStrictEqual(sentMessages[0].options, { frameId: 0 },
+    'the popup branch must scope delivery to the top frame — an unscoped send reaches every frame\'s applyFill listener');
 }
 
 // Popup path, active tab on a DIFFERENT host than the request: the origin guard must
