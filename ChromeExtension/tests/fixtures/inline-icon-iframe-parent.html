@@ -57,6 +57,13 @@ cd ChromeExtension/tests/fixtures &amp;&amp; python3 -m http.server 8766</pre>
   <iframe class="ad" src="http://127.0.0.1:8766/qr.html" title="ad-like frame"></iframe>
   <iframe class="ad" src="http://127.0.0.1:8766/qr.html" title="second ad-like frame"></iframe>
 
+  <h2>4b. Bodyless-document frame (SVG)</h2>
+  <p>Expect: no errors. This frame is an SVG document, not an HTML one, so it has no
+     <code>document.body</code> at all — it exercises the guard that keeps
+     <code>MutationObserver.observe()</code> from throwing when a frame is not an HTML
+     document.</p>
+  <iframe class="ad" src="http://127.0.0.1:8766/blank.svg" title="bodyless SVG frame"></iframe>
+
   <h2>5. This page's own field</h2>
   <p>Expect: its own icon, filling with entries for <code>localhost</code>.</p>
   <form>
