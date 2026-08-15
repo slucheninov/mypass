@@ -2,12 +2,19 @@ const assert = require('node:assert');
 const path = require('node:path');
 const { scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField } = require(path.join(__dirname, '..', 'content.js'));
 
-function fakeInput(attrs) {
+function fakeInput(attrs, extra = {}) {
   return {
     getAttribute(name) {
       return Object.prototype.hasOwnProperty.call(attrs, name) ? attrs[name] : null;
+    },
+    closest(sel) {
+      return sel === 'label' ? extra.label || null : null;
     }
   };
+}
+
+function fakeLabel(text) {
+  return { textContent: text };
 }
 
 const usernameField = fakeInput({ type: 'text', autocomplete: 'username', name: 'user' });
@@ -27,6 +34,40 @@ const best = findBestUsernameInput([genericTextField, usernameField, emailField]
 assert.strictEqual(best, usernameField, 'expected the autocomplete=username field to win');
 
 assert.strictEqual(findBestUsernameInput([]), null, 'empty candidate list must return null, not throw');
+
+// --- placeholder / aria-label / label hints (identifier-first fields with no name/id/type clue) ---
+
+const placeholderOnly = fakeInput({ type: 'text', placeholder: 'Email' });
+assert.strictEqual(scoreUsernameLikeness(placeholderOnly), 3, 'placeholder="Email" alone scores 3 (hint 2 + type 1)');
+
+const ariaLabelOnly = fakeInput({ type: 'text', 'aria-label': 'Username' });
+assert.strictEqual(scoreUsernameLikeness(ariaLabelOnly), 3, 'aria-label="Username" alone scores 3 (hint 2 + type 1)');
+
+const wrappedInLabel = fakeInput({ type: 'text' }, { label: fakeLabel('Email ') });
+assert.strictEqual(scoreUsernameLikeness(wrappedInLabel), 3, 'input.closest("label") text alone scores 3 (hint 2 + type 1)');
+
+const idField = fakeInput({ type: 'text', id: 'signin-id' });
+const scopeWithForLabel = { querySelector: (sel) => (sel === 'label[for="signin-id"]' ? fakeLabel('Email') : null) };
+assert.strictEqual(
+  scoreUsernameLikeness(idField, scopeWithForLabel),
+  3,
+  'label[for="<id>"] looked up in the caller scope alone scores 3 (hint 2 + type 1)'
+);
+
+const searchPlaceholder = fakeInput({ type: 'text', placeholder: 'Search' });
+assert.strictEqual(scoreUsernameLikeness(searchPlaceholder), 1, 'placeholder="Search" does not match user|login|email — scores only the type bonus');
+
+// The hint bonus is a single +2, not one +2 per matching source: a field matching in BOTH
+// name and placeholder must score the same as one matching only name.
+const nameOnly = fakeInput({ type: 'text', name: 'user-email' });
+const nameAndPlaceholder = fakeInput({ type: 'text', name: 'user-email', placeholder: 'Email' });
+assert.strictEqual(
+  scoreUsernameLikeness(nameAndPlaceholder),
+  scoreUsernameLikeness(nameOnly),
+  'matching in both name and placeholder must not stack — same score as matching only name'
+);
+
+console.log('formDetection.test.js: placeholder/aria-label/label hint scoring OK');
 
 assert.strictEqual(
   hostnameMatches('https://example.com/login', 'https://example.com/account'),

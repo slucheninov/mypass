@@ -24,27 +24,59 @@
   // or type=email (3+1).
   const MIN_USERNAME_FIELD_SCORE = 3;
 
-  function scoreUsernameLikeness(input) {
+  // Text of the <label> associated with `input`, lowercased, or '' if none is found.
+  // Tries input.closest('label') first (wrapped case: <label>Email <input></label>), then
+  // falls back to label[for="<id>"] queried against `scope` — the SAME scope the caller
+  // (findFillableFields) is already using for its other queries, so this never reaches
+  // outside the form/page region the caller has scoped itself to. `scope` is optional:
+  // callers that only have a bare input (e.g. direct unit tests) simply skip the [for]
+  // lookup rather than throwing.
+  function labelTextFor(input, idAttr, scope) {
+    const wrapping = typeof input.closest === 'function' ? input.closest('label') : null;
+    if (wrapping) return (wrapping.textContent || '').toLowerCase();
+    if (idAttr && scope && typeof scope.querySelector === 'function') {
+      const forLabel = scope.querySelector('label[for="' + idAttr + '"]');
+      if (forLabel) return (forLabel.textContent || '').toLowerCase();
+    }
+    return '';
+  }
+
+  function scoreUsernameLikeness(input, scope) {
     let score = 0;
     const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
     const name = (input.getAttribute('name') || '').toLowerCase();
-    const id = (input.getAttribute('id') || '').toLowerCase();
+    const idAttr = input.getAttribute('id') || '';
+    const id = idAttr.toLowerCase();
     const type = (input.getAttribute('type') || 'text').toLowerCase();
+    const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
+    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
+    const labelText = labelTextFor(input, idAttr, scope);
 
     if (autocomplete.includes('username')) score += 5;
     if (type === 'email') score += 3;
-    if (/user|login|email/.test(name)) score += 2;
-    if (/user|login|email/.test(id)) score += 2;
+    // A single +2 "identifier hint" bonus shared across name, id, placeholder, aria-label,
+    // and an associated <label>'s text. Matching in more than one of these must NOT stack —
+    // a field whose name AND placeholder both say "email" scores the same as one that only
+    // has a matching name — otherwise redundant hints on the same field would out-rank a
+    // field with a single, equally strong signal.
+    // Known trade-off, accepted deliberately: a search box with placeholder="Search by
+    // email" now also matches this pattern. It under-triggers far less often than the
+    // coverage gap this closes (identifier-first login fields hinted only by placeholder/
+    // aria-label/label), and the icon stays inert until clicked.
+    const hasHint = [name, id, placeholder, ariaLabel, labelText].some((value) =>
+      /user|login|email/.test(value)
+    );
+    if (hasHint) score += 2;
     if (type === 'text' || type === 'email') score += 1;
     return score;
   }
 
-  function findBestUsernameInput(candidates) {
+  function findBestUsernameInput(candidates, scope) {
     if (candidates.length === 0) return null;
     let best = candidates[0];
-    let bestScore = scoreUsernameLikeness(best);
+    let bestScore = scoreUsernameLikeness(best, scope);
     for (let i = 1; i < candidates.length; i++) {
-      const score = scoreUsernameLikeness(candidates[i]);
+      const score = scoreUsernameLikeness(candidates[i], scope);
       if (score > bestScore) {
         best = candidates[i];
         bestScore = score;
@@ -129,14 +161,14 @@
     const usernameCandidates = Array.from(
       formScope.querySelectorAll('input[type="text"], input[type="email"], input[autocomplete*="username"]')
     ).filter(isFieldVisible);
-    const username = findBestUsernameInput(usernameCandidates);
+    const username = findBestUsernameInput(usernameCandidates, formScope);
     // The score floor applies ONLY when there is no password field on the page. When a
     // password field IS present, its presence is itself strong evidence that the nearby text
     // input is the username, so today's floor-free behaviour is kept — otherwise a bare
     // `<input type="text">` login form would silently lose username autofill, which would be
     // a regression of applyFill. Without a password field there is no such evidence, and the
     // identifier-first relaxation above would otherwise put an icon on every search box.
-    if (username && (passwords.length > 0 || scoreUsernameLikeness(username) >= MIN_USERNAME_FIELD_SCORE)) {
+    if (username && (passwords.length > 0 || scoreUsernameLikeness(username, formScope) >= MIN_USERNAME_FIELD_SCORE)) {
       fields.push({ input: username, kind: 'username' });
     }
 
@@ -577,7 +609,22 @@
     '.unlock{all:unset;box-sizing:border-box;display:block;width:100%;margin-top:2px;' +
     'padding:7px 10px;border-radius:6px;cursor:pointer;text-align:center;' +
     'background:#007aff;color:#ffffff;}' +
-    '.unlock:hover,.unlock:focus-visible{background:#0069db;}';
+    '.unlock:hover,.unlock:focus-visible{background:#0069db;}' +
+    // Dark surface for dark-themed sites. Light values above stay the default — this block
+    // only redefines colours, never layout, so the avatar, ring, row layout, and ellipsis
+    // behaviour are all untouched. `.avatar span` and `.unlock` keep their fixed white text
+    // since both sit on their own coloured backgrounds (the avatar's per-entry colour, the
+    // blue unlock button) that do not change between themes.
+    '@media (prefers-color-scheme: dark){' +
+    '.panel{background:#1e1e20;color:#f5f5f7;border-color:#3a3a3c;' +
+    'box-shadow:0 4px 16px rgba(0,0,0,0.5);}' +
+    '.row{color:#f5f5f7;}' +
+    '.row:hover,.row:focus-visible{background:#2c2c2e;}' +
+    '.entry-username{color:#98989d;}' +
+    '.message{color:#98989d;}' +
+    // Slightly brighter green so the 2FA ring stays legible against the dark panel surface.
+    '.ring circle{stroke:#30d158;}' +
+    '}';
 
   // The shared scaffolding behind both surfaces: a light-DOM host carrying our marker,
   // an isolating closed shadow root, and the layout styles marked important so a page

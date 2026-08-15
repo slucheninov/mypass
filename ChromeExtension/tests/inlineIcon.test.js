@@ -6,12 +6,15 @@ function fakeInput(attrs = {}, extra = {}) {
     offsetParent: extra.hidden ? null : {},
     disabled: !!extra.disabled,
     readOnly: !!extra.readOnly,
-    closest: (sel) => (sel === 'form' ? extra.form || null : null),
+    closest: (sel) => (sel === 'form' ? extra.form || null : sel === 'label' ? extra.label || null : null),
     tagName: 'INPUT',
   };
 }
 
-function fakeScope(inputs) {
+// labels: optional map of id -> label text, used to answer label[for="<id>"] lookups the
+// same way scoreUsernameLikeness queries them (against the same scope findFillableFields
+// is already using).
+function fakeScope(inputs, labels = {}) {
   return {
     querySelectorAll: (selector) => {
       if (selector === 'input[type="password"]') {
@@ -25,6 +28,13 @@ function fakeScope(inputs) {
         const t = i.getAttribute('type');
         return t === 'text' || t === 'email' || (i.getAttribute('autocomplete') || '').includes('username');
       });
+    },
+    querySelector: (selector) => {
+      const match = /^label\[for="([^"]+)"\]$/.exec(selector);
+      if (match && Object.prototype.hasOwnProperty.call(labels, match[1])) {
+        return { textContent: labels[match[1]] };
+      }
+      return null;
     },
   };
 }
@@ -88,6 +98,36 @@ assert.deepStrictEqual(
   kinds(findFillableFields(fakeScope([fakeInput({ type: 'text', autocomplete: 'username' })]))),
   ['username'],
   'autocomplete=username clears the floor with no password field present'
+);
+
+// Identifier-first fields hinted ONLY by placeholder/aria-label/label (no autocomplete,
+// type, name, or id clue) — the coverage gap this feature closes.
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([fakeInput({ type: 'text', placeholder: 'Email' })]))),
+  ['username'],
+  'placeholder="Email" alone clears the floor with no password field present'
+);
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([fakeInput({ type: 'text', 'aria-label': 'Username' })]))),
+  ['username'],
+  'aria-label="Username" alone clears the floor with no password field present'
+);
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([fakeInput({ type: 'text' }, { label: { textContent: 'Email ' } })]))),
+  ['username'],
+  'wrapped in <label>Email <input></label> clears the floor with no password field present'
+);
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([fakeInput({ type: 'text', id: 'signin-id' })], { 'signin-id': 'Email' }))),
+  ['username'],
+  'label[for="<id>"] association clears the floor with no password field present'
+);
+// Regression guard the user specifically asked for: a bare search box must still get NO
+// icon, even though placeholder/aria-label/label are now consulted.
+assert.deepStrictEqual(
+  findFillableFields(fakeScope([fakeInput({ type: 'text', placeholder: 'Search' })])),
+  [],
+  'placeholder="Search" alone still gets NO field — a key icon must not appear in every search box'
 );
 
 // An OTP field also matches the username selector — OTP must win, and the field
@@ -367,6 +407,20 @@ assert.ok(/\.row\{[^}]*width:100%/.test(PANEL_HOST_STYLE), 'panel rows are full 
 assert.ok(/\.row\{[^}]*text-align:left/.test(PANEL_HOST_STYLE), 'panel rows are left aligned');
 assert.ok(/\.row:hover/.test(PANEL_HOST_STYLE), 'panel rows have a hover state');
 assert.ok(!/\.row\{[^}]*height:20px/.test(PANEL_HOST_STYLE), 'panel rows are never the icon-sized 20x20 box');
+
+// Dark theme: string-level checks only — this node suite never renders CSS, so this proves
+// the dark rules are present in the stylesheet text, not that they actually render correctly
+// in a browser. That still has to be eyeballed manually (see RUN.md).
+assert.ok(
+  /@media \(prefers-color-scheme: dark\)\{[^]*\}/.test(PANEL_HOST_STYLE),
+  'the panel stylesheet has a prefers-color-scheme: dark block'
+);
+const darkBlockMatch = /@media \(prefers-color-scheme: dark\)\{([^]*)\}$/.exec(PANEL_HOST_STYLE.trim());
+assert.ok(darkBlockMatch, 'the dark media block is the trailing block in the stylesheet');
+assert.ok(
+  /\.panel\{[^}]*background:#(?!ffffff)[0-9a-f]{6}/.test(darkBlockMatch[1]),
+  'the dark block redefines .panel background to something other than the light #ffffff'
+);
 console.log('inlineIcon.test.js: shadow host separation OK');
 
 const { buildPanelContent } = require('../content.js');
