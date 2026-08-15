@@ -24,6 +24,25 @@
   // or type=email (3+1).
   const MIN_USERNAME_FIELD_SCORE = 3;
 
+  // Which behaviours may run outside the top frame. Stated once, as data, rather than as
+  // `window.top === window` scattered through the file: the policy is then testable without
+  // a DOM, and adding a behaviour forces a decision about frames instead of inheriting one.
+  // Unknown names are NOT enabled — a banner added later without a policy entry must not
+  // quietly start rendering inside every ad frame on the web.
+  const FRAME_FEATURE_POLICY = {
+    inlineIcon: 'allFrames',
+    saveBanner: 'topOnly',
+    totpBanner: 'topOnly',
+    totpScan: 'topOnly',
+    totpCandidateQuery: 'topOnly',
+  };
+
+  function isFeatureEnabledInFrame(feature, isTopFrame) {
+    const policy = FRAME_FEATURE_POLICY[feature];
+    if (!policy) return false;
+    return policy === 'allFrames' || isTopFrame === true;
+  }
+
   // Text of the <label> associated with `input`, lowercased, or '' if none is found.
   // Tries input.closest('label') first (wrapped case: <label>Email <input></label>), then
   // falls back to label[for="<id>"] queried against `scope` — the SAME scope the caller
@@ -492,8 +511,10 @@
 
   // onMutation defaults to a no-op so this stays callable from tests without a DOM;
   // the browser-only wiring below passes attachIcons so newly-inserted fields get an
-  // icon on the same debounce that re-checks for TOTP candidates.
-  function observeTotpCandidates(state, onMutation) {
+  // icon on the same debounce that re-checks for TOTP candidates. isTopFrame gates ONLY
+  // the banner half of the callback below — attachIcons (via notifyMutation) must keep
+  // running in every frame, since the inline icon is the whole point of this feature.
+  function observeTotpCandidates(state, onMutation, isTopFrame) {
     const notifyMutation = typeof onMutation === 'function' ? onMutation : () => {};
     let debounceTimer = null;
     const observer = new MutationObserver(() => {
@@ -504,9 +525,11 @@
         } catch (error) {
           console.warn('MyPass: inline icon attach failed — ' + error.message);
         }
-        const detected = detectTotpCandidateWithPriority(document);
-        if (shouldShowTotpBanner(detected, state)) {
-          showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+        if (isFeatureEnabledInFrame('totpBanner', isTopFrame)) {
+          const detected = detectTotpCandidateWithPriority(document);
+          if (shouldShowTotpBanner(detected, state)) {
+            showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+          }
         }
       }, 400);
     });
@@ -822,6 +845,11 @@
   }
 
   if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
+    // Reference comparison only — reading properties of a cross-origin window.top throws,
+    // comparing the reference does not.
+    const IS_TOP_FRAME = window.top === window;
+    const runsHere = (feature) => isFeatureEnabledInFrame(feature, IS_TOP_FRAME);
+
     const state = {
       lastCredentialList: [],
       bannerShown: false,
@@ -1020,7 +1048,10 @@
     function attachSubmitListener(loginForm) {
       if (!loginForm.form) return;
       loginForm.form.addEventListener('submit', () => {
-        if (!state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0) {
+        if (
+          runsHere('saveBanner') &&
+          !state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0
+        ) {
           const username = loginForm.usernameInput ? loginForm.usernameInput.value : '';
           const password = loginForm.passwordInput.value;
           if (password) {
@@ -1032,6 +1063,10 @@
 
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === 'queryTotpCandidate') {
+        // Only the top frame replies, or the popup sees multiple frames' responses race —
+        // no sendResponse at all here, not a "false" response, so the popup keeps waiting
+        // on whichever frame is actually allowed to answer.
+        if (!runsHere('totpCandidateQuery')) return;
         sendResponse(buildTotpCandidateQueryResponse(document));
         return;
       }
@@ -1117,11 +1152,13 @@
       if (event.key === 'Escape') closePanel();
     }, true);
 
-    const detected = detectTotpCandidateWithPriority(document);
-    if (shouldShowTotpBanner(detected, state)) {
-      showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+    if (runsHere('totpScan')) {
+      const detected = detectTotpCandidateWithPriority(document);
+      if (shouldShowTotpBanner(detected, state)) {
+        showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+      }
     }
-    observeTotpCandidates(state, attachIcons);
+    observeTotpCandidates(state, attachIcons, IS_TOP_FRAME);
   }
 
   if (typeof module !== 'undefined') {
@@ -1138,6 +1175,7 @@
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
+      FRAME_FEATURE_POLICY, isFeatureEnabledInFrame,
     };
   }
 })();

@@ -693,3 +693,30 @@ assert.strictEqual(
   'a fresh, connected target within the TTL is usable'
 );
 console.log('inlineIcon.test.js: fill target lifecycle OK');
+
+const { isFeatureEnabledInFrame, FRAME_FEATURE_POLICY } = require('../content.js');
+
+// In the top frame everything runs.
+for (const feature of Object.keys(FRAME_FEATURE_POLICY)) {
+  assert.strictEqual(isFeatureEnabledInFrame(feature, true), true, feature + ' runs in the top frame');
+}
+
+// In a subframe only the inline icon does.
+assert.strictEqual(isFeatureEnabledInFrame('inlineIcon', false), true, 'the icon is the whole point — it runs in subframes');
+assert.strictEqual(isFeatureEnabledInFrame('saveBanner', false), false, 'a password save banner must never render inside a subframe');
+assert.strictEqual(isFeatureEnabledInFrame('totpBanner', false), false, 'a 2FA save banner must never render inside a subframe');
+assert.strictEqual(isFeatureEnabledInFrame('totpScan', false), false, 'the TOTP candidate scan is top-frame work');
+assert.strictEqual(
+  isFeatureEnabledInFrame('totpCandidateQuery', false),
+  false,
+  'only one frame may answer the popup, or responses collide'
+);
+
+// Fail closed: a feature nobody gave a policy to must NOT start running in ad frames.
+assert.strictEqual(
+  isFeatureEnabledInFrame('somethingAddedLater', false),
+  false,
+  'an unknown feature fails closed in subframes rather than silently running everywhere'
+);
+assert.strictEqual(isFeatureEnabledInFrame('somethingAddedLater', true), false, 'an unknown feature is not enabled anywhere');
+console.log('inlineIcon.test.js: frame policy OK');
