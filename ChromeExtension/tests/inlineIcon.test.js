@@ -370,6 +370,7 @@ assert.ok(!/\.row\{[^}]*height:20px/.test(PANEL_HOST_STYLE), 'panel rows are nev
 console.log('inlineIcon.test.js: shadow host separation OK');
 
 const { buildPanelContent } = require('../content.js');
+const { letterFromTitle, colorForTitle } = require('../shared/entry-visuals.js');
 
 const selectCalls = [];
 const entriesPanel = buildPanelContent(
@@ -378,11 +379,69 @@ const entriesPanel = buildPanelContent(
   { onSelect: (event, entryId) => selectCalls.push({ event, entryId }), onUnlock: () => {} }
 );
 assert.strictEqual(entriesPanel.rows.length, 2, 'one row per entry');
-assert.strictEqual(entriesPanel.rows[0].textContent, 'Example — alice', 'row text is title, em dash, username');
 // The rows are styled by PANEL_HOST_STYLE's class rules, so they must carry those classes.
 assert.strictEqual(entriesPanel.root.getAttribute('class'), 'panel', 'the panel root carries the .panel class');
 assert.strictEqual(entriesPanel.rows[0].getAttribute('class'), 'row', 'each entry row carries the .row class');
 assert.strictEqual(entriesPanel.rows[1].getAttribute('class'), 'row', 'every entry row carries it, not just the first');
+
+// The row is no longer a single textContent string — title and username must be findable in
+// their own elements, matching the popup's letter-avatar + title/username layout, and the
+// old ' — ' concatenation must be gone everywhere in the row.
+function findDescendants(el, predicate, found = []) {
+  for (const child of el.children || []) {
+    if (predicate(child)) found.push(child);
+    findDescendants(child, predicate, found);
+  }
+  return found;
+}
+
+for (const row of entriesPanel.rows) {
+  const allDescendants = findDescendants(row, () => true);
+  for (const node of [row, ...allDescendants]) {
+    if (typeof node.textContent === 'string') {
+      assert.ok(!node.textContent.includes(' — '), 'no element text carries the old title/username concatenation');
+    }
+  }
+}
+
+// Row 0 (withTotp: title 'Example', username 'alice') — avatar, title, username, ring.
+const row0 = entriesPanel.rows[0];
+const avatar0 = findDescendants(row0, (el) => el.attributes && el.attributes.class === 'avatar')[0];
+assert.ok(avatar0, 'row has an avatar element');
+assert.strictEqual(avatar0.style.backgroundColor, colorForTitle('Example'), 'avatar background colour is colorForTitle(title)');
+const avatarLetter0 = avatar0.children[0];
+assert.ok(avatarLetter0, 'avatar contains a letter element');
+assert.strictEqual(avatarLetter0.textContent, letterFromTitle('Example'), 'avatar letter is letterFromTitle(title)');
+
+const title0 = findDescendants(row0, (el) => el.attributes && el.attributes.class === 'entry-title')[0];
+const username0 = findDescendants(row0, (el) => el.attributes && el.attributes.class === 'entry-username')[0];
+assert.ok(title0, 'row has a title element');
+assert.strictEqual(title0.textContent, 'Example', 'title element carries only the title');
+assert.ok(username0, 'row has a username element when the entry has a username');
+assert.strictEqual(username0.textContent, 'alice', 'username element carries only the username');
+assert.notStrictEqual(title0, username0, 'title and username are separate elements');
+
+const ring0 = findDescendants(row0, (el) => el.attributes && el.attributes.class === 'ring')[0];
+assert.ok(ring0, 'an entry with hasTotp: true gets a ring element');
+// Indicator-only: pin this so a later change cannot quietly make the ring interactive or
+// reveal the code. The ring must never call getTotp and must never show/copy the code.
+const ringDescendants = [ring0, ...findDescendants(ring0, () => true)];
+for (const node of ringDescendants) {
+  assert.ok(
+    !(typeof node.textContent === 'string' && /\d/.test(node.textContent)),
+    'no text node inside the ring carries digits — it must never render the code'
+  );
+  assert.ok(
+    !(node.listeners && node.listeners.click && node.listeners.click.length > 0),
+    'no click listener is registered on the ring or anything inside it — it is an indicator only'
+  );
+}
+
+// Row 1 (noTotp: hasTotp: false) — no ring at all.
+const row1 = entriesPanel.rows[1];
+const ring1 = findDescendants(row1, (el) => el.attributes && el.attributes.class === 'ring')[0];
+assert.strictEqual(ring1, undefined, 'an entry with hasTotp: false gets no ring element');
+console.log('inlineIcon.test.js: panel row visuals OK');
 
 const firstClickEvent = { type: 'click', target: entriesPanel.rows[0] };
 entriesPanel.rows[0].dispatch('click', firstClickEvent);

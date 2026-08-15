@@ -1,4 +1,16 @@
 (function () {
+  // letterFromTitle/colorForTitle decide an entry's avatar letter and colour — single-sourced
+  // in shared/entry-visuals.js (see its header comment) so the popup and this panel can never
+  // disagree about the same entry's colour. manifest.json loads entry-visuals.js as a
+  // preceding <script>, so in a page these are already globals by the time this IIFE runs;
+  // node has no such script tag (tests `require('../content.js')` directly), so require them
+  // there instead — the same three-world seam entry-visuals.js itself is built for.
+  const entryVisuals = typeof require === 'function'
+    ? require('./shared/entry-visuals.js')
+    : { letterFromTitle: window.letterFromTitle, colorForTitle: window.colorForTitle };
+  const letterFromTitle = entryVisuals.letterFromTitle;
+  const colorForTitle = entryVisuals.colorForTitle;
+
   // Minimum OTP field score threshold for selection. The weakest intentional OTP signal
   // (inputmode=numeric + maxlength ∈ [6,7,8]) scores 4. A bare type=text input scores 1
   // and must not be selected on a login-only page. Score >= 4 ensures only deliberate OTP
@@ -547,10 +559,20 @@
     'box-shadow:0 4px 16px rgba(0,0,0,0.18);' +
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;" +
     'line-height:1.35;}' +
-    '.row{all:unset;box-sizing:border-box;display:block;width:100%;padding:7px 10px;' +
-    'border-radius:6px;cursor:pointer;text-align:left;color:#1d1d1f;' +
-    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '.row{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;' +
+    'width:100%;padding:7px 10px;border-radius:6px;cursor:pointer;text-align:left;' +
+    'color:#1d1d1f;overflow:hidden;}' +
     '.row:hover,.row:focus-visible{background:#f5f5f7;}' +
+    '.avatar{flex-shrink:0;width:28px;height:28px;border-radius:7px;' +
+    'display:flex;align-items:center;justify-content:center;}' +
+    '.avatar span{color:#ffffff;font-size:13px;font-weight:600;line-height:1;}' +
+    '.entry-text{min-width:0;flex:1 1 auto;overflow:hidden;}' +
+    '.entry-title{font-size:13px;font-weight:600;line-height:1.3;' +
+    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '.entry-username{font-size:11px;color:#6e6e73;line-height:1.25;margin-top:1px;' +
+    'white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}' +
+    '.ring{flex-shrink:0;width:18px;height:18px;}' +
+    '.ring svg{display:block;width:100%;height:100%;}' +
     '.message{padding:7px 10px;color:#6e6e73;}' +
     '.unlock{all:unset;box-sizing:border-box;display:block;width:100%;margin-top:2px;' +
     'padding:7px 10px;border-radius:6px;cursor:pointer;text-align:center;' +
@@ -623,6 +645,54 @@
     unavailable: 'MyPass is not running',
   };
 
+  // Countdown ring geometry for the row's TOTP indicator. Deliberately smaller than the
+  // popup's own 32px ring (this is a compact list row), but the same visual language: a green
+  // stroke that empties as the current 30s TOTP period runs out.
+  const PANEL_RING_PERIOD_SECONDS = 30;
+  const PANEL_RING_RADIUS = 8;
+  const PANEL_RING_CIRCUMFERENCE = 2 * Math.PI * PANEL_RING_RADIUS;
+
+  // Wall-clock only — this NEVER reads the entry's secret. It is derived purely from
+  // Date.now(), the same clock every TOTP authenticator already relies on, so it can convey
+  // "the code is about to rotate" without ever knowing what the code is.
+  function panelRingFraction(nowMs) {
+    return 1 - ((nowMs / 1000) % PANEL_RING_PERIOD_SECONDS) / PANEL_RING_PERIOD_SECONDS;
+  }
+
+  // Built entirely from createElementNS + setAttribute, never innerHTML — the same
+  // Trusted-Types reason as buildKeyGlyph above; this feature was already bitten by exactly
+  // that on a require-trusted-types-for 'script' site. The ring is an INDICATOR ONLY: it
+  // carries no text, no title/code, and — critically — no click listener of its own. It must
+  // never call getTotp or otherwise reveal/copy the code; the panel's whole trust model is
+  // that no secret is ever held here. Clicks still reach the row because the ring is nested
+  // inside the row <button> and clicks bubble — the ring itself just never listens.
+  function buildPanelRing(doc) {
+    const wrapper = doc.createElement('div');
+    wrapper.setAttribute('class', 'ring');
+
+    const svg = doc.createElementNS(SVG_NS, 'svg');
+    svg.setAttribute('viewBox', '0 0 20 20');
+    svg.setAttribute('aria-hidden', 'true');
+    svg.setAttribute('focusable', 'false');
+
+    const circle = doc.createElementNS(SVG_NS, 'circle');
+    circle.setAttribute('cx', '10');
+    circle.setAttribute('cy', '10');
+    circle.setAttribute('r', String(PANEL_RING_RADIUS));
+    circle.setAttribute('fill', 'none');
+    circle.setAttribute('stroke', '#34c759');
+    circle.setAttribute('stroke-width', '2');
+    circle.setAttribute('stroke-linecap', 'round');
+    circle.setAttribute('transform', 'rotate(-90 10 10)');
+    circle.setAttribute('stroke-dasharray', String(PANEL_RING_CIRCUMFERENCE));
+    const fraction = panelRingFraction(Date.now());
+    circle.style.strokeDashoffset = String(PANEL_RING_CIRCUMFERENCE * (1 - fraction));
+
+    svg.appendChild(circle);
+    wrapper.appendChild(svg);
+    return { wrapper, circle };
+  }
+
   function buildPanelContent(documentRef, routed, callbacks) {
     const doc = documentRef || document;
     const root = doc.createElement('div');
@@ -630,6 +700,10 @@
     // own closed shadow root, where no page rule can reach them.
     root.setAttribute('class', 'panel');
     const rows = [];
+    // Every ring's <circle> element, so the caller (togglePanel) can animate them on a single
+    // shared ticker while the panel is open — buildPanelContent itself stays a pure, timer-free
+    // function so it remains directly callable from node tests.
+    const ringCircles = [];
     let unlockButton = null;
 
     if (routed.panel === 'entries') {
@@ -638,7 +712,35 @@
         row.setAttribute('type', 'button');
         row.setAttribute('class', 'row');
         row.setAttribute('data-entry-id', entry.id);
-        row.textContent = entry.title + (entry.username ? ' — ' + entry.username : '');
+
+        const avatar = doc.createElement('div');
+        avatar.setAttribute('class', 'avatar');
+        avatar.style.backgroundColor = colorForTitle(entry.title);
+        const avatarLetter = doc.createElement('span');
+        avatarLetter.textContent = letterFromTitle(entry.title);
+        avatar.appendChild(avatarLetter);
+        row.appendChild(avatar);
+
+        const textCol = doc.createElement('div');
+        textCol.setAttribute('class', 'entry-text');
+        const titleEl = doc.createElement('div');
+        titleEl.setAttribute('class', 'entry-title');
+        titleEl.textContent = entry.title;
+        textCol.appendChild(titleEl);
+        if (entry.username) {
+          const usernameEl = doc.createElement('div');
+          usernameEl.setAttribute('class', 'entry-username');
+          usernameEl.textContent = entry.username;
+          textCol.appendChild(usernameEl);
+        }
+        row.appendChild(textCol);
+
+        if (entry.hasTotp) {
+          const ring = buildPanelRing(doc);
+          row.appendChild(ring.wrapper);
+          ringCircles.push(ring.circle);
+        }
+
         row.addEventListener('click', (event) => callbacks.onSelect(event, entry.id));
         root.appendChild(row);
         rows.push(row);
@@ -659,7 +761,7 @@
       }
     }
 
-    return { root, rows, unlockButton };
+    return { root, rows, unlockButton, ringCircles };
   }
 
   if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
@@ -780,10 +882,25 @@
       }
     }
 
+    // The single ticker driving every ring in the currently-open panel. Kept outside
+    // openPanel so closePanel can always reach it and clear it unconditionally — panels open
+    // and close constantly, and an interval left running after close is a leak.
+    let panelRingTimer = null;
+
+    function stopPanelRingAnimation() {
+      if (panelRingTimer === null) return;
+      clearInterval(panelRingTimer);
+      panelRingTimer = null;
+    }
+
     function closePanel() {
       // Bumping here is what makes Escape / outside-click cancel an in-flight request,
       // not just remove an already-built panel.
       panelRequestId += 1;
+      // Wired in unconditionally (not inside the `if (!openPanel)` branch below) so the ring
+      // ticker can never outlive the panel it belonged to, no matter which path led here.
+      // stopPanelRingAnimation is itself a no-op once already stopped, so this is idempotent.
+      stopPanelRingAnimation();
       if (!openPanel) return;
       openPanel.host.remove();
       openPanel = null;
@@ -828,6 +945,18 @@
         host.style.setProperty('left', String(rect.left + window.scrollX) + 'px', 'important');
         document.body.appendChild(host);
         openPanel = { host, input };
+
+        // Animate the countdown ring(s) on a single shared 1Hz ticker while the panel stays
+        // open — purely cosmetic, driven by the wall clock (panelRingFraction), never by the
+        // entry's secret. No-op when this panel has no TOTP entries.
+        if (content.ringCircles.length > 0) {
+          panelRingTimer = setInterval(() => {
+            const offset = PANEL_RING_CIRCUMFERENCE * (1 - panelRingFraction(Date.now()));
+            for (const circle of content.ringCircles) {
+              circle.style.strokeDashoffset = String(offset);
+            }
+          }, 1000);
+        }
       });
     }
 

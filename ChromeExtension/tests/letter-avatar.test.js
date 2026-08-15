@@ -4,7 +4,7 @@ const {
   letterFromTitle,
   colorForTitle,
   LETTER_AVATAR_PALETTE
-} = require('../popup.js');
+} = require('../shared/entry-visuals.js');
 
 assert.strictEqual(letterFromTitle('GitHub'), 'G');
 assert.strictEqual(letterFromTitle('amazon'), 'A');

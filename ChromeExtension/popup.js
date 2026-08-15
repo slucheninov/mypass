@@ -60,41 +60,16 @@ function normalizePairingCode(raw) {
   return String(raw).replace(/\D/g, '').slice(0, 6);
 }
 
-const LETTER_AVATAR_PALETTE = [
-  '#007AFF',
-  '#34C759',
-  '#FF9500',
-  '#AF52DE',
-  '#FF2D55',
-  '#30B0C7',
-  '#5856D6',
-  '#00C7BE',
-  '#32ADE6',
-  '#A2845E'
-];
-
-function letterFromTitle(title) {
-  const trimmed = title.trim();
-  if (!trimmed) return '?';
-  return trimmed[0].toUpperCase();
-}
-
-function colorForTitle(title) {
-  const MASK64 = (1n << 64n) - 1n;
-  const SIGNBIT = 1n << 63n;
-  const wrap64 = (v) => {
-    v &= MASK64;
-    return v & SIGNBIT ? v - (1n << 64n) : v;
-  };
-  let hash = 0n;
-  for (const byte of new TextEncoder().encode(title)) {
-    hash = wrap64(wrap64(hash + BigInt(byte)) * 31n);
-  }
-  const len = BigInt(LETTER_AVATAR_PALETTE.length);
-  let index = hash % len;
-  if (index < 0n) index += len;
-  return LETTER_AVATAR_PALETTE[Number(index)];
-}
+// letterFromTitle/colorForTitle (and the palette colorForTitle hashes into) moved to
+// shared/entry-visuals.js so the inline panel can share them without drifting — see that
+// file's header comment. popup.html loads entry-visuals.js as a <script> immediately before
+// this one, so both names would already be globals in the browser — but several node tests
+// (totpCircle, popup-fallback, totpPicker, passkeyPopup) require this file directly and drive
+// it all the way into renderCredentials, so a bare global reference throws under node. require
+// them there instead — the same three-world seam entry-visuals.js itself is built for.
+const { letterFromTitle, colorForTitle } = typeof require === 'function'
+  ? require('./shared/entry-visuals.js')
+  : { letterFromTitle: window.letterFromTitle, colorForTitle: window.colorForTitle };
 
 function getPairingStorageArea() {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
@@ -1107,9 +1082,6 @@ if (typeof module !== 'undefined') {
     APP_UNAVAILABLE_STATUS_TEXT,
     APP_UNAVAILABLE_OPEN_HELPER_TEXT,
     shouldShowAppUnavailableActions,
-    LETTER_AVATAR_PALETTE,
-    letterFromTitle,
-    colorForTitle,
     LOCKED_TITLE_TEXT,
     LOCKED_HELPER_TEXT,
     EMPTY_LIST_TITLE_TEXT,
