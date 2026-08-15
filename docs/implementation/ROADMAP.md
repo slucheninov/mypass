@@ -4,7 +4,7 @@
 outstanding workstreams is tracked. Tick a box only when the item is implemented **and**
 its tests pass — see "Definition of done" below.
 
-Last updated: 2026-08-14
+Last updated: 2026-08-15
 
 ---
 
@@ -449,20 +449,42 @@ inside `ChromeExtension/content.js` plus a new test suite — no change to `back
 - [x] **I7** — `inlineIcon.test.js` wired into `scripts/test.sh`; `RUN.md` manual checklist;
       this stage recorded
 
-**⛳ Gate 7 — OPEN.** Automated half green 2026-08-14: `./scripts/test.sh` green unpiped
+**⛳ Gate 7 — PASSED (2026-08-15).** Automated half green 2026-08-14: `./scripts/test.sh` green unpiped
 (`EXIT=0`, `** TEST SUCCEEDED **`) — 448 app tests, 134 MyPassKit, 86 SyncKit,
 59 ExtensionBridgeKit, and all twelve JS suites including the new `inlineIcon.test.js`
 (8 sections: `isFieldVisible`, `findFillableFields`, `findLoginForm`, `chooseInlinePanel`,
 trusted-event gate, icon host, shadow host separation, panel content).
 
-Gate stays open until the thirteen new `RUN.md` bullets are walked against a real Chrome
-build. Nothing in the positioning (icons tracking fields under scroll/resize/zoom), the
-closed shadow DOM isolation, or a real trusted click is reachable from an automated test —
-the same shape Stages 3, 5, and 6 hit. The thirteenth bullet, added beyond the plan's
-twelve, covers a positioning limitation the Task 6 review flagged: icons are placed in
-document-absolute coordinates, so a field inside a scrollable sub-container or a
-`position: fixed` header can drift from its field when that container (rather than the
-page) scrolls.
+**Gate 7 closed 2026-08-15** — the full `RUN.md` walk passed on a real Chrome build, and
+the drift the thirteenth bullet was written for did not materialise: the capture-phase
+`scroll` listener catches nested containers too, so a field inside a scrollable
+sub-container keeps its icon.
+
+The walk earned its keep. It surfaced **four blocking defects that nine code reviews had
+all missed**, every one of them invisible in a diff:
+
+1. The feature threw an uncaught `ReferenceError` and had never run at all — and the same
+   throw killed the shipped Stage-5 TOTP save banner on any page with a password field.
+   Unreachable from the node suite, which skips the whole browser-only block.
+2. Filling targeted the first password field in the document rather than the clicked one,
+   so on a page with several groups it always filled the wrong form.
+3. Filling did nothing on a fresh tab: `relayFillToActiveTab` read `tab.url`, which the
+   `activeTab` permission only exposes after a gesture on the extension itself. A click
+   inside the page is not such a gesture. This lived in Chrome's permission model, not in
+   any line of the diff.
+4. Extracting `letterFromTitle`/`colorForTitle` into a shared classic script killed the
+   popup outright: `popup.js` redeclared those names with a top-level `const`, a
+   `SyntaxError` at instantiation. Node cannot see it — there `popup.js` is a CJS module —
+   and `vm.runInContext` does not reproduce the semantics either, which is how a probe
+   wrongly cleared it. Only real headless Chrome showed the throw.
+
+The defects forced three deliberate reversals, all recorded in Decisions: `background.js`
+stopped being off-limits, the relay now targets the sending document instead of the active
+tab, and a fill lands only in the clicked field.
+
+Fix summary and the shape to remember: nothing here was findable by reading a diff. Stages
+3, 5 and 6 each shipped defects the walk caught; Stage 7 makes four in a row, and two of
+them were regressions in already-shipped surfaces.
 
 ---
 
@@ -477,7 +499,7 @@ page) scrolls.
 | 4 — Piece A (A1–A7) | 7 | **7 — complete** |
 | 5 — Piece B (B1–B11) | 11 | **11 — complete** |
 | 6 — Piece C rest (C1, C4–C11) | 9 | **9 — code complete, Gate 6 manual walk open** |
-| 7 — Inline fill icon (I1–I7) | 7 | **7 — code complete, Gate 7 manual walk open** |
+| 7 — Inline fill icon (I1–I7) | 7 | **7 — complete** |
 | **Total** | **62** | **62** |
 
 ## Decisions
@@ -514,6 +536,10 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-09 | C ceremony owns the popup | A pending ceremony is checked before anything else at popup open and, when found, suppresses the ordinary `getCredentials` flow entirely rather than racing it — the same sequencing failure `restorePendingTotpCandidate` was fixed for in Stage 5. Panel routing was extracted into a pure `choosePasskeyPanel(pending)` so it is testable without a DOM. |
 | 2026-08-08 | Closed-window proposals | Both proposal flows (password and TOTP) were lost whenever the main window was closed at proposal time: `NavigationState.pending*SaveProposal` was set before the fresh `ContentView` subscribed, and SwiftUI's `onChange` does not fire for an initial value, so the window opened on the plain list. Routing moved into `NavigationState.consumePendingProposals()`, called from both `onChange` handlers and from `onAppear` on the unlocked branch — which also covers a proposal that arrives while the vault is locked (`aec5528`). |
 | 2026-08-14 | Inline fill icon: two constraints not to "optimise" away | (1) The icon renders on every recognised field unconditionally, regardless of match count or lock state — conditional visibility would leak account existence to the site and hand it a fingerprinting signal. (2) Every handler requires `event.isTrusted` — without it, `background.js`'s `relayFillToActiveTab`, which resolves its target via `chrome.tabs.query({active:true})` rather than `sender.tab.id`, becomes reachable by page script (a synthetic click could trigger a fill on whatever tab happens to be active). |
+| 2026-08-15 | Fill targeting | A fill lands ONLY in the field whose icon was clicked. Originally the whole group was filled; the manual walk showed that reads as surprising when the user deliberately picks one field. Cost accepted by the user: signing in takes one panel opening per field. Side benefit — the group-scoping machinery (`findFillGroupScope`) became unnecessary and was deleted, removing a whole class of "which field is the partner" ambiguity. |
+| 2026-08-15 | `background.js` no longer off-limits | The Stage 7 spec declared `background.js` unchangeable, assuming the existing fill path would just work. It did not: `relayFillToActiveTab` read `tab.url`, which the `activeTab` permission only exposes after a gesture **on the extension** — a click inside the page is not one — so inline fills silently aborted on every fresh tab. The constraint was wrong and was lifted. |
+| 2026-08-15 | Relay targets the sender, not the active tab | Content-script fills now resolve `sender.tab.id` and validate against `sender.url`, with delivery scoped by `frameId`/`documentId`; the popup keeps the active-tab path, which its own opening gesture makes valid. This needs no host permissions and is strictly stronger than before: the secret goes to the exact document that asked, and a navigation mid-round-trip makes delivery fail instead of landing in the new origin's renderer. Fails closed when `documentId` is absent. |
+| 2026-08-15 | Shared entry visuals | `letterFromTitle`/`colorForTitle` (and the palette they hash into) live in `ChromeExtension/shared/entry-visuals.js`, loaded by both the popup and the content script. Duplicating them would let one entry show different colours in the two surfaces — visible to a user, invisible to every test. The extraction initially broke the popup outright (top-level `const` redeclaring a name an earlier classic script had already declared: `SyntaxError` at instantiation, invisible to node and not reproduced by `vm.runInContext`); `scriptScopes.test.js` now guards that class statically. |
 
 ## Known trap when running the suite
 
