@@ -101,13 +101,27 @@ its own design rather than being smuggled in here. Deferred deliberately.
 
 ### Security
 
-Three properties already hold per-frame, which is what makes this change small rather than
-dangerous:
+These properties hold per-frame, which is what makes this change small rather than
+dangerous. All but the popup-delivery bullet held before this change; that one had to be
+fixed as part of it:
 
-- **Delivery is document-scoped.** `sendApplyFillToSender` passes
+- **Delivery from a content script is document-scoped.** `sendApplyFillToSender` passes
   `{ frameId, documentId }`, so a fill requested by a subframe is delivered to that document
   and no other. It cannot land in the top frame, and it fails closed when `documentId` is
   absent.
+- **Delivery from the popup is scoped to the top frame.** `sendApplyFill` passes
+  `{ frameId: 0 }`. Corrected during implementation: this section originally claimed
+  delivery was document-scoped outright, which was only ever true of the content-script
+  path. The popup has no sender frame at all, so it kept an unscoped three-argument
+  `chrome.tabs.sendMessage` — which was harmless only because a single frame ran a content
+  script. Under `all_frames: true` **every** frame has an `applyFill` listener, so that
+  call becomes a tab-wide broadcast of a decrypted password: a subframe sharing the top
+  page's hostname passes `hostnameMatches` (hostname only — scheme and port are ignored,
+  so an `http://` or third-party frame on the same host qualifies), has no pending fill
+  target, and falls through to `findLoginForm()`/`findOtpField()`, writing the password
+  into a field the user never chose. Directly contrary to this design's Goal, "no
+  credential crosses a frame boundary". The popup can only ever be acting on the top-level
+  document, so frame 0 is its entire legitimate audience.
 - **Origin validation is per-frame.** `sender.url` is the *frame's* URL, so
   `hostnameMatches(requestUrl, sender.url)` compares against the frame's own origin. A
   cross-origin sign-in iframe receives credentials for its own domain, never the parent's.
