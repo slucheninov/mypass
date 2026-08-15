@@ -485,10 +485,10 @@
     saveButton.textContent = 'Save';
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
     saveButton.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
+      sendRuntimeMessage({ type: 'getCredentials', url }, (response) => {
         routeBannerCredentialsResponse(
           response, url, otpauthOrSecret, state, priority,
-          (message) => chrome.runtime.sendMessage(message)
+          (message) => sendRuntimeMessage(message)
         );
       });
       banner.remove();
@@ -595,7 +595,7 @@
     saveButton.textContent = 'Save';
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
     saveButton.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: 'proposeSaveLogin', url, username, password });
+      sendRuntimeMessage({ type: 'proposeSaveLogin', url, username, password });
       banner.remove();
       state.bannerShown = false;
     });
@@ -870,6 +870,36 @@
     return { root, rows, unlockButton, ringCircles };
   }
 
+  // Set by the browser-only wiring below, once icons/observers/panel actually exist to tear
+  // down. Stays a no-op under node and in the sliver of time before that wiring runs — there
+  // is nothing to release yet in either case.
+  let handleExtensionContextLost = () => {};
+
+  // An unpacked extension reload destroys the context of content scripts already injected
+  // into open tabs, while leaving their DOM on the page. `chrome.runtime.id` is the cheapest
+  // reliable signal: it is undefined once the context is gone, and reading it never throws.
+  // Every message this script sends must be guarded by it, or a stale icon throws
+  // "Extension context invalidated" on click instead of quietly doing nothing.
+  function isExtensionContextAlive(chromeRef) {
+    const ref = chromeRef || (typeof chrome !== 'undefined' ? chrome : null);
+    return !!(ref && ref.runtime && ref.runtime.id);
+  }
+
+  // The single choke point every chrome.runtime.sendMessage call in this file goes through.
+  // When the context is dead the send is skipped — never attempted, never thrown — and
+  // handleExtensionContextLost runs so any injected UI (icons, an open panel, observers, the
+  // ring ticker) is torn down instead of being left on the page looking alive. `chromeRef` is
+  // test-only plumbing, mirroring isExtensionContextAlive above; real call sites omit it and
+  // get the global `chrome`.
+  function sendRuntimeMessage(message, callback, chromeRef) {
+    const ref = chromeRef || (typeof chrome !== 'undefined' ? chrome : null);
+    if (!isExtensionContextAlive(ref)) {
+      handleExtensionContextLost();
+      return;
+    }
+    ref.runtime.sendMessage(message, callback);
+  }
+
   if (typeof chrome !== 'undefined' && typeof document !== 'undefined') {
     // Reference comparison only — reading properties of a cross-origin window.top throws,
     // comparing the reference does not.
@@ -885,7 +915,7 @@
     };
 
     function requestCredentials() {
-      chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
+      sendRuntimeMessage({ type: 'getCredentials', url: location.href }, (response) => {
         // Track lock-state separately from "empty list": a `locked` response
         // also carries no credentials, but is NOT the same as "genuinely no
         // matches for this site" — conflating the two lets the save-banner
@@ -900,6 +930,9 @@
     let openPanel = null;
     let syncScheduled = false;
     let panelRequestId = 0;
+    // The MutationObserver returned by observeTotpCandidates() below, captured so
+    // teardownExtensionContext can disconnect it once the extension context dies.
+    let mutationObserver = null;
     // The field whose panel row was just clicked, so applyFill knows which group to fill
     // instead of guessing the first password field in document order (the bug this fixes).
     // Set unconditionally in onSelect, before handleEntrySelect runs — a rejected untrusted
@@ -1022,6 +1055,19 @@
       openPanel = null;
     }
 
+    // Runs once sendRuntimeMessage detects the extension context is gone (an unpacked
+    // reload orphaned this content script while its DOM stayed on the page). Reuses the
+    // existing release machinery rather than a parallel teardown path: closePanel() already
+    // clears the ring ticker unconditionally, and releaseIcon() is the same function
+    // pruneDetachedIcons uses per-icon. Idempotent — closePanel/releaseIcon/disconnect are
+    // all safe to call again, and a second pass here simply finds nothing left to do.
+    function teardownExtensionContext() {
+      closePanel();
+      Array.from(attachedIcons.entries()).forEach(([input, record]) => releaseIcon(input, record));
+      if (mutationObserver) mutationObserver.disconnect();
+    }
+    handleExtensionContextLost = teardownExtensionContext;
+
     function togglePanel(input, kind) {
       const wasOpenForThisInput = !!(openPanel && openPanel.input === input);
       closePanel();
@@ -1032,7 +1078,7 @@
       // Always re-ask rather than trusting state.lastCredentialList: the vault may have
       // been unlocked since page load, and a stale locked panel is the exact failure
       // Stage 3 shipped and had to fix.
-      chrome.runtime.sendMessage({ type: 'getCredentials', url: location.href }, (response) => {
+      sendRuntimeMessage({ type: 'getCredentials', url: location.href }, (response) => {
         // Superseded by a later open, or cancelled by a close, while we were waiting.
         if (requestId !== panelRequestId) return;
         const routed = chooseInlinePanel(response, kind);
@@ -1043,13 +1089,13 @@
         const content = buildPanelContent(document, routed, {
           onSelect: (event, entryId) => {
             setPendingFillTarget(input, kind, Date.now());
-            if (handleEntrySelect(event, entryId, location.href, (m) => chrome.runtime.sendMessage(m))) {
+            if (handleEntrySelect(event, entryId, location.href, (m) => sendRuntimeMessage(m))) {
               closePanel();
             }
           },
           onUnlock: (event) => {
             if (isTrustedActivation(event)) {
-              chrome.runtime.sendMessage({ type: 'requestUnlock' });
+              sendRuntimeMessage({ type: 'requestUnlock' });
               closePanel();
             }
           },
@@ -1189,7 +1235,7 @@
         showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
       }
     }
-    observeTotpCandidates(state, attachIcons, IS_TOP_FRAME);
+    mutationObserver = observeTotpCandidates(state, attachIcons, IS_TOP_FRAME);
   }
 
   if (typeof module !== 'undefined') {
@@ -1207,6 +1253,7 @@
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
       FRAME_FEATURE_POLICY, isFeatureEnabledInFrame, buildMutationSweep, observeTotpCandidates,
+      isExtensionContextAlive, sendRuntimeMessage,
     };
   }
 })();

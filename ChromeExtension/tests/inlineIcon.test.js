@@ -824,3 +824,34 @@ const { observeTotpCandidates } = require('../content.js');
   global.MutationObserver = savedObserver;
 }
 console.log('inlineIcon.test.js: bodyless-frame observer guard OK');
+
+const { isExtensionContextAlive, sendRuntimeMessage } = require('../content.js');
+
+// isExtensionContextAlive: chrome.runtime.id is the live signal. Reading a missing
+// `runtime` (or a missing chrome altogether) must never throw — that is the entire point
+// of this helper existing instead of a bare `chrome.runtime.id` check at each call site.
+assert.strictEqual(isExtensionContextAlive({ runtime: { id: 'abc' } }), true, 'a present runtime.id means the context is alive');
+assert.strictEqual(isExtensionContextAlive({ runtime: {} }), false, 'a runtime with no id means the context is gone');
+assert.strictEqual(isExtensionContextAlive({}), false, 'no runtime at all means the context is gone');
+assert.doesNotThrow(() => isExtensionContextAlive(null), 'a null chromeRef must not throw');
+assert.strictEqual(isExtensionContextAlive(null), false, 'a null chromeRef means the context is gone');
+assert.doesNotThrow(() => isExtensionContextAlive(undefined), 'an undefined chromeRef must not throw');
+assert.strictEqual(isExtensionContextAlive(undefined), false, 'an undefined chromeRef means the context is gone (no global chrome under node)');
+console.log('inlineIcon.test.js: isExtensionContextAlive OK');
+
+// sendRuntimeMessage: the single choke point every chrome.runtime.sendMessage call in
+// content.js goes through. Assert on a recorded call list, not just a boolean, so the test
+// actually proves the send reached (or didn't reach) chrome.runtime.sendMessage.
+{
+  const sentMessages = [];
+  const aliveChrome = { runtime: { id: 'abc', sendMessage: (message, callback) => { sentMessages.push(message); if (callback) callback({ ok: true }); } } };
+  sendRuntimeMessage({ type: 'getCredentials', url: 'https://example.com' }, () => {}, aliveChrome);
+  assert.deepStrictEqual(sentMessages, [{ type: 'getCredentials', url: 'https://example.com' }], 'a live context sends the message through to chrome.runtime.sendMessage');
+}
+{
+  const sentMessages = [];
+  const deadChrome = { runtime: { id: undefined, sendMessage: (message) => { sentMessages.push(message); } } };
+  sendRuntimeMessage({ type: 'getCredentials', url: 'https://example.com' }, () => {}, deadChrome);
+  assert.deepStrictEqual(sentMessages, [], 'a dead context must not reach chrome.runtime.sendMessage at all');
+}
+console.log('inlineIcon.test.js: extension context guard OK');
