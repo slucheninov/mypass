@@ -32,7 +32,13 @@ page load (`state.lastCredentialList`), and a hardened fill path (`fillCredentia
 
 - **Forms inside iframes.** Requires `all_frames: true`, which injects the content script
   into every ad and tracking frame on every page. That is a separate decision with its own
-  cost; see "Rejected alternatives".
+  cost; see "Rejected alternatives". **Reversed 2026-08-15**: the motivating case — a
+  third-party sign-in widget — is cross-origin by definition, so deferring left the actual
+  target case broken. See
+  [2026-08-15-chrome-extension-inline-icon-iframes-design.md](./2026-08-15-chrome-extension-inline-icon-iframes-design.md)
+  for the frame-gating design that lets `all_frames: true` ship without widening the banner
+  or QR-detection surface. The reasoning above for deferring was correct at the time; it was
+  the coverage gap, not the cost, that shifted.
 - **A settings toggle.** Not requested. The icon is inert until clicked, and pairing already
   expresses consent. Revisit if the icon proves intrusive in the manual walk.
 - **Changing the padding or geometry of the site's own inputs.** See "Positioning".
