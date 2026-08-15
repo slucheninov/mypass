@@ -57,14 +57,28 @@ assert.strictEqual(
 const searchPlaceholder = fakeInput({ type: 'text', placeholder: 'Search' });
 assert.strictEqual(scoreUsernameLikeness(searchPlaceholder), 1, 'placeholder="Search" does not match user|login|email — scores only the type bonus');
 
-// The hint bonus is a single +2, not one +2 per matching source: a field matching in BOTH
-// name and placeholder must score the same as one matching only name.
+// The placeholder/aria-label/label hint bonus is a single +2 that only applies when name/id
+// gave NO signal — a field matching in BOTH name and placeholder must score the same as one
+// matching only name (the new source adds nothing on top of an existing name/id match).
 const nameOnly = fakeInput({ type: 'text', name: 'user-email' });
 const nameAndPlaceholder = fakeInput({ type: 'text', name: 'user-email', placeholder: 'Email' });
 assert.strictEqual(
   scoreUsernameLikeness(nameAndPlaceholder),
   scoreUsernameLikeness(nameOnly),
   'matching in both name and placeholder must not stack — same score as matching only name'
+);
+
+// name and id, however, keep their ORIGINAL independent scoring — this is not a "hint group"
+// merge. A field matching in both must still score strictly higher than one matching only
+// name, because findBestUsernameInput picks the single highest scorer among candidates, not
+// just whichever clears MIN_USERNAME_FIELD_SCORE. (This is the regression a prior draft of
+// this feature introduced by wrongly folding name/id into the same capped group as the new
+// placeholder/aria-label/label sources — pinned here so it fails loudly if reintroduced.)
+const nameAndId = fakeInput({ type: 'text', name: 'username', id: 'username' });
+const nameField = fakeInput({ type: 'text', name: 'username' });
+assert.ok(
+  scoreUsernameLikeness(nameAndId) > scoreUsernameLikeness(nameField),
+  'a field matching in both name and id must score strictly higher than one matching only name'
 );
 
 console.log('formDetection.test.js: placeholder/aria-label/label hint scoring OK');

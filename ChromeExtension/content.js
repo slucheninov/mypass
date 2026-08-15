@@ -54,19 +54,29 @@
 
     if (autocomplete.includes('username')) score += 5;
     if (type === 'email') score += 3;
-    // A single +2 "identifier hint" bonus shared across name, id, placeholder, aria-label,
-    // and an associated <label>'s text. Matching in more than one of these must NOT stack —
-    // a field whose name AND placeholder both say "email" scores the same as one that only
-    // has a matching name — otherwise redundant hints on the same field would out-rank a
-    // field with a single, equally strong signal.
+    // name and id keep their original, independent +2 each — a field matching BOTH still
+    // outscores one matching only name, which matters because findBestUsernameInput picks
+    // the single highest scorer among candidates, not just whichever clears the floor.
+    const nameMatches = /user|login|email/.test(name);
+    const idMatches = /user|login|email/.test(id);
+    if (nameMatches) score += 2;
+    if (idMatches) score += 2;
+    // placeholder / aria-label / an associated <label>'s text are weaker hints than name/id
+    // (a placeholder can describe almost anything), so they only contribute when name/id gave
+    // NO signal at all, and only once even if more than one of the three matches — otherwise
+    // a field whose placeholder AND aria-label both say "email" would outscore one whose name
+    // alone says "user", and a field already identified via name/id would get a second,
+    // redundant bonus.
     // Known trade-off, accepted deliberately: a search box with placeholder="Search by
-    // email" now also matches this pattern. It under-triggers far less often than the
-    // coverage gap this closes (identifier-first login fields hinted only by placeholder/
-    // aria-label/label), and the icon stays inert until clicked.
-    const hasHint = [name, id, placeholder, ariaLabel, labelText].some((value) =>
-      /user|login|email/.test(value)
-    );
-    if (hasHint) score += 2;
+    // email" now also matches this pattern when no name/id hint exists. It under-triggers
+    // far less often than the coverage gap this closes (identifier-first login fields hinted
+    // only by placeholder/aria-label/label), and the icon stays inert until clicked.
+    if (!nameMatches && !idMatches) {
+      const hasNewHint = [placeholder, ariaLabel, labelText].some((value) =>
+        /user|login|email/.test(value)
+      );
+      if (hasNewHint) score += 2;
+    }
     if (type === 'text' || type === 'email') score += 1;
     return score;
   }
