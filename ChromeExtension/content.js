@@ -1080,6 +1080,7 @@
       buildTotpCandidateQueryResponse,
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
+      panelRingFraction,
     };
   }
 })();

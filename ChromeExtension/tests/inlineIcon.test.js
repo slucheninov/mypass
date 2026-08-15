@@ -435,7 +435,34 @@ for (const node of ringDescendants) {
     !(node.listeners && node.listeners.click && node.listeners.click.length > 0),
     'no click listener is registered on the ring or anything inside it — it is an indicator only'
   );
+  // textContent alone would miss a code leaked into an attribute instead of a text node
+  // (e.g. a stray title/aria-label/data-* meant for debugging). Check every attribute on
+  // every ring descendant for a run of 6 digits — the shape of a TOTP code.
+  if (node.attributes) {
+    for (const [attrName, attrValue] of Object.entries(node.attributes)) {
+      const isCheckedAttr = attrName === 'title' || attrName === 'aria-label' || attrName.startsWith('data-');
+      if (!isCheckedAttr) continue;
+      assert.ok(
+        !/\d{6}/.test(String(attrValue)),
+        `attribute ${attrName} inside the ring must not carry a 6-digit run (leaked code)`
+      );
+    }
+  }
 }
+
+// panelRingFraction — the wall-clock-only source for the ring's fill. Pin the boundary
+// arithmetic so a future refactor that rewires the ring to a fetched value (instead of
+// Date.now()) fails here rather than shipping silently: this is the panel's entire trust
+// model for "the ring never carries the secret". Timestamps are passed explicitly — this
+// test never calls Date.now().
+const { panelRingFraction } = require('../content.js');
+assert.strictEqual(panelRingFraction(0), 1, 'exactly on a 30s boundary the ring is full (fraction 1)');
+assert.strictEqual(panelRingFraction(15000), 0.5, '15s past the boundary the ring is half full');
+assert.ok(
+  panelRingFraction(29999) > 0 && panelRingFraction(29999) < 0.001,
+  'just before the next boundary the fraction approaches 0'
+);
+console.log('inlineIcon.test.js: panelRingFraction OK');
 
 // Row 1 (noTotp: hasTotp: false) — no ring at all.
 const row1 = entriesPanel.rows[1];

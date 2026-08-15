@@ -67,7 +67,17 @@ function normalizePairingCode(raw) {
 // (totpCircle, popup-fallback, totpPicker, passkeyPopup) require this file directly and drive
 // it all the way into renderCredentials, so a bare global reference throws under node. require
 // them there instead — the same three-world seam entry-visuals.js itself is built for.
-const { letterFromTitle, colorForTitle } = typeof require === 'function'
+// Bound as a namespace object, NOT destructured into `letterFromTitle`/`colorForTitle`
+// names: popup.html loads entry-visuals.js as a classic <script> immediately before this
+// one, so both scripts share ONE global scope, and entry-visuals.js declares those two
+// names as top-level function declarations there. A top-level `const`/`let` here with the
+// SAME names would be a lexical redeclaration of names the earlier script already put in
+// the global environment — that is a load-time SyntaxError under
+// GlobalDeclarationInstantiation, thrown before a single statement of this file runs (see
+// ChromeExtension/tests/scriptScopes.test.js). Node can't see this: under `require`, this
+// file is a CommonJS module with its own scope, so no collision exists there. Do not
+// "simplify" this back into `const { letterFromTitle, colorForTitle } = ...`.
+const entryVisuals = typeof require === 'function'
   ? require('./shared/entry-visuals.js')
   : { letterFromTitle: window.letterFromTitle, colorForTitle: window.colorForTitle };
 
@@ -546,7 +556,7 @@ if (typeof document !== 'undefined') {
   function buildLetterAvatarElement(title) {
     const avatar = document.createElement('div');
     avatar.className = 'letter-avatar';
-    avatar.style.backgroundColor = colorForTitle(title);
+    avatar.style.backgroundColor = entryVisuals.colorForTitle(title);
     avatar.setAttribute('role', 'img');
     avatar.setAttribute(
       'aria-label',
@@ -554,7 +564,7 @@ if (typeof document !== 'undefined') {
     );
     const letter = document.createElement('span');
     letter.className = 'letter-avatar-letter';
-    letter.textContent = letterFromTitle(title);
+    letter.textContent = entryVisuals.letterFromTitle(title);
     avatar.appendChild(letter);
     return avatar;
   }
