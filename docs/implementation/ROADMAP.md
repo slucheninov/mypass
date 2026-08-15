@@ -488,6 +488,62 @@ them were regressions in already-shipped surfaces.
 
 ---
 
+## Stage 8 — Inline icon follow-ups: recognition, dark theme, iframes
+
+Three strands landed together, all reached through `feat/inline-icon-polish` and
+`feat/inline-icon-iframes` plus an independent security fix. Spec:
+[`2026-08-15-chrome-extension-inline-icon-iframes-design`](../superpowers/specs/2026-08-15-chrome-extension-inline-icon-iframes-design.md),
+plan: [`2026-08-15-chrome-extension-inline-icon-iframes`](../superpowers/plans/2026-08-15-chrome-extension-inline-icon-iframes.md).
+The polish strand and the IP fix had no plan of their own — both were small and are recorded
+here as their own items.
+
+- [x] **F1** — `placeholder` / `aria-label` / associated `<label>` join `name` and `id` as
+      username hints, as ONE group contributing `+2` at most and only when neither `name` nor
+      `id` matched. `name` and `id` keep their original independent `+2` each — a first
+      attempt merged them, compressing the range that `findBestUsernameInput` ranks by
+- [x] **F2** — `prefers-color-scheme: dark` block in the panel's shadow stylesheet
+- [x] **F3** — Frame policy (`FRAME_FEATURE_POLICY`, `isFeatureEnabledInFrame`) and its four
+      gates: both banners, the initial TOTP scan, and the `queryTotpCandidate` responder stay
+      in the top frame. Fails closed — a feature added later without a policy entry does not
+      silently start rendering inside every ad frame
+  - [x] `buildMutationSweep` extracted so the sweep's two halves are independently testable.
+        The observer serves `attachIcons` (all frames) and the TOTP banner (top only); a
+        review swapped them and all 14 suites stayed green, which is why it is now pinned
+- [x] **F4** — `manifest.json` split into two content-script entries: `all_frames: true` for
+      `content.js`, and `vendor/jsQR.js` top-frame only. 314,849 → 57,872 bytes per subframe
+- [x] **F5** — Cross-origin fixture (`inline-icon-iframe-parent.html`) plus `RUN.md` walk
+  - [x] Retargeted from `localhost:8766` to `127.0.0.1:8766` — `hostnameMatches` compares
+        hostname only, so the original fixture could not falsify its own acceptance criterion
+  - [x] The walk is ordered, not a list: the "no banner in a frame" check must run BEFORE an
+        entry exists for that host, because the banner only fires when the domain has none
+- [x] **F6** *(security)* — The popup's `applyFill` is scoped with `{ frameId: 0 }`. Under
+      `all_frames` the old unscoped three-argument call became a tab-wide broadcast of a
+      decrypted password: any same-hostname subframe passed the origin check, had no pending
+      target, and fell through to `findLoginForm()`
+- [x] **F7** — `document.body` guards in `observeTotpCandidates` and `attachIconTo`. SVG and
+      XML documents are ordinary iframe targets and have no body
+- [x] **F8** — `isExtensionContextAlive` guards all seven `chrome.runtime.sendMessage` sites
+      and tears down our own injected UI when the context dies. Reloading an unpacked
+      extension orphans content scripts in open tabs; every stale icon threw
+      "Extension context invalidated" on click
+- [x] **F9** *(security)* — `ExtensionEntryMatcher` compares IP literals whole. It reduced
+      every host to its last two labels, so `127.0.0.1`, `192.168.0.1` and `10.0.0.1` all
+      became `"0.1"` — a router admin password was offered on a page served from localhost
+
+**⛳ Gate 8 — PASSED (2026-08-15).** `./scripts/test.sh` green unpiped on the merged result
+(`EXIT=0`, `** TEST SUCCEEDED **`, 0 failures), and the full `RUN.md` walk confirmed on a real
+Chrome build across both strands.
+
+The walk earned its keep again. **F6 and F9 were both found in the browser, not by review** —
+F6 by the final whole-branch review only after it was told to read the untouched
+`background.js`, and F9 by the user noticing an unexpected entry in a panel and calling it "a
+small nuance". Three separate checks in this stage turned out to be **incapable of failing**
+before they were fixed: the same-hostname fixture, the prerequisite that silenced the banner
+check it was meant to enable, and IPv6 tests using dotless addresses that never reached the
+branch they claimed to cover.
+
+---
+
 ## Progress
 
 | Stage | Items | Done |
@@ -500,7 +556,8 @@ them were regressions in already-shipped surfaces.
 | 5 — Piece B (B1–B11) | 11 | **11 — complete** |
 | 6 — Piece C rest (C1, C4–C11) | 9 | **9 — code complete, Gate 6 manual walk open** |
 | 7 — Inline fill icon (I1–I7) | 7 | **7 — complete** |
-| **Total** | **62** | **62** |
+| 8 — Inline icon follow-ups (F1–F9) | 9 | **9 — complete** |
+| **Total** | **71** | **71** |
 
 ## Decisions
 
@@ -540,6 +597,11 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-15 | `background.js` no longer off-limits | The Stage 7 spec declared `background.js` unchangeable, assuming the existing fill path would just work. It did not: `relayFillToActiveTab` read `tab.url`, which the `activeTab` permission only exposes after a gesture **on the extension** — a click inside the page is not one — so inline fills silently aborted on every fresh tab. The constraint was wrong and was lifted. |
 | 2026-08-15 | Relay targets the sender, not the active tab | Content-script fills now resolve `sender.tab.id` and validate against `sender.url`, with delivery scoped by `frameId`/`documentId`; the popup keeps the active-tab path, which its own opening gesture makes valid. This needs no host permissions and is strictly stronger than before: the secret goes to the exact document that asked, and a navigation mid-round-trip makes delivery fail instead of landing in the new origin's renderer. Fails closed when `documentId` is absent. |
 | 2026-08-15 | Shared entry visuals | `letterFromTitle`/`colorForTitle` (and the palette they hash into) live in `ChromeExtension/shared/entry-visuals.js`, loaded by both the popup and the content script. Duplicating them would let one entry show different colours in the two surfaces — visible to a user, invisible to every test. The extraction initially broke the popup outright (top-level `const` redeclaring a name an earlier classic script had already declared: `SyntaxError` at instantiation, invisible to node and not reproduced by `vm.runInContext`); `scriptScopes.test.js` now guards that class statically. |
+| 2026-08-15 | Frame policy fails closed | Which behaviours may run outside the top frame is stated once as data (`FRAME_FEATURE_POLICY`), not as `window.top === window` scattered through the file. An unknown feature name is enabled NOWHERE — adding a behaviour forces a decision about frames instead of inheriting one, so a banner added later cannot quietly start rendering inside every ad frame on the web. |
+| 2026-08-15 | Popup fill scoped to frame 0 | Turning on `all_frames` gave every frame an `applyFill` listener, which turned the popup's unscoped `chrome.tabs.sendMessage` into a tab-wide broadcast of a decrypted password — any same-hostname subframe passed the origin check and fell through to `findLoginForm()`. Now `{ frameId: 0 }`. Consequence accepted: a login form living only inside an iframe is no longer fillable from the popup; the in-frame icon is that path. Not a regression — before `all_frames` no subframe had a listener at all. |
+| 2026-08-15 | IP literals compared whole | `registrableDomain` took the last two dot-separated labels, collapsing `127.0.0.1`, `192.168.0.1` and `10.0.0.1` to `"0.1"`. A router admin password was therefore offered to any local server on an address ending `.0.1`. IPv4 (all labels numeric) and IPv6 (contains `:`) are now returned whole. Found by the user during the Stage 8 walk; the bug dated from Phase 4 and had survived every prior review and walk. Left deliberately: the `.co.uk` limitation, non-canonical IPv4 spellings (`192.168.1`, `0x7f.1`), and a second trailing dot — all under-match, which is the safe direction. |
+| 2026-08-15 | Orphaned content scripts | Reloading an unpacked extension destroys the context of content scripts already injected into open tabs while leaving their DOM in place, so every stale icon threw "Extension context invalidated" on click. All seven `chrome.runtime.sendMessage` sites are now guarded by `chrome.runtime.id`, and a dead context tears our own UI out of the page. Deliberately NOT a blanket try/catch — genuine failures from a live context still surface. |
+| 2026-08-15 | Three checks that could not fail | Recorded because the pattern recurred: a fixture whose two "different" origins were both `localhost`; a prerequisite that saved an entry and thereby silenced the very banner the next bullet checked for; and IPv6 tests using dotless addresses, which the pre-existing single-label passthrough answered without ever reaching the branch under test. Each looked like coverage and provided none. When a check asserts the ABSENCE of something, it needs a control showing that something can appear at all. |
 
 ## Known trap when running the suite
 
