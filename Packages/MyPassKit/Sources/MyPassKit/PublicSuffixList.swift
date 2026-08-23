@@ -20,6 +20,10 @@ public enum PublicSuffixList {
     private static let rules: Rules = loadRules()
 
     private static func loadRules() -> Rules {
+        // Fail closed rather than falling back to an empty rule set: an empty
+        // rule set would make every host fall through to the implicit `*`
+        // rule and silently reintroduce the "co.uk over-matches co.uk"
+        // security bug this type exists to fix.
         guard let url = Bundle.module.url(forResource: "public_suffix_list", withExtension: "dat"),
               let contents = try? String(contentsOf: url, encoding: .utf8) else {
             fatalError("PublicSuffixList: missing or unreadable public_suffix_list.dat resource")
