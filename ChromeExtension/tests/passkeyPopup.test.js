@@ -8,7 +8,6 @@ function makeEl(id) {
     id,
     hidden: false,
     textContent: '',
-    innerHTML: '',
     value: '',
     checked: false,
     disabled: false,
@@ -21,6 +20,18 @@ function makeEl(id) {
     addEventListener(name, fn) { (this.listeners[name] = this.listeners[name] || []).push(fn); },
     setAttribute(name, value) { this[name] = value; }
   };
+  let innerHTML = '';
+  // Real DOM `.innerHTML = ''` (what renderPasskeyPicker uses to clear the list before
+  // re-rendering) tears down existing children too — without mirroring that, `.children`
+  // from an earlier render call would linger and be picked up by a later test's row-click
+  // assertions, attributing an old, unrelated click handler to a "new" row.
+  Object.defineProperty(el, 'innerHTML', {
+    get() { return innerHTML; },
+    set(value) {
+      innerHTML = value;
+      if (value === '') el.children = [];
+    }
+  });
   elements[id] = el;
   return el;
 }
@@ -71,6 +82,7 @@ global.chrome = {
 const {
   choosePasskeyPanel,
   passkeyCeremonySummary,
+  passkeyTargetSummary,
   renderPasskeyCeremonyPanel,
   rehydratePendingPasskeyCeremony,
   sendPasskeyCancel,
@@ -104,6 +116,43 @@ assert.ok(passkeyCeremonySummary({ rpId: 'example.com' }).includes('unknown orig
 assert.strictEqual(passkeyCeremonySummary(null), '');
 console.log('passkeyPopup.test.js: summary shows rpId and origin OK');
 
+// --- passkeyTargetSummary: which entry is the save/replace target -----------
+const basePending = { rpId: 'example.com', originUrl: 'https://example.com' };
+
+// Gate 6 regression: zero matches must read as "a new entry will be created", not the
+// bare rpId/origin pair that looked identical to the 1-match case.
+assert.deepStrictEqual(passkeyTargetSummary({ ...basePending, matches: [] }), {
+  headline: 'New entry for example.com',
+  detail: 'example.com — https://example.com'
+});
+
+// One match with a username: headline names both the entry and the account on it.
+assert.deepStrictEqual(passkeyTargetSummary({ ...basePending, matches: [withoutPasskey] }), {
+  headline: 'Save passkey to "Example" (bob)?',
+  detail: 'example.com — https://example.com'
+});
+
+// One match without a username: the "()" segment is omitted rather than left empty.
+const noUsername = { id: 'e3', title: 'No Username Entry', username: '', hasPasskey: false };
+assert.deepStrictEqual(passkeyTargetSummary({ ...basePending, matches: [noUsername] }), {
+  headline: 'Save passkey to "No Username Entry"?',
+  detail: 'example.com — https://example.com'
+});
+
+// One match that already has a passkey: Replace wording, not Save.
+assert.deepStrictEqual(passkeyTargetSummary({ ...basePending, matches: [withPasskey] }), {
+  headline: 'Replace passkey in "Example" (alice)?',
+  detail: 'example.com — https://example.com'
+});
+
+// The picker path passes an explicit override (the row the user clicked) rather than
+// relying on matches[0], since the picker's own matches list always has more than one.
+assert.deepStrictEqual(
+  passkeyTargetSummary({ ...basePending, matches: [withPasskey, withoutPasskey] }, withoutPasskey),
+  { headline: 'Save passkey to "Example" (bob)?', detail: 'example.com — https://example.com' }
+);
+console.log('passkeyPopup.test.js: passkeyTargetSummary headline/detail OK');
+
 // --- rendering --------------------------------------------------------------
 function resetPanels() {
   for (const el of Object.values(elements)) el.hidden = false;
@@ -121,17 +170,27 @@ assert.strictEqual(elements['passkey-replace-panel'].hidden, true);
 assert.strictEqual(elements['list-panel'].hidden, true, 'a ceremony hides the ordinary credential list');
 assert.strictEqual(elements['add-totp-section'].hidden, true, 'a ceremony hides the Add-2FA section');
 assert.strictEqual(elements['passkey-settings-footer'].hidden, true, 'a ceremony hides the settings toggle');
-assert.strictEqual(elements['passkey-save-summary'].textContent, 'example.com — https://example.com');
+assert.strictEqual(elements['passkey-save-summary'].textContent, 'New entry for example.com');
+assert.strictEqual(elements['passkey-save-detail'].textContent, 'example.com — https://example.com', 'origin line stays visible as a secondary line');
 console.log('passkeyPopup.test.js: create panel renders and owns the popup OK');
+
+resetPanels();
+renderPasskeyCeremonyPanel({ kind: 'create', requestId: 1.5, rpId: 'example.com', originUrl: 'https://example.com', matches: [withoutPasskey] });
+assert.strictEqual(elements['passkey-save-panel'].hidden, false);
+assert.strictEqual(elements['passkey-save-summary'].textContent, 'Save passkey to "Example" (bob)?', 'single match names the target entry');
+assert.strictEqual(elements['passkey-save-detail'].textContent, 'example.com — https://example.com');
+console.log('passkeyPopup.test.js: single-match save panel names the target entry OK');
 
 resetPanels();
 renderPasskeyCeremonyPanel({ kind: 'create', requestId: 2, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey] });
 assert.strictEqual(elements['passkey-replace-panel'].hidden, false);
+assert.strictEqual(elements['passkey-replace-summary'].textContent, 'Replace passkey in "Example" (alice)?');
+assert.strictEqual(elements['passkey-replace-detail'].textContent, 'example.com — https://example.com');
 elements['passkey-replace-btn'].onclick();
 assert.deepStrictEqual(sentMessages[0], { type: 'passkeyCreateConfirm', requestId: 2, entryId: 'e1', replace: true });
 assert.strictEqual(closed, 1, 'confirming closes the popup');
 assert.strictEqual(sessionStore[PENDING_PASSKEY_KEY], undefined, 'confirming clears the pending record');
-console.log('passkeyPopup.test.js: replace panel sends replace:true OK');
+console.log('passkeyPopup.test.js: replace panel sends replace:true and names the target entry OK');
 
 resetPanels();
 renderPasskeyCeremonyPanel({ kind: 'get', requestId: 3, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey] });
@@ -147,6 +206,32 @@ assert.strictEqual(elements['passkey-picker-list'].children.length, 2, 'one row 
 elements['passkey-picker-cancel-btn'].onclick();
 assert.deepStrictEqual(sentMessages[0], { type: 'passkeyCancelUI', requestId: 4 });
 console.log('passkeyPopup.test.js: picker renders every match and can be cancelled OK');
+
+// Gate 6 regression: picking a row that already has a passkey must land on the Replace
+// confirm, not silently overwrite it via a direct passkeyCreateConfirm call.
+resetPanels();
+renderPasskeyCeremonyPanel({ kind: 'create', requestId: 12, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey, withoutPasskey] });
+const [passkeyRow, plainRow] = elements['passkey-picker-list'].children;
+passkeyRow.listeners.click[0]();
+assert.strictEqual(sentMessages.length, 0, 'selecting an entry that already has a passkey must not confirm directly');
+assert.strictEqual(elements['passkey-replace-panel'].hidden, false, 'it must route to the Replace confirm panel instead');
+assert.strictEqual(elements['passkey-replace-summary'].textContent, 'Replace passkey in "Example" (alice)?');
+elements['passkey-replace-btn'].onclick();
+assert.deepStrictEqual(sentMessages[0], { type: 'passkeyCreateConfirm', requestId: 12, entryId: 'e1', replace: true });
+console.log('passkeyPopup.test.js: picker routes an existing-passkey row to Replace confirm OK');
+
+// A plain row (no existing passkey) still goes through an explicit Save confirm, naming
+// that specific entry — not an immediate write either.
+resetPanels();
+renderPasskeyCeremonyPanel({ kind: 'create', requestId: 13, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey, withoutPasskey] });
+const [, plainRowAgain] = elements['passkey-picker-list'].children;
+plainRowAgain.listeners.click[0]();
+assert.strictEqual(sentMessages.length, 0, 'selecting a plain entry must not confirm directly either');
+assert.strictEqual(elements['passkey-save-panel'].hidden, false);
+assert.strictEqual(elements['passkey-save-summary'].textContent, 'Save passkey to "Example" (bob)?');
+elements['passkey-save-btn'].onclick();
+assert.deepStrictEqual(sentMessages[0], { type: 'passkeyCreateConfirm', requestId: 13, entryId: 'e2', replace: false });
+console.log('passkeyPopup.test.js: picker routes a plain row to a named Save confirm OK');
 
 resetPanels();
 sendPasskeyCancel(9);
