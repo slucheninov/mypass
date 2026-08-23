@@ -235,6 +235,15 @@ final class ExtensionBridgeService {
             guard pairingManager.isAuthorized(pairing: pairing) else {
                 return .pairingRequired
             }
+            // Chrome's attach/detach state can lag the app-side setting (the popup only
+            // resyncs on certain opens), so the app itself must refuse here whenever the
+            // feature is off, regardless of whatever the extension currently believes.
+            guard UserDefaults.standard.bool(forKey: "passkeyProxyEnabled") else {
+                return .passkeyCreateComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "NotAllowedError", message: "MyPass passkeys are turned off in Settings")
+                )
+            }
             guard let database = vaultSession?.currentDatabase else {
                 return .locked
             }
@@ -363,6 +372,15 @@ final class ExtensionBridgeService {
         case .passkeyGet(_, let requestId, let requestDetailsJson, let originUrl, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {
                 return .pairingRequired
+            }
+            // Chrome's attach/detach state can lag the app-side setting (the popup only
+            // resyncs on certain opens), so the app itself must refuse here whenever the
+            // feature is off, regardless of whatever the extension currently believes.
+            guard UserDefaults.standard.bool(forKey: "passkeyProxyEnabled") else {
+                return .passkeyGetComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "NotAllowedError", message: "MyPass passkeys are turned off in Settings")
+                )
             }
             guard let database = vaultSession?.currentDatabase else {
                 return .locked

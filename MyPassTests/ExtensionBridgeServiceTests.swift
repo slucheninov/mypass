@@ -28,10 +28,15 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         try store.add(PairedBrowser(id: UUID(), label: "Test", createdAt: Date(), secretHash: hash))
         authorizedPairingSecret = secret
         service = ExtensionBridgeService(vaultSession: session, pairingManager: manager)
+        // Passkey create/get tests exercise the ceremony flow and assume the app-side
+        // toggle is on unless a test explicitly overrides it (see the toggle-off tests
+        // below) — matches the default `testGetPasskeyProxyStatus...` tests use.
+        UserDefaults.standard.set(true, forKey: "passkeyProxyEnabled")
     }
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: tempDir)
+        UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled")
     }
 
     private func addFixtureEntry(title: String, username: String, password: String, url: String) -> UUID {
@@ -755,6 +760,21 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(response, .pairingRequired)
     }
 
+    func testPasskeyCreateRefusesWhenAppSideToggleIsOff() {
+        UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 42, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(let requestId, let responseJson, let error) = response else {
+            return XCTFail("expected passkeyCreateComplete with error, got \(response)")
+        }
+        XCTAssertEqual(requestId, 42)
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "NotAllowedError")
+        XCTAssertEqual(error?.message, "MyPass passkeys are turned off in Settings")
+    }
+
     func testPasskeyGetReturnsPendingForMatchingRp() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         attachPasskey(to: id)
@@ -780,6 +800,23 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         ))
         guard case .passkeyGetPending(_, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
         XCTAssertEqual(matches.map(\.title), ["Match"])
+    }
+
+    func testPasskeyGetRefusesWhenAppSideToggleIsOff() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id)
+        UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
+        let response = service.handle(.passkeyGet(
+            token: "t", requestId: 43, requestDetailsJson: getFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetComplete(let requestId, let responseJson, let error) = response else {
+            return XCTFail("expected passkeyGetComplete with error, got \(response)")
+        }
+        XCTAssertEqual(requestId, 43)
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "NotAllowedError")
+        XCTAssertEqual(error?.message, "MyPass passkeys are turned off in Settings")
     }
 
     func testPasskeyGetReturnsNotAllowedErrorWhenNoMatch() {
