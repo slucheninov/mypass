@@ -4,7 +4,7 @@
 outstanding workstreams is tracked. Tick a box only when the item is implemented **and**
 its tests pass — see "Definition of done" below.
 
-Last updated: 2026-08-15
+Last updated: 2026-08-23
 
 ---
 
@@ -557,7 +557,7 @@ branch they claimed to cover.
 | 6 — Piece C rest (C1, C4–C11) | 9 | **9 — code complete, Gate 6 manual walk open** |
 | 7 — Inline fill icon (I1–I7) | 7 | **7 — complete** |
 | 8 — Inline icon follow-ups (F1–F9) | 9 | **9 — complete** |
-| **Total** | **71** | **71** |
+| **Total** | **71** | **71 code-complete — Gate 6 manual walk still open** |
 
 ## Decisions
 
@@ -600,10 +600,18 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-15 | Frame policy fails closed | Which behaviours may run outside the top frame is stated once as data (`FRAME_FEATURE_POLICY`), not as `window.top === window` scattered through the file. An unknown feature name is enabled NOWHERE — adding a behaviour forces a decision about frames instead of inheriting one, so a banner added later cannot quietly start rendering inside every ad frame on the web. |
 | 2026-08-15 | Popup fill scoped to frame 0 | Turning on `all_frames` gave every frame an `applyFill` listener, which turned the popup's unscoped `chrome.tabs.sendMessage` into a tab-wide broadcast of a decrypted password — any same-hostname subframe passed the origin check and fell through to `findLoginForm()`. Now `{ frameId: 0 }`. Consequence accepted: a login form living only inside an iframe is no longer fillable from the popup; the in-frame icon is that path. Not a regression — before `all_frames` no subframe had a listener at all. |
 | 2026-08-15 | IP literals compared whole | `registrableDomain` took the last two dot-separated labels, collapsing `127.0.0.1`, `192.168.0.1` and `10.0.0.1` to `"0.1"`. A router admin password was therefore offered to any local server on an address ending `.0.1`. IPv4 (all labels numeric) and IPv6 (contains `:`) are now returned whole. Found by the user during the Stage 8 walk; the bug dated from Phase 4 and had survived every prior review and walk. Left deliberately: the `.co.uk` limitation, non-canonical IPv4 spellings (`192.168.1`, `0x7f.1`), and a second trailing dot — all under-match, which is the safe direction. |
+| 2026-08-23 | `.co.uk` correction | The 2026-08-15 row called the multi-label suffix limitation an under-match; it was an OVER-match (`google.co.uk` and `amazon.co.uk` both reduced to `co.uk`, offering one site's credentials on the other). Fixed by `PublicSuffixList` in MyPassKit (full publicsuffix.org list incl. PRIVATE section); bare suffixes, single labels and IP literals compare whole. Unicode-form PSL rules (IDN suffixes such as `公司.hk`) are not matched against punycode hosts — no IDNA conversion; unchanged from the previous behaviour and tracked as a follow-up. |
+| 2026-08-23 | Citadel smoke test self-skips | The suite now skips itself when `/tmp/citadel_smoke_key` is absent, with the regeneration command in the skip message; "Known trap" below is historical. |
+| 2026-08-23 | Piece B follow-ups closed | Banner buttons require `event.isTrusted`; per-image QR decode memoized; `img` load events re-trigger the sweep; `isReplacingTotp` derived from current input. "Picker panel polish" dropped — no concrete defect was ever recorded for it. Lowercase manual setup keys remain deferred (original ruling stands). |
+| 2026-08-23 | `SecuritySettingsPane.swift:251` | Diagnostic detail kept deliberately until the real-device Keychain failure is root-caused. |
 | 2026-08-15 | Orphaned content scripts | Reloading an unpacked extension destroys the context of content scripts already injected into open tabs while leaving their DOM in place, so every stale icon threw "Extension context invalidated" on click. All seven `chrome.runtime.sendMessage` sites are now guarded by `chrome.runtime.id`, and a dead context tears our own UI out of the page. Deliberately NOT a blanket try/catch — genuine failures from a live context still surface. |
 | 2026-08-15 | Three checks that could not fail | Recorded because the pattern recurred: a fixture whose two "different" origins were both `localhost`; a prerequisite that saved an entry and thereby silenced the very banner the next bullet checked for; and IPv6 tests using dotless addresses, which the pre-existing single-label passthrough answered without ever reaching the branch under test. Each looked like coverage and provided none. When a check asserts the ABSENCE of something, it needs a control showing that something can appear at all. |
+| 2026-08-23 | Gate 6 walk finding — passkey create candidates | `passkeyCreate` listed only entries that already had a passkey for the rpId, so with existing Login entries for the host the popup showed a generic "Save passkey" for `<rpId — origin>` and confirm created a new, unrelated entry. Candidates are now the union of PSL-domain-matched Login entries and rpId passkey entries (spec step 4); the save/replace panels name the target entry and username, 0 matches says "New entry". |
+| 2026-08-23 | Gate 6 walk finding — app-side passkey toggle | Toggling **Use MyPass for Chrome passkeys** in the app took effect only after a service-worker restart: `attachPasskeyProxyIfEligible` gated on the extension's own local cache (written only by the popup toggle), and nothing ever called `detach()` when the app's status said disabled — an app-side "off" left Chrome attached indefinitely. `passkeyProxyStatus` now carries `enabled` (the app's opt-in, reported separately from `attachAllowed` so it survives a locked vault); every status fetch resyncs the local cache and attaches/detaches accordingly (`syncPasskeyProxyFromStatus`), and the popup now sends a fire-and-forget `refreshPasskeyProxy` on every open, so a much more frequent event than a restart re-checks the app's authoritative state. App unreachable (no status) leaves both the cache and the current attachment untouched. |
 
 ## Known trap when running the suite
+
+**Fixed 2026-08-23** — the suite now skips itself when the fixture is missing; the text below is kept for history.
 
 `Packages/SyncKit/Tests/SyncKitTests/CitadelDependencySmokeTests.swift` reads a hand-made
 ed25519 key from `/tmp/citadel_smoke_key`. macOS clears `/tmp`, and unlike its neighbours

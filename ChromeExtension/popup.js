@@ -407,6 +407,28 @@ function choosePasskeyPanel(pending) {
   return matches.length === 1 && matches[0].hasPasskey ? 'passkey-replace' : 'passkey-save';
 }
 
+/// `{ headline, detail }` for the Save / Replace panels, so the user can see *which*
+/// entry is about to be written to (or, with zero matches, that a new entry will be
+/// created) rather than only the generic rpId/origin pair. `detail` is always the same
+/// `passkeyCeremonySummary` line — kept as a second, secondary line so the phishing-
+/// relevant rpId/origin comparison stays visible no matter which headline is shown.
+///
+/// `overrideMatch` lets the picker ask for the headline of a specific row the user just
+/// clicked, rather than `pending.matches[0]` (which is only meaningful when there is
+/// exactly one match — the picker path always has more than one).
+function passkeyTargetSummary(pending, overrideMatch) {
+  const detail = passkeyCeremonySummary(pending);
+  if (!pending) return { headline: '', detail };
+  const matches = pending.matches || [];
+  const match = overrideMatch || (matches.length === 1 ? matches[0] : null);
+  if (!match) {
+    return { headline: `New entry for ${pending.rpId}`, detail };
+  }
+  const who = match.username ? `"${match.title}" (${match.username})` : `"${match.title}"`;
+  const headline = match.hasPasskey ? `Replace passkey in ${who}?` : `Save passkey to ${who}?`;
+  return { headline, detail };
+}
+
 if (typeof document !== 'undefined') {
   const lockedPanel = document.getElementById('locked-panel');
   const lockedTitleEl = document.getElementById('locked-title');
@@ -963,9 +985,23 @@ if (typeof document !== 'undefined') {
       }
       item.appendChild(textCol);
 
+      if (pending.kind === 'create' && credential.hasPasskey) {
+        const badge = document.createElement('span');
+        badge.className = 'passkey-badge';
+        badge.textContent = 'Passkey';
+        item.appendChild(badge);
+      }
+
       item.addEventListener('click', () => {
         if (pending.kind === 'create') {
-          sendPasskeyCreateConfirm(pending.requestId, credential.id, credential.hasPasskey);
+          // An entry that already carries a passkey must go through the same "Replace
+          // passkey?" confirm every other route to that panel uses — never straight to
+          // `sendPasskeyCreateConfirm`, which would silently overwrite it.
+          if (credential.hasPasskey) {
+            showPasskeySaveOrReplacePanel(pending, 'passkey-replace', credential.id, credential);
+          } else {
+            showPasskeySaveOrReplacePanel(pending, 'passkey-save', credential.id, credential);
+          }
         } else {
           sendPasskeyGetApprove(pending.requestId, credential.id);
         }
@@ -973,6 +1009,21 @@ if (typeof document !== 'undefined') {
       passkeyPickerListEl.appendChild(item);
     });
   };
+
+  /// Shared by the direct 0/1-match routing in `renderPasskeyCeremonyPanel` and by the
+  /// picker's row click handler (which needs to show Save/Replace for the entry the user
+  /// just picked, rather than confirming immediately).
+  function showPasskeySaveOrReplacePanel(pending, panel, entryId, overrideMatch) {
+    const isReplace = panel === 'passkey-replace';
+    const { headline, detail } = passkeyTargetSummary(pending, overrideMatch);
+    document.getElementById(isReplace ? 'passkey-replace-summary' : 'passkey-save-summary').textContent = headline;
+    document.getElementById(isReplace ? 'passkey-replace-detail' : 'passkey-save-detail').textContent = detail;
+    document.getElementById(isReplace ? 'passkey-replace-btn' : 'passkey-save-btn').onclick =
+      () => sendPasskeyCreateConfirm(pending.requestId, entryId, isReplace);
+    document.getElementById(isReplace ? 'passkey-replace-cancel-btn' : 'passkey-cancel-btn').onclick =
+      () => sendPasskeyCancel(pending.requestId);
+    showPanel(panel);
+  }
 
   renderPasskeyCeremonyPanel = function (pending) {
     const panel = choosePasskeyPanel(pending);
@@ -998,13 +1049,7 @@ if (typeof document !== 'undefined') {
       return true;
     }
 
-    const isReplace = panel === 'passkey-replace';
-    document.getElementById(isReplace ? 'passkey-replace-summary' : 'passkey-save-summary').textContent = summaryText;
-    document.getElementById(isReplace ? 'passkey-replace-btn' : 'passkey-save-btn').onclick =
-      () => sendPasskeyCreateConfirm(pending.requestId, entryId, isReplace);
-    document.getElementById(isReplace ? 'passkey-replace-cancel-btn' : 'passkey-cancel-btn').onclick =
-      () => sendPasskeyCancel(pending.requestId);
-    showPanel(panel);
+    showPasskeySaveOrReplacePanel(pending, panel, entryId);
     return true;
   };
 
@@ -1027,18 +1072,37 @@ if (typeof document !== 'undefined') {
     });
   };
 
-  // `checked` comes from the extension's own stored flag, not from `attachAllowed` —
-  // attachAllowed is false whenever the vault is locked, which says nothing about
-  // whether the user turned the feature on.
+  // The app is authoritative (2026-08-23 fix): `checked` is set from a fresh
+  // `status.enabled` whenever the app answers, and only falls back to the extension's
+  // stored flag while the app cannot be reached (matching the 2026-08-09 "C popup toggle
+  // state" decision for the unreachable case). `attachAllowed`/`unlocked` still only
+  // decide whether the control itself is enabled, not its checked state.
   initPasskeySettingsToggle = function () {
     passkeySettingsFooter.hidden = false;
+    // `statusApplied` guards against the async chrome.storage.local.get callback below
+    // clobbering a fresher value already set from the app's status — the two callbacks
+    // race with no ordering guarantee between them.
+    let statusApplied = false;
     chrome.storage.local.get(['passkeyProxyEnabled'], (stored) => {
+      if (statusApplied) return;
       passkeyProxyToggle.checked = !!(stored && stored.passkeyProxyEnabled);
     });
     chrome.runtime.sendMessage({ type: 'getPasskeyProxyStatus' }, (status) => {
       const reachable = !!(status && status.type === 'passkeyProxyStatus');
+      // A pre-`enabled` app (old wire shape) reports no opt-in at all; that is not
+      // authoritative, so fall back to whatever the stored cache/checkbox already shows.
+      if (reachable && status.enabled !== undefined) {
+        passkeyProxyToggle.checked = !!status.enabled;
+        statusApplied = true;
+      }
       passkeyProxyToggle.disabled = !(reachable && status.unlocked && status.paired);
     });
+    // Fire-and-forget: lets the background service worker resync its cache and
+    // attach/detach against the app's current status on every popup open, rather than
+    // only at service-worker startup. The no-op callback reads chrome.runtime.lastError
+    // so Chrome doesn't log an "Unchecked runtime.lastError" warning if the message port
+    // closes before a response (the handler never sends one for this message).
+    chrome.runtime.sendMessage({ type: 'refreshPasskeyProxy' }, () => { void chrome.runtime.lastError; });
     passkeyProxyToggle.addEventListener('change', () => {
       chrome.runtime.sendMessage({ type: 'setPasskeyProxyEnabled', enabled: passkeyProxyToggle.checked });
     });
@@ -1124,6 +1188,7 @@ if (typeof module !== 'undefined') {
     requestPageTotpCandidate,
     PENDING_PASSKEY_KEY,
     passkeyCeremonySummary,
+    passkeyTargetSummary,
     choosePasskeyPanel,
     rehydratePendingPasskeyCeremony,
     renderPasskeyCeremonyPanel,

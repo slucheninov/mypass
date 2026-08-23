@@ -52,37 +52,37 @@ final class EntryEditSaveLogicTests: XCTestCase {
         XCTAssertEqual(entry.totpSecretBase32, "JBSWY3DPEHPK3PXP")
     }
 
-    func testRequiresReplaceConfirmationWhenEntryHasExistingSecretAndFromProposal() {
-        var entry = KdbxEntry(
-            uuid: UUID(), iconID: 0, fields: [],
-            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(), locationChanged: Date(),
-            history: []
-        )
-        entry.totpSecretBase32 = "JBSWY3DP"
-        XCTAssertTrue(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: entry, isFromTotpProposal: true))
+    /// Clearing the OTP field means "keep the existing secret" (per `applyOTP`'s
+    /// empty-input semantics) — it must not trigger the replace-confirmation, even if
+    /// the field was originally populated by a TOTP proposal from the extension.
+    func testRequiresReplaceConfirmationFalseWhenInputClearedAfterProposalPrefill() {
+        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingSecret: "JBSWY3DP", currentOtpauthInput: ""))
     }
 
-    func testRequiresReplaceConfirmationFalseWhenNotFromProposal() {
-        var entry = KdbxEntry(
-            uuid: UUID(), iconID: 0, fields: [],
-            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(), locationChanged: Date(),
-            history: []
-        )
-        entry.totpSecretBase32 = "JBSWY3DP"
-        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: entry, isFromTotpProposal: false))
+    func testRequiresReplaceConfirmationFalseWhenInputIdenticalToExisting() {
+        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingSecret: "JBSWY3DP", currentOtpauthInput: "JBSWY3DP"))
+    }
+
+    func testRequiresReplaceConfirmationTrueWhenInputDiffersFromExisting() {
+        XCTAssertTrue(EntryEditSaveLogic.requiresReplaceConfirmation(existingSecret: "JBSWY3DP", currentOtpauthInput: "OTHERSECRET"))
     }
 
     func testRequiresReplaceConfirmationFalseWhenNoExistingSecret() {
-        let entry = KdbxEntry(
-            uuid: UUID(), iconID: 0, fields: [],
-            creationTime: Date(), lastModificationTime: Date(), lastAccessTime: Date(), locationChanged: Date(),
-            history: []
-        )
-        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: entry, isFromTotpProposal: true))
+        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingSecret: nil, currentOtpauthInput: "ANYTHING"))
     }
 
-    func testRequiresReplaceConfirmationFalseWhenCreatingNewEntry() {
-        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingEntry: nil, isFromTotpProposal: true))
+    func testRequiresReplaceConfirmationFalseWhenExistingSecretIsEmptyString() {
+        XCTAssertFalse(EntryEditSaveLogic.requiresReplaceConfirmation(existingSecret: "", currentOtpauthInput: "ANYTHING"))
+    }
+
+    /// A TOTP proposal from the extension pre-fills the OTP field (see
+    /// `initialOtpauthInput`), and that prefill must still trigger the replace
+    /// confirmation when it differs from an existing stored secret.
+    func testRequiresReplaceConfirmationTrueWhenProposalPrefillDiffersFromExisting() {
+        let prefilled = EntryEditSaveLogic.initialOtpauthInput(
+            prefilled: "otpauth://totp/New:x?secret=NEWSECRET", existingSecret: "EXISTING"
+        )
+        XCTAssertTrue(EntryEditSaveLogic.requiresReplaceConfirmation(existingSecret: "EXISTING", currentOtpauthInput: prefilled))
     }
 
     func testApplyOTPRemovalClearsExistingSecret() {

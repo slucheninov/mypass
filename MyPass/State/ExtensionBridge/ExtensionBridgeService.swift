@@ -79,6 +79,27 @@ final class ExtensionBridgeService {
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
     }
 
+    /// Candidate entries for a `passkeyCreate` prompt: the union of entries whose saved
+    /// URL domain-matches the page origin (so a plain Login the user already has for the
+    /// site is offered as the save target) and entries that already carry a passkey for
+    /// `rpId` (so "replace passkey" is reachable even if the entry's own URL doesn't PSL-
+    /// match the current origin, e.g. it was saved from a different subdomain). Domain
+    /// matches are listed first; passkey-only entries are appended without duplicating any
+    /// entry that satisfied both. This differs deliberately from `.passkeyGet`, where only
+    /// entries that already hold a passkey for the rpId are ever candidates — signing in
+    /// must never offer to "create" against a plain Login that has no key to assert with.
+    private func passkeyCreateCandidates(forOriginUrl originUrl: String, rpId: String, in database: KdbxDatabase) -> [KdbxEntry] {
+        let domainMatches = matchingEntries(forURL: originUrl, in: database)
+        let passkeyMatches = passkeyEntries(forRelyingParty: rpId, in: database)
+        var seen = Set(domainMatches.map(\.uuid))
+        var candidates = domainMatches
+        for entry in passkeyMatches where !seen.contains(entry.uuid) {
+            seen.insert(entry.uuid)
+            candidates.append(entry)
+        }
+        return candidates
+    }
+
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
         guard vaultSession?.currentDatabase != nil || request.isAnswerableWhileLocked else {
             return .locked
@@ -196,8 +217,12 @@ final class ExtensionBridgeService {
             // extension mirrors this flag locally, and without the app's value in the
             // answer, turning the feature off in Settings would leave an already-attached
             // Chrome attached indefinitely (there is no push channel to tell it otherwise).
+            // `enabled` is reported separately (and even while locked) so the extension can
+            // learn the app-side opt-in on its own and resync its cache/attachment without
+            // waiting for a service-worker restart — the app is authoritative, the
+            // extension's local flag is only a cache.
             let enabled = UserDefaults.standard.bool(forKey: "passkeyProxyEnabled")
-            return .passkeyProxyStatus(unlocked: unlocked, paired: true, attachAllowed: unlocked && enabled)
+            return .passkeyProxyStatus(unlocked: unlocked, paired: true, attachAllowed: unlocked && enabled, enabled: enabled)
 
         case .setPasskeyProxyEnabled(_, let enabled, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {
@@ -228,7 +253,7 @@ final class ExtensionBridgeService {
                 )
             }
             // Phase 1 parses and routes only — no key generation, no vault write.
-            let matches = passkeyEntries(forRelyingParty: context.rpId, in: database)
+            let matches = passkeyCreateCandidates(forOriginUrl: originUrl, rpId: context.rpId, in: database)
             pendingPasskeyCreates[requestId] = (context: context, originUrl: originUrl)
             return .passkeyCreatePending(
                 requestId: requestId, rpId: context.rpId, rpName: context.rpName,
@@ -248,8 +273,19 @@ final class ExtensionBridgeService {
                     error: PasskeyErrorDetails(name: "NotAllowedError", message: "No pending request")
                 )
             }
-            let targetEntry = entryId.flatMap { id in
-                EntrySearch.allEntries(in: database.rootGroup)
+            // Resolved from the same candidate set `.passkeyCreate` offered the popup — not
+            // "any entry in the vault" — matching the pattern `fillCredential`/`getTotp`/
+            // `proposeSaveTotp` already use via `matchingEntries(forURL:)`. Without this, a
+            // confirm carrying an `entryId` the popup never actually listed (stale UI, a
+            // forged message, a race with a since-changed candidate set) would silently
+            // attach a passkey to an unrelated entry.
+            let candidateIds = Set(
+                passkeyCreateCandidates(forOriginUrl: pending.originUrl, rpId: pending.context.rpId, in: database)
+                    .map(\.uuid.uuidString)
+            )
+            let targetEntry = entryId.flatMap { id -> KdbxEntry? in
+                guard candidateIds.contains(id) else { return nil }
+                return EntrySearch.allEntries(in: database.rootGroup)
                     .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
                     .first(where: { $0.uuid.uuidString == id })
             }
@@ -257,10 +293,14 @@ final class ExtensionBridgeService {
                 pendingPasskeyCreates.removeValue(forKey: requestId)
                 return .passkeyCreateComplete(
                     requestId: requestId, responseJson: nil,
-                    error: PasskeyErrorDetails(name: "NotAllowedError", message: "Entry not found")
+                    error: PasskeyErrorDetails(name: "NotAllowedError", message: "Entry not found or domain mismatch")
                 )
             }
             if let targetEntry, targetEntry.passkeyPrivateKeyPEM?.isEmpty == false, !replace {
+                // The ceremony is already being completed with an error on the extension
+                // side here — nothing can legitimately consume a pending record left alive
+                // after this point, so it is cleared like every other failure return.
+                pendingPasskeyCreates.removeValue(forKey: requestId)
                 return .passkeyCreateComplete(
                     requestId: requestId, responseJson: nil,
                     error: PasskeyErrorDetails(name: "InvalidStateError", message: "Entry already has a passkey")

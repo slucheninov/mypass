@@ -9,10 +9,19 @@ import Citadel
 /// via:
 /// `ssh-keygen -t ed25519 -N "correct-horse-battery-staple" -f /tmp/citadel_smoke_key -C "smoketest@mypass"`
 final class CitadelDependencySmokeTests: XCTestCase {
+    private static let privateKeyPath = "/tmp/citadel_smoke_key"
+
     private let passphrase = "correct-horse-battery-staple"
 
+    override func setUpWithError() throws {
+        try XCTSkipUnless(
+            FileManager.default.fileExists(atPath: Self.privateKeyPath),
+            "Citadel smoke fixture missing. Regenerate with: ssh-keygen -t ed25519 -N \"correct-horse-battery-staple\" -f /tmp/citadel_smoke_key -C \"smoketest@mypass\""
+        )
+    }
+
     private func loadEncryptedPrivateKeyData() throws -> Data {
-        try Data(contentsOf: URL(fileURLWithPath: "/tmp/citadel_smoke_key"))
+        try Data(contentsOf: URL(fileURLWithPath: Self.privateKeyPath))
     }
 
     func testCitadelTypesAreLinkedAndImportable() {

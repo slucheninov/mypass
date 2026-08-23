@@ -321,9 +321,25 @@
     return null;
   }
 
+  // Per-image QR decode memoization. detectQrCandidate re-scans every <img> on the page on
+  // each debounced mutation sweep (~400ms), and the jsQR decode — not the DOM walk — is the
+  // expensive part. Keyed on the image element itself (a WeakMap, so a removed <img> is
+  // simply forgotten rather than pinned in memory) plus a content key so an SPA that reuses
+  // the same <img> node for a different picture (a src swap) still gets a fresh decode
+  // instead of a stale cached result. `naturalWidth`/`naturalHeight` are folded into the key
+  // for the same reason: some sites redraw the same URL at a different size.
+  const qrDecodeCache = new WeakMap();
+
+  function qrImageCacheKey(imgEl) {
+    return (imgEl.currentSrc || imgEl.src) + '|' + imgEl.naturalWidth + 'x' + imgEl.naturalHeight;
+  }
+
   function decodeQrFromImage(imgEl) {
     try {
       if (!imgEl.complete || !imgEl.naturalWidth) return null;
+      const key = qrImageCacheKey(imgEl);
+      const cached = qrDecodeCache.get(imgEl);
+      if (cached && cached.key === key) return cached.result;
       const canvas = document.createElement('canvas');
       canvas.width = imgEl.naturalWidth;
       canvas.height = imgEl.naturalHeight;
@@ -331,10 +347,13 @@
       ctx.drawImage(imgEl, 0, 0);
       const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
       const result = typeof jsQR === 'function' ? jsQR(imageData.data, imageData.width, imageData.height) : null;
-      return result ? result.data : null;
+      const decoded = result ? result.data : null;
+      qrDecodeCache.set(imgEl, { key, result: decoded });
+      return decoded;
     } catch (error) {
       // getImageData throws on a CORS-tainted canvas (cross-origin image) —
-      // skip rather than treat as a hard failure.
+      // skip rather than treat as a hard failure. Not cached: a CORS failure is about the
+      // canvas/context, not the image's content, so nothing here is safe to remember.
       return null;
     }
   }
@@ -404,6 +423,20 @@
   // page script could synthesize a click and trigger a fill/reveal the user never asked for.
   function isTrustedActivation(event) {
     return !!(event && event.isTrusted === true);
+  }
+
+  // Same trust gate as handleIconActivate/handleEntrySelect, generalized for the Save/Dismiss
+  // buttons on the two page-injected banners (showTotpSaveBanner, showSaveBanner). Those
+  // buttons live in a document the page script can see and dispatch synthetic click events
+  // at, unlike the popup, so every handler that sends a message or mutates state must first
+  // confirm the event was user-generated. Returns a listener suitable for addEventListener,
+  // rather than checking inline in each handler, so every banner button site gets the same
+  // gate the same way.
+  function trustedClickHandler(handler) {
+    return function (event) {
+      if (!isTrustedActivation(event)) return;
+      handler(event);
+    };
   }
 
   function handleIconActivate(event, requestPanel) {
@@ -484,7 +517,7 @@
     const saveButton = document.createElement('button');
     saveButton.textContent = 'Save';
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
-    saveButton.addEventListener('click', () => {
+    saveButton.addEventListener('click', trustedClickHandler(() => {
       sendRuntimeMessage({ type: 'getCredentials', url }, (response) => {
         routeBannerCredentialsResponse(
           response, url, otpauthOrSecret, state, priority,
@@ -493,16 +526,16 @@
       });
       banner.remove();
       state.totpBannerShown = false;
-    });
+    }));
 
     const closeButton = document.createElement('button');
     closeButton.textContent = '×';
     closeButton.style.cssText = 'margin-left:8px;cursor:pointer;background:none;border:none;color:inherit;';
-    closeButton.addEventListener('click', () => {
+    closeButton.addEventListener('click', trustedClickHandler(() => {
       banner.remove();
       state.totpBannerShown = false;
       state.totpBannerDismissed = { priority };
-    });
+    }));
 
     banner.appendChild(saveButton);
     banner.appendChild(closeButton);
@@ -528,6 +561,20 @@
       }
     };
   }
+
+  // Guards the document-level 'load' listener added below against being attached more than
+  // once. Real wiring calls observeTotpCandidates exactly once per frame, but nothing stops a
+  // test — or a future caller — from calling it again, and a duplicate capture-phase listener
+  // on `document` would silently double-schedule every image load forever. The listener bound
+  // here closes over the FIRST observeTotpCandidates call's own `scheduleSweep` — a second
+  // call's sweep/debounceTimer would simply never be reachable, hence the guard rather than
+  // "just let it re-attach".
+  let totpImageLoadListenerAttached = false;
+  // The listener function itself, so teardownExtensionContext (below, in the browser-only
+  // wiring) can remove exactly this listener and reset the flag when the extension context
+  // dies — otherwise it would keep firing after an unpacked-extension reload orphans this
+  // content script, re-running the sweep and re-injecting icons/banners into a dead page.
+  let totpImageLoadListener = null;
 
   // onMutation defaults to a no-op so this stays callable from tests without a DOM;
   // the browser-only wiring below passes attachIcons so newly-inserted fields get an
@@ -555,11 +602,42 @@
     const body = (typeof document !== 'undefined' && document) ? document.body : null;
     if (!body) return null;
     let debounceTimer = null;
-    const observer = new MutationObserver(() => {
+    const scheduleSweep = () => {
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(sweep, 400);
-    });
+    };
+    const observer = new MutationObserver(scheduleSweep);
     observer.observe(body, { childList: true, subtree: true });
+
+    // A QR image that finishes loading after this sweep already ran — e.g. a slow network
+    // image whose <img> node was already in the DOM at mutation time — is otherwise never
+    // re-examined: nothing mutates again, so the MutationObserver above never fires for it.
+    // 'load' does not bubble, so it must be caught in the capture phase on `document` rather
+    // than on the image itself (which this code never has a direct reference to). Gated on
+    // the same 'totpBanner' frame policy buildMutationSweep applies to onScanForBanner above:
+    // QR rescans are top-frame-only work, same as the rest of the banner feature. Attached at
+    // most once via the module-level flag above.
+    if (!totpImageLoadListenerAttached && isFeatureEnabledInFrame('totpBanner', isTopFrame)) {
+      totpImageLoadListenerAttached = true;
+      totpImageLoadListener = (event) => {
+        // A page-synthesized 'load' event must not evict the QR cache or force a sweep.
+        if (!isTrustedActivation(event)) return;
+        // A dead extension context (unpacked reload) must not re-run the sweep: with no
+        // background service worker to answer it, attachIcons()/showTotpSaveBanner() would
+        // inject dead UI into a page nothing can ever service again. teardownExtensionContext
+        // removes this listener once sendRuntimeMessage first observes the context is gone,
+        // but this early-return also protects the gap before that first detection.
+        if (!isExtensionContextAlive()) return;
+        if (!event || !event.target || event.target.tagName !== 'IMG') return;
+        // The just-finished load may be a same-URL, same-size refresh (a re-fetched
+        // endpoint, an animated/refreshing QR) — decodeQrFromImage's cache would otherwise
+        // hand back the stale verdict from before this load, defeating the whole point of
+        // rescanning. Drop this image's cache entry so the upcoming sweep decodes fresh.
+        qrDecodeCache.delete(event.target);
+        scheduleSweep();
+      };
+      document.addEventListener('load', totpImageLoadListener, true);
+    }
     return observer;
   }
 
@@ -594,19 +672,19 @@
     const saveButton = document.createElement('button');
     saveButton.textContent = 'Save';
     saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
-    saveButton.addEventListener('click', () => {
+    saveButton.addEventListener('click', trustedClickHandler(() => {
       sendRuntimeMessage({ type: 'proposeSaveLogin', url, username, password });
       banner.remove();
       state.bannerShown = false;
-    });
+    }));
 
     const closeButton = document.createElement('button');
     closeButton.textContent = '×';
     closeButton.style.cssText = 'margin-left:8px;cursor:pointer;background:none;border:none;color:inherit;';
-    closeButton.addEventListener('click', () => {
+    closeButton.addEventListener('click', trustedClickHandler(() => {
       banner.remove();
       state.bannerShown = false;
-    });
+    }));
 
     banner.appendChild(saveButton);
     banner.appendChild(closeButton);
@@ -1065,6 +1143,11 @@
       closePanel();
       Array.from(attachedIcons.entries()).forEach(([input, record]) => releaseIcon(input, record));
       if (mutationObserver) mutationObserver.disconnect();
+      if (totpImageLoadListener) {
+        document.removeEventListener('load', totpImageLoadListener, true);
+        totpImageLoadListener = null;
+        totpImageLoadListenerAttached = false;
+      }
     }
     handleExtensionContextLost = teardownExtensionContext;
 
@@ -1247,8 +1330,8 @@
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
       classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
-      isTrustedActivation, handleIconActivate, handleEntrySelect,
-      buildTotpCandidateQueryResponse,
+      isTrustedActivation, handleIconActivate, handleEntrySelect, trustedClickHandler,
+      buildTotpCandidateQueryResponse, showTotpSaveBanner, showSaveBanner,
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,

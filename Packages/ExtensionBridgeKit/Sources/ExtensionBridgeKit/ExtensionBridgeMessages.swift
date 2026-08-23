@@ -272,7 +272,7 @@ public enum ExtensionBridgeResponse: Equatable {
     case saveProposalAccepted
     case unlockPresented
     case unlockNotNeeded
-    case passkeyProxyStatus(unlocked: Bool, paired: Bool, attachAllowed: Bool)
+    case passkeyProxyStatus(unlocked: Bool, paired: Bool, attachAllowed: Bool, enabled: Bool)
     case passkeyProxyEnabled(enabled: Bool)
     case passkeyCreatePending(requestId: Int, rpId: String, rpName: String, matches: [ExtensionCredentialSummary])
     case passkeyCreateComplete(requestId: Int, responseJson: String?, error: PasskeyErrorDetails?)
@@ -322,7 +322,12 @@ extension ExtensionBridgeResponse: Codable {
             let unlocked = try container.decode(Bool.self, forKey: .unlocked)
             let paired = try container.decode(Bool.self, forKey: .paired)
             let attachAllowed = try container.decode(Bool.self, forKey: .attachAllowed)
-            self = .passkeyProxyStatus(unlocked: unlocked, paired: paired, attachAllowed: attachAllowed)
+            // Tolerant decode: production always encodes `enabled` (see below), but a
+            // decoder must survive an older wire shape without it — the extension's own
+            // fallback (treat a missing field as "no authority yet") lives in background.js,
+            // not here; this default only keeps the type itself decodable.
+            let enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
+            self = .passkeyProxyStatus(unlocked: unlocked, paired: paired, attachAllowed: attachAllowed, enabled: enabled)
         case "passkeyProxyEnabled":
             let enabled = try container.decode(Bool.self, forKey: .enabled)
             self = .passkeyProxyEnabled(enabled: enabled)
@@ -389,11 +394,12 @@ extension ExtensionBridgeResponse: Codable {
             try container.encode("unlockPresented", forKey: .type)
         case .unlockNotNeeded:
             try container.encode("unlockNotNeeded", forKey: .type)
-        case .passkeyProxyStatus(let unlocked, let paired, let attachAllowed):
+        case .passkeyProxyStatus(let unlocked, let paired, let attachAllowed, let enabled):
             try container.encode("passkeyProxyStatus", forKey: .type)
             try container.encode(unlocked, forKey: .unlocked)
             try container.encode(paired, forKey: .paired)
             try container.encode(attachAllowed, forKey: .attachAllowed)
+            try container.encode(enabled, forKey: .enabled)
         case .passkeyProxyEnabled(let enabled):
             try container.encode("passkeyProxyEnabled", forKey: .type)
             try container.encode(enabled, forKey: .enabled)

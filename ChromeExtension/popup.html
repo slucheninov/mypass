@@ -228,6 +228,20 @@
       background: rgba(80, 160, 255, 0.15);
       color: #3b82f6;
     }
+    .passkey-badge {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 600;
+      padding: 2px 6px;
+      border-radius: 4px;
+      background: rgba(52, 199, 89, 0.15);
+      color: #248a3d;
+    }
+    p.passkey-detail {
+      font-size: 11px;
+      color: #86868b;
+      margin: -6px 0 12px;
+    }
     [hidden] {
       display: none !important;
     }
@@ -279,6 +293,7 @@
     <section id="passkey-save-panel" hidden>
       <h1 class="panel-title">Save passkey</h1>
       <p class="panel-helper passkey-summary" id="passkey-save-summary"></p>
+      <p class="passkey-detail" id="passkey-save-detail"></p>
       <button id="passkey-save-btn" type="button" class="btn-primary">Save</button>
       <button id="passkey-cancel-btn" type="button" class="btn-secondary">Cancel</button>
     </section>
@@ -286,6 +301,7 @@
     <section id="passkey-replace-panel" hidden>
       <h1 class="panel-title">Replace passkey?</h1>
       <p class="panel-helper passkey-summary" id="passkey-replace-summary"></p>
+      <p class="passkey-detail" id="passkey-replace-detail"></p>
       <p class="panel-helper">This entry already has a passkey. Replacing it means the old one stops working.</p>
       <button id="passkey-replace-btn" type="button" class="btn-primary">Replace</button>
       <button id="passkey-replace-cancel-btn" type="button" class="btn-secondary">Cancel</button>

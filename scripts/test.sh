@@ -35,6 +35,7 @@ if command -v node >/dev/null 2>&1; then
   node ChromeExtension/tests/unlockButton.test.js
   node ChromeExtension/tests/totpCircle.test.js
   node ChromeExtension/tests/totpDetection.test.js
+  node ChromeExtension/tests/totpBanner.test.js
   node ChromeExtension/tests/totpPicker.test.js
   node ChromeExtension/tests/passkeyProxy.test.js
   node ChromeExtension/tests/passkeyPopup.test.js

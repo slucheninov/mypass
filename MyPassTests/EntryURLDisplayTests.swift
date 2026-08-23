@@ -7,9 +7,9 @@ final class EntryURLDisplayTests: XCTestCase {
     }
 
     func testDomainFromBareHostWithoutScheme() {
-        // Naive last-two-labels heuristic (documented limitation, no PSL support):
-        // a multi-part suffix like "co.uk" collapses instead of preserving "example.co.uk".
-        XCTAssertEqual(EntryURLDisplay.domain(from: "example.co.uk"), "co.uk")
+        // PSL-correct: "co.uk" is a multi-label public suffix, so
+        // "example.co.uk" is preserved whole rather than collapsing to "co.uk".
+        XCTAssertEqual(EntryURLDisplay.domain(from: "example.co.uk"), "example.co.uk")
     }
 
     func testDomainFromEmptyStringIsNil() {
