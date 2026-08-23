@@ -1,7 +1,9 @@
 // Covers three "B follow-ups parked" items from ROADMAP Decisions 2026-08-08:
 //   3a — event.isTrusted gating on the Save/Dismiss banner buttons (trustedClickHandler).
 //   3b — per-image QR decode memoization (WeakMap cache in decodeQrFromImage).
-//   3c — img.onload rescan (observeTotpCandidates' capture-phase 'load' listener).
+//   3c — img.onload rescan (observeTotpCandidates' capture-phase 'load' listener), plus
+//        review fix round 1: the listener must go dead with the extension context, and must
+//        invalidate a refreshed image's cached decode before rescanning.
 
 const assert = require('node:assert');
 
@@ -49,13 +51,9 @@ function fakeElement(tag) {
 }
 console.log('totpBanner.test.js: trustedClickHandler OK');
 
-// --- 3a integration: showTotpSaveBanner and showSaveBanner gate Save/Dismiss on isTrusted ---
+// --- 3a integration: showTotpSaveBanner gates Save AND Dismiss on isTrusted ---
 {
   global.location = { href: 'https://example.com/login' };
-  global.document = {
-    createElement: (tag) => fakeElement(tag),
-    body: { appendChild: () => {} },
-  };
   let sentMessages = [];
   global.chrome = {
     runtime: {
@@ -69,26 +67,33 @@ console.log('totpBanner.test.js: trustedClickHandler OK');
     },
   };
 
-  const { showTotpSaveBanner } = require('../content.js');
-
-  // Build the banner by hand instead of through document.body.appendChild (our fake body
-  // discards it) — capture the div createElement returns so we can reach into its children.
   const createdElements = [];
-  global.document.createElement = (tag) => {
-    const el = fakeElement(tag);
-    createdElements.push(el);
-    return el;
+  global.document = {
+    createElement: (tag) => {
+      const el = fakeElement(tag);
+      createdElements.push(el);
+      return el;
+    },
+    body: { appendChild: () => {} },
   };
+
+  const { showTotpSaveBanner } = require('../content.js');
 
   const state = { totpBannerShown: false, totpBannerDismissed: null };
   showTotpSaveBanner('https://example.com/login', 'otpauth://totp/Example:alice?secret=JBSWY3DP', state, 3);
 
+  const banner = createdElements.find((el) => el.tag === 'div');
   const saveButton = createdElements.find((el) => el.tag === 'button' && el.textContent === 'Save');
+  const closeButton = createdElements.find((el) => el.tag === 'button' && el.textContent === '×');
+  assert.ok(banner, 'showTotpSaveBanner creates the banner div');
   assert.ok(saveButton, 'showTotpSaveBanner creates a Save button');
+  assert.ok(closeButton, 'showTotpSaveBanner creates a Dismiss (×) button');
 
+  // Save — untrusted then trusted.
   saveButton.dispatch('click', { isTrusted: false });
   assert.strictEqual(sentMessages.length, 0, 'an untrusted click on Save sends nothing');
   assert.strictEqual(state.totpBannerShown, true, 'an untrusted click leaves the banner state untouched');
+  assert.strictEqual(banner.removed, false, 'an untrusted click on Save does not remove the banner');
 
   saveButton.dispatch('click', { isTrusted: true });
   // The stub's getCredentials callback answers synchronously with an empty credentialList,
@@ -101,6 +106,51 @@ console.log('totpBanner.test.js: trustedClickHandler OK');
 }
 console.log('totpBanner.test.js: showTotpSaveBanner Save button isTrusted gating OK');
 
+// --- 3a integration: showTotpSaveBanner Dismiss (×) button, isolated from the Save button ---
+{
+  global.location = { href: 'https://example.com/login' };
+  let sentMessages = [];
+  global.chrome = {
+    runtime: {
+      id: 'test-extension-id',
+      sendMessage: (message) => { sentMessages.push(message); },
+    },
+  };
+
+  const createdElements = [];
+  global.document = {
+    createElement: (tag) => {
+      const el = fakeElement(tag);
+      createdElements.push(el);
+      return el;
+    },
+    body: { appendChild: () => {} },
+  };
+
+  const { showTotpSaveBanner } = require('../content.js');
+
+  const state = { totpBannerShown: false, totpBannerDismissed: null };
+  showTotpSaveBanner('https://example.com/login', 'otpauth://totp/Example:bob?secret=ABCDEFGH', state, 2);
+
+  const banner = createdElements.find((el) => el.tag === 'div');
+  const closeButton = createdElements.find((el) => el.tag === 'button' && el.textContent === '×');
+  assert.ok(closeButton, 'showTotpSaveBanner creates a Dismiss (×) button');
+
+  closeButton.dispatch('click', { isTrusted: false });
+  assert.strictEqual(sentMessages.length, 0, 'an untrusted Dismiss click sends nothing');
+  assert.strictEqual(state.totpBannerDismissed, null, 'an untrusted Dismiss click leaves totpBannerDismissed untouched');
+  assert.strictEqual(state.totpBannerShown, true, 'an untrusted Dismiss click leaves totpBannerShown untouched');
+  assert.strictEqual(banner.removed, false, 'an untrusted Dismiss click does not remove the banner');
+
+  closeButton.dispatch('click', { isTrusted: true });
+  assert.strictEqual(sentMessages.length, 0, 'Dismiss never sends a message, trusted or not');
+  assert.deepStrictEqual(state.totpBannerDismissed, { priority: 2 }, 'a trusted Dismiss click records the dismissal at the detected priority');
+  assert.strictEqual(state.totpBannerShown, false, 'a trusted Dismiss click clears totpBannerShown');
+  assert.strictEqual(banner.removed, true, 'a trusted Dismiss click removes the banner');
+}
+console.log('totpBanner.test.js: showTotpSaveBanner Dismiss button isTrusted gating OK');
+
+// --- 3a integration: showSaveBanner gates Save AND Dismiss on isTrusted ---
 {
   global.location = { href: 'https://example.com/login' };
   const createdElements = [];
@@ -127,12 +177,15 @@ console.log('totpBanner.test.js: showTotpSaveBanner Save button isTrusted gating
   const state = { bannerShown: false };
   showSaveBanner('https://example.com/login', 'alice', 'hunter2', state);
 
+  const banner = createdElements.find((el) => el.tag === 'div');
   const saveButton = createdElements.find((el) => el.tag === 'button' && el.textContent === 'Save');
+  assert.ok(banner, 'showSaveBanner creates the banner div');
   assert.ok(saveButton, 'showSaveBanner creates a Save button');
 
   saveButton.dispatch('click', { isTrusted: false });
   assert.strictEqual(sentMessages.length, 0, 'an untrusted click on the password-save banner sends nothing');
   assert.strictEqual(state.bannerShown, true, 'an untrusted click leaves bannerShown untouched');
+  assert.strictEqual(banner.removed, false, 'an untrusted click on Save does not remove the banner');
 
   saveButton.dispatch('click', { isTrusted: true });
   assert.strictEqual(sentMessages.length, 1, 'a trusted click sends proposeSaveLogin');
@@ -140,6 +193,47 @@ console.log('totpBanner.test.js: showTotpSaveBanner Save button isTrusted gating
   assert.strictEqual(state.bannerShown, false, 'a trusted Save click clears bannerShown');
 }
 console.log('totpBanner.test.js: showSaveBanner Save button isTrusted gating OK');
+
+// --- 3a integration: showSaveBanner Dismiss (×) button, isolated from the Save button ---
+{
+  global.location = { href: 'https://example.com/login' };
+  const createdElements = [];
+  global.document = {
+    createElement: (tag) => {
+      const el = fakeElement(tag);
+      createdElements.push(el);
+      return el;
+    },
+    body: { appendChild: () => {} },
+  };
+  let sentMessages = [];
+  global.chrome = {
+    runtime: {
+      id: 'test-extension-id',
+      sendMessage: (message) => { sentMessages.push(message); },
+    },
+  };
+
+  const { showSaveBanner } = require('../content.js');
+
+  const state = { bannerShown: false };
+  showSaveBanner('https://example.com/login', 'carol', 'swordfish', state);
+
+  const banner = createdElements.find((el) => el.tag === 'div');
+  const closeButton = createdElements.find((el) => el.tag === 'button' && el.textContent === '×');
+  assert.ok(closeButton, 'showSaveBanner creates a Dismiss (×) button');
+
+  closeButton.dispatch('click', { isTrusted: false });
+  assert.strictEqual(sentMessages.length, 0, 'an untrusted Dismiss click sends nothing');
+  assert.strictEqual(state.bannerShown, true, 'an untrusted Dismiss click leaves bannerShown untouched');
+  assert.strictEqual(banner.removed, false, 'an untrusted Dismiss click does not remove the banner');
+
+  closeButton.dispatch('click', { isTrusted: true });
+  assert.strictEqual(sentMessages.length, 0, 'Dismiss never sends a message, trusted or not');
+  assert.strictEqual(state.bannerShown, false, 'a trusted Dismiss click clears bannerShown');
+  assert.strictEqual(banner.removed, true, 'a trusted Dismiss click removes the banner');
+}
+console.log('totpBanner.test.js: showSaveBanner Dismiss button isTrusted gating OK');
 
 // --- 3b: per-image QR decode memoization ---
 {
@@ -192,17 +286,24 @@ console.log('totpBanner.test.js: showSaveBanner Save button isTrusted gating OK'
 }
 console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
 
-// --- 3c: img.onload triggers a rescan ---
+// --- 3c: img.onload triggers a rescan, respects the extension-context gate, and invalidates
+// the 3b memo cache for the refreshed image ---
 {
   const savedDocument = global.document;
   const savedObserver = global.MutationObserver;
   const savedSetTimeout = global.setTimeout;
+  const savedClearTimeout = global.clearTimeout;
+  const savedChrome = global.chrome;
 
   // The sweep itself is debounced via setTimeout(sweep, 400) inside observeTotpCandidates.
   // Stubbed to run synchronously so this test can assert the load listener actually reaches
   // the sweep (via onAttachIcons) rather than only asserting it doesn't throw.
   global.setTimeout = (fn) => { fn(); return 0; };
   global.clearTimeout = () => {};
+
+  // The extension context is alive for the "normal" assertions below; flipped to dead
+  // (chrome deleted) for the dedicated dead-context assertion further down.
+  global.chrome = { runtime: { id: 'test-extension-id' } };
 
   global.MutationObserver = class {
     constructor(callback) { this.callback = callback; }
@@ -212,6 +313,12 @@ console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
 
   const loadListeners = [];
   const body = { nodeType: 1 };
+  let jsQrCalls = 0;
+  global.__rescanQrResult = { data: 'otpauth://totp/Example:rescan?secret=JBSWY3DP' };
+  global.jsQR = () => {
+    jsQrCalls += 1;
+    return global.__rescanQrResult;
+  };
   global.document = {
     body,
     querySelectorAll: () => [],
@@ -219,9 +326,17 @@ console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
     addEventListener: (type, handler, capture) => {
       if (type === 'load' && capture === true) loadListeners.push(handler);
     },
+    createElement: (tag) => (tag === 'canvas' ? {
+      width: 0,
+      height: 0,
+      getContext: () => ({
+        drawImage: () => {},
+        getImageData: () => ({ data: [], width: 1, height: 1 }),
+      }),
+    } : fakeElement(tag)),
   };
 
-  const { observeTotpCandidates } = require('../content.js');
+  const { observeTotpCandidates, decodeQrFromImage } = require('../content.js');
 
   let mutationCalls = 0;
   const state = { totpBannerShown: false, totpBannerDismissed: null, vaultLocked: false };
@@ -238,6 +353,30 @@ console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
   loadListeners[0]({ target: { tagName: 'IMG' } });
   assert.strictEqual(mutationCalls, 1, 'a load event on an <img> target schedules the same sweep the MutationObserver uses');
 
+  // Review fix #2: a same-URL, same-size QR refresh (re-fetched endpoint, animated image)
+  // still fires 'load'. The listener must drop that image's cached decode before rescanning,
+  // or decodeQrFromImage would keep handing back the pre-refresh verdict forever.
+  const refreshingImg = { complete: true, naturalWidth: 200, naturalHeight: 200, src: 'https://example.com/rescan.png', tagName: 'IMG' };
+  const cachedFirst = decodeQrFromImage(refreshingImg);
+  const cachedSecond = decodeQrFromImage(refreshingImg);
+  assert.strictEqual(cachedSecond, cachedFirst, 'sanity: unrelated to the load event, repeat decodes of an unchanged image are cached');
+  assert.strictEqual(jsQrCalls, 1, 'sanity: the cache is doing its job before any load event fires');
+
+  loadListeners[0]({ target: refreshingImg });
+  global.__rescanQrResult = { data: 'otpauth://totp/Example:rescan2?secret=ABCDEFGH' };
+  const afterLoad = decodeQrFromImage(refreshingImg);
+  assert.strictEqual(jsQrCalls, 2, 'a load event on a cached image invalidates its cache entry, so the next decode calls jsQR again');
+  assert.strictEqual(afterLoad, 'otpauth://totp/Example:rescan2?secret=ABCDEFGH');
+
+  // Review fix #1: a dead extension context must not re-run the sweep, independent of
+  // whether teardownExtensionContext has already removed this listener (that machinery lives
+  // in content.js's non-exported browser wiring and isn't reachable from this require).
+  delete global.chrome;
+  mutationCalls = 0;
+  loadListeners[0]({ target: { tagName: 'IMG' } });
+  assert.strictEqual(mutationCalls, 0, 'a load event is ignored while the extension context is dead');
+  global.chrome = { runtime: { id: 'test-extension-id' } };
+
   // Calling observeTotpCandidates again (e.g. from a second content-script injection) must
   // not attach a second document-level load listener.
   observeTotpCandidates(state, () => {}, true);
@@ -246,5 +385,7 @@ console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
   global.document = savedDocument;
   global.MutationObserver = savedObserver;
   global.setTimeout = savedSetTimeout;
+  global.clearTimeout = savedClearTimeout;
+  global.chrome = savedChrome;
 }
-console.log('totpBanner.test.js: observeTotpCandidates load-listener rescan OK');
+console.log('totpBanner.test.js: observeTotpCandidates load-listener rescan, context-death, and cache invalidation OK');

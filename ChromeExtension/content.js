@@ -565,8 +565,16 @@
   // Guards the document-level 'load' listener added below against being attached more than
   // once. Real wiring calls observeTotpCandidates exactly once per frame, but nothing stops a
   // test — or a future caller — from calling it again, and a duplicate capture-phase listener
-  // on `document` would silently double-schedule every image load forever.
+  // on `document` would silently double-schedule every image load forever. The listener bound
+  // here closes over the FIRST observeTotpCandidates call's own `scheduleSweep` — a second
+  // call's sweep/debounceTimer would simply never be reachable, hence the guard rather than
+  // "just let it re-attach".
   let totpImageLoadListenerAttached = false;
+  // The listener function itself, so teardownExtensionContext (below, in the browser-only
+  // wiring) can remove exactly this listener and reset the flag when the extension context
+  // dies — otherwise it would keep firing after an unpacked-extension reload orphans this
+  // content script, re-running the sweep and re-injecting icons/banners into a dead page.
+  let totpImageLoadListener = null;
 
   // onMutation defaults to a no-op so this stays callable from tests without a DOM;
   // the browser-only wiring below passes attachIcons so newly-inserted fields get an
@@ -611,10 +619,22 @@
     // most once via the module-level flag above.
     if (!totpImageLoadListenerAttached && isFeatureEnabledInFrame('totpBanner', isTopFrame)) {
       totpImageLoadListenerAttached = true;
-      document.addEventListener('load', (event) => {
+      totpImageLoadListener = (event) => {
+        // A dead extension context (unpacked reload) must not re-run the sweep: with no
+        // background service worker to answer it, attachIcons()/showTotpSaveBanner() would
+        // inject dead UI into a page nothing can ever service again. teardownExtensionContext
+        // removes this listener once sendRuntimeMessage first observes the context is gone,
+        // but this early-return also protects the gap before that first detection.
+        if (!isExtensionContextAlive()) return;
         if (!event || !event.target || event.target.tagName !== 'IMG') return;
+        // The just-finished load may be a same-URL, same-size refresh (a re-fetched
+        // endpoint, an animated/refreshing QR) — decodeQrFromImage's cache would otherwise
+        // hand back the stale verdict from before this load, defeating the whole point of
+        // rescanning. Drop this image's cache entry so the upcoming sweep decodes fresh.
+        qrDecodeCache.delete(event.target);
         scheduleSweep();
-      }, true);
+      };
+      document.addEventListener('load', totpImageLoadListener, true);
     }
     return observer;
   }
@@ -1121,6 +1141,11 @@
       closePanel();
       Array.from(attachedIcons.entries()).forEach(([input, record]) => releaseIcon(input, record));
       if (mutationObserver) mutationObserver.disconnect();
+      if (totpImageLoadListener) {
+        document.removeEventListener('load', totpImageLoadListener, true);
+        totpImageLoadListener = null;
+        totpImageLoadListenerAttached = false;
+      }
     }
     handleExtensionContextLost = teardownExtensionContext;
 
