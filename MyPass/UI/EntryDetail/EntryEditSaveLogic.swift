@@ -2,8 +2,25 @@ import Foundation
 import MyPassKit
 
 enum EntryEditSaveLogic {
-    static func requiresReplaceConfirmation(existingEntry: KdbxEntry?, isFromTotpProposal: Bool) -> Bool {
-        isFromTotpProposal && existingEntry?.totpSecretBase32?.isEmpty == false
+    /// Derived at Save time from the entry's stored secret and the OTP field's current
+    /// value — not a one-shot flag set from whether the field was prefilled by a TOTP
+    /// proposal. That one-shot approach missed the case where the user manually typed a
+    /// differing secret, and never cleared itself when the field was cleared back out
+    /// (clearing means "keep the existing secret", per `applyOTP`'s empty-input semantics,
+    /// so it must not prompt).
+    static func requiresReplaceConfirmation(existingSecret: String?, currentOtpauthInput: String) -> Bool {
+        guard let existingSecret, !existingSecret.isEmpty else { return false }
+        guard !currentOtpauthInput.isEmpty else { return false }
+        return normalizedSecret(from: currentOtpauthInput) != existingSecret
+    }
+
+    /// Extracts the base32 secret an input represents, matching `applyOTP`'s own parsing:
+    /// an `otpauth://` URL is decoded, otherwise the raw input is treated as the secret.
+    private static func normalizedSecret(from otpauthInput: String) -> String {
+        if let parsed = TOTPCode.parse(otpauthURL: otpauthInput) {
+            return TOTPCode.base32Encode(parsed.secret)
+        }
+        return otpauthInput
     }
 
     static func resolvedTitle(draftTitle: String, url: String) -> String {
@@ -22,11 +39,7 @@ enum EntryEditSaveLogic {
 
     static func applyOTP(to entry: inout KdbxEntry, otpauthInput: String) {
         guard !otpauthInput.isEmpty else { return }
-        if let parsed = TOTPCode.parse(otpauthURL: otpauthInput) {
-            entry.totpSecretBase32 = TOTPCode.base32Encode(parsed.secret)
-        } else {
-            entry.totpSecretBase32 = otpauthInput
-        }
+        entry.totpSecretBase32 = normalizedSecret(from: otpauthInput)
     }
 
     /// Explicit removal path: unlike `applyOTP`'s empty-input no-op (which

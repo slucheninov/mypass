@@ -23,7 +23,6 @@ struct EntryEditView: View {
     @State private var isPasswordRevealed = false
     @State private var showWebsitesSheet = false
     @State private var isFavorite: Bool
-    @State private var isReplacingTotp: Bool
     @State private var showReplaceTotpAlert = false
     @State private var removeExistingTotp = false
     /// Deferred like `removeExistingTotp`: pressing Remove marks the passkey for deletion
@@ -53,9 +52,6 @@ struct EntryEditView: View {
         _showOTPField = State(initialValue: existingEntry?.totpSecretBase32?.isEmpty == false || prefilledOtpauthInput != nil)
         _otpauthInput = State(initialValue: EntryEditSaveLogic.initialOtpauthInput(
             prefilled: prefilledOtpauthInput, existingSecret: existingEntry?.totpSecretBase32
-        ))
-        _isReplacingTotp = State(initialValue: EntryEditSaveLogic.requiresReplaceConfirmation(
-            existingEntry: existingEntry, isFromTotpProposal: prefilledOtpauthInput != nil
         ))
         _title = State(initialValue: existingEntry?.title ?? "")
         _login = State(initialValue: existingEntry?.login ?? "")
@@ -136,7 +132,6 @@ struct EntryEditView: View {
                                 let hadExistingSecret = existingEntry?.totpSecretBase32?.isEmpty == false
                                 otpauthInput = ""
                                 showOTPField = false
-                                isReplacingTotp = false
                                 removeExistingTotp = hadExistingSecret
                             }
                         }
@@ -233,7 +228,6 @@ struct EntryEditView: View {
             actions: {
                 Button("Cancel", role: .cancel) {}
                 Button("Replace", role: .destructive) {
-                    isReplacingTotp = false
                     performSave()
                 }
             },
@@ -246,6 +240,16 @@ struct EntryEditView: View {
                 removeExistingTotp = false
             }
         }
+    }
+
+    /// Derived from current state rather than tracked as its own `@State`: recomputing it
+    /// on every access (Save, and whenever SwiftUI re-evaluates `body`) means clearing the
+    /// OTP field or retyping the original secret always resolves correctly, with no stale
+    /// one-shot flag left over from how the field was originally prefilled.
+    private var isReplacingTotp: Bool {
+        EntryEditSaveLogic.requiresReplaceConfirmation(
+            existingSecret: existingEntry?.totpSecretBase32, currentOtpauthInput: otpauthInput
+        )
     }
 
     private func save() {
