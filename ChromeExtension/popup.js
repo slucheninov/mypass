@@ -381,6 +381,7 @@ let sendPasskeyCreateConfirm = null;
 let sendPasskeyGetApprove = null;
 let sendPasskeyCancel = null;
 let initPasskeySettingsToggle = null;
+let refreshPasskeyProxy = null;
 
 const PENDING_PASSKEY_KEY = 'pendingPasskeyCeremony';
 
@@ -1097,15 +1098,24 @@ if (typeof document !== 'undefined') {
       }
       passkeyProxyToggle.disabled = !(reachable && status.unlocked && status.paired);
     });
-    // Fire-and-forget: lets the background service worker resync its cache and
-    // attach/detach against the app's current status on every popup open, rather than
-    // only at service-worker startup. The no-op callback reads chrome.runtime.lastError
-    // so Chrome doesn't log an "Unchecked runtime.lastError" warning if the message port
-    // closes before a response (the handler never sends one for this message).
-    chrome.runtime.sendMessage({ type: 'refreshPasskeyProxy' }, () => { void chrome.runtime.lastError; });
     passkeyProxyToggle.addEventListener('change', () => {
       chrome.runtime.sendMessage({ type: 'setPasskeyProxyEnabled', enabled: passkeyProxyToggle.checked });
     });
+  };
+
+  // Fire-and-forget: lets the background service worker resync its cache and
+  // attach/detach against the app's current status on every popup open, rather than
+  // only at service-worker startup. The no-op callback reads chrome.runtime.lastError
+  // so Chrome doesn't log an "Unchecked runtime.lastError" warning if the message port
+  // closes before a response (the handler never sends one for this message).
+  //
+  // Deliberately unconditional and separate from `initPasskeySettingsToggle`: it has no
+  // UI side effects, so it must run even when a ceremony panel takes over the popup
+  // (`rehydratePendingPasskeyCeremony` returning `tookOver === true`) — that was
+  // previously the one case where this send was skipped, which meant the proxy almost
+  // never detached during real passkey use (2026-08-23 fix).
+  refreshPasskeyProxy = function () {
+    chrome.runtime.sendMessage({ type: 'refreshPasskeyProxy' }, () => { void chrome.runtime.lastError; });
   };
 
   addTotpBtn.onclick = () => handleAddTotpClick(currentTabUrl);
@@ -1132,6 +1142,7 @@ if (typeof document !== 'undefined') {
   // decision. Running the ordinary credential lookup alongside it would let whichever
   // callback resolved last win the panel.
   rehydratePendingPasskeyCeremony((tookOver) => {
+    refreshPasskeyProxy();
     if (tookOver) return;
     initPasskeySettingsToggle();
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
@@ -1196,6 +1207,7 @@ if (typeof module !== 'undefined') {
     sendPasskeyCreateConfirm,
     sendPasskeyGetApprove,
     sendPasskeyCancel,
-    initPasskeySettingsToggle
+    initPasskeySettingsToggle,
+    refreshPasskeyProxy
   };
 }

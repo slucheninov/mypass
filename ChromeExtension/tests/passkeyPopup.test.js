@@ -86,7 +86,9 @@ const {
   renderPasskeyCeremonyPanel,
   rehydratePendingPasskeyCeremony,
   sendPasskeyCancel,
-  PENDING_PASSKEY_KEY
+  PENDING_PASSKEY_KEY,
+  initPasskeySettingsToggle,
+  refreshPasskeyProxy
 } = require('../popup.js');
 
 // --- pure routing -----------------------------------------------------------
@@ -258,5 +260,44 @@ rehydratePendingPasskeyCeremony((tookOver) => {
   assert.strictEqual(tookOver, false, 'an unroutable record falls through to the ordinary flow');
 });
 console.log('passkeyPopup.test.js: rehydration takeover OK');
+
+// --- refreshPasskeyProxy resync trigger --------------------------------------
+// Regression coverage for the bug where the only resync send lived inside
+// initPasskeySettingsToggle, which is skipped whenever a ceremony takes over the
+// popup — meaning the proxy almost never resynced/detached during real passkey use.
+// Mirrors the production composition at the bottom of popup.js: refreshPasskeyProxy()
+// runs unconditionally before branching on tookOver.
+resetPanels();
+sessionStore[PENDING_PASSKEY_KEY] = {
+  kind: 'create', requestId: 30, rpId: 'example.com', originUrl: 'https://example.com', matches: []
+};
+rehydratePendingPasskeyCeremony((tookOver) => {
+  refreshPasskeyProxy();
+  assert.strictEqual(tookOver, true, 'pending ceremony still takes over the popup');
+});
+assert.strictEqual(
+  sentMessages.filter((m) => m.type === 'refreshPasskeyProxy').length, 1,
+  'refreshPasskeyProxy must fire even while a ceremony panel is being shown'
+);
+console.log('passkeyPopup.test.js: refreshPasskeyProxy fires during an active ceremony OK');
+
+resetPanels();
+sessionStore = {};
+elements['passkey-settings-footer'].hidden = true;
+rehydratePendingPasskeyCeremony((tookOver) => {
+  refreshPasskeyProxy();
+  if (tookOver) return;
+  initPasskeySettingsToggle();
+});
+assert.strictEqual(
+  sentMessages.filter((m) => m.type === 'refreshPasskeyProxy').length, 1,
+  'refreshPasskeyProxy must still fire when there is no pending ceremony'
+);
+assert.strictEqual(
+  elements['passkey-settings-footer'].hidden, false,
+  'initPasskeySettingsToggle must still show the footer when idle'
+);
+assert.strictEqual(elements['passkey-proxy-toggle'].checked, true, 'checkbox still synced from stored cache');
+console.log('passkeyPopup.test.js: refreshPasskeyProxy fires and settings footer/checkbox still initialize when idle OK');
 
 console.log('passkeyPopup.test.js OK');
