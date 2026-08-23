@@ -345,13 +345,24 @@ console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
   assert.strictEqual(loadListeners.length, 1, 'observeTotpCandidates attaches exactly one capture-phase load listener when QR scanning is enabled for this frame');
 
   // Non-<img> target: no rescan.
-  loadListeners[0]({ target: { tagName: 'IFRAME' } });
+  loadListeners[0]({ isTrusted: true, target: { tagName: 'IFRAME' } });
   assert.strictEqual(mutationCalls, 0, 'a load event on a non-img target does not schedule a rescan');
 
   // <img> target: schedules the same debounced sweep as the MutationObserver (setTimeout is
   // stubbed synchronous above, so onAttachIcons — mutationCalls — fires immediately).
-  loadListeners[0]({ target: { tagName: 'IMG' } });
+  loadListeners[0]({ isTrusted: true, target: { tagName: 'IMG' } });
   assert.strictEqual(mutationCalls, 1, 'a load event on an <img> target schedules the same sweep the MutationObserver uses');
+
+  // A page-synthesized (untrusted) load event must not evict the cache or schedule a sweep:
+  // it must not be able to force a rescan or evict the QR cache on demand.
+  mutationCalls = 0;
+  const untrustedImg = { complete: true, naturalWidth: 200, naturalHeight: 200, src: 'https://example.com/untrusted.png', tagName: 'IMG' };
+  const untrustedCachedFirst = decodeQrFromImage(untrustedImg);
+  loadListeners[0]({ isTrusted: false, target: untrustedImg });
+  assert.strictEqual(mutationCalls, 0, 'an untrusted load event does not schedule a rescan');
+  const untrustedCachedSecond = decodeQrFromImage(untrustedImg);
+  assert.strictEqual(untrustedCachedSecond, untrustedCachedFirst, 'an untrusted load event does not evict the cache entry for its image');
+  jsQrCalls = 0;
 
   // Review fix #2: a same-URL, same-size QR refresh (re-fetched endpoint, animated image)
   // still fires 'load'. The listener must drop that image's cached decode before rescanning,
@@ -362,7 +373,7 @@ console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
   assert.strictEqual(cachedSecond, cachedFirst, 'sanity: unrelated to the load event, repeat decodes of an unchanged image are cached');
   assert.strictEqual(jsQrCalls, 1, 'sanity: the cache is doing its job before any load event fires');
 
-  loadListeners[0]({ target: refreshingImg });
+  loadListeners[0]({ isTrusted: true, target: refreshingImg });
   global.__rescanQrResult = { data: 'otpauth://totp/Example:rescan2?secret=ABCDEFGH' };
   const afterLoad = decodeQrFromImage(refreshingImg);
   assert.strictEqual(jsQrCalls, 2, 'a load event on a cached image invalidates its cache entry, so the next decode calls jsQR again');
@@ -373,7 +384,7 @@ console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
   // in content.js's non-exported browser wiring and isn't reachable from this require).
   delete global.chrome;
   mutationCalls = 0;
-  loadListeners[0]({ target: { tagName: 'IMG' } });
+  loadListeners[0]({ isTrusted: true, target: { tagName: 'IMG' } });
   assert.strictEqual(mutationCalls, 0, 'a load event is ignored while the extension context is dead');
   global.chrome = { runtime: { id: 'test-extension-id' } };
 

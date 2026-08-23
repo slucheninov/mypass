@@ -620,6 +620,8 @@
     if (!totpImageLoadListenerAttached && isFeatureEnabledInFrame('totpBanner', isTopFrame)) {
       totpImageLoadListenerAttached = true;
       totpImageLoadListener = (event) => {
+        // A page-synthesized 'load' event must not evict the QR cache or force a sweep.
+        if (!isTrustedActivation(event)) return;
         // A dead extension context (unpacked reload) must not re-run the sweep: with no
         // background service worker to answer it, attachIcons()/showTotpSaveBanner() would
         // inject dead UI into a page nothing can ever service again. teardownExtensionContext

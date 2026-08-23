@@ -1,3 +1,4 @@
+import Foundation
 import XCTest
 @testable import MyPassKit
 
@@ -53,10 +54,16 @@ final class PublicSuffixListTests: XCTestCase {
     }
 
     func testPerformanceOfRepeatedLookups() {
-        measure {
-            for _ in 0..<10_000 {
-                _ = PublicSuffixList.registrableDomain(of: "www.example.co.uk")
-            }
+        // Warm the cache before timing so the measured loop reflects steady-state lookup
+        // cost rather than the one-time PSL parse/load.
+        _ = PublicSuffixList.registrableDomain(of: "www.example.co.uk")
+
+        let start = CFAbsoluteTimeGetCurrent()
+        for _ in 0..<10_000 {
+            _ = PublicSuffixList.registrableDomain(of: "www.example.co.uk")
         }
+        let elapsed = CFAbsoluteTimeGetCurrent() - start
+
+        XCTAssertLessThan(elapsed, 1.0, "10,000 registrableDomain(of:) lookups took \(elapsed)s, expected under 1.0s")
     }
 }

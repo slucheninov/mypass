@@ -482,6 +482,7 @@ model:
 - Decide the parked Piece-B follow-ups (QR memoization, `isReplacingTotp` recompute,
   picker panel polish, `img.onload` rescan) — either do them or drop them with a Decisions
   row explaining why. (done 2026-08-23)
+- IDNA: punycode-encode Unicode PSL rules at parse time in `PublicSuffixList.loadRules()` so IDN public suffixes match punycode hosts (open)
 
 ---
 
