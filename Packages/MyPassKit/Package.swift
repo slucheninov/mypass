@@ -16,7 +16,8 @@ let package = Package(
             dependencies: [
                 .product(name: "Sodium", package: "swift-sodium"),
                 .product(name: "Clibsodium", package: "swift-sodium")
-            ]
+            ],
+            resources: [.copy("Resources/public_suffix_list.dat")]
         ),
         .testTarget(
             name: "MyPassKitTests",

@@ -2,11 +2,14 @@ import Foundation
 import MyPassKit
 
 enum ExtensionEntryMatcher {
-    /// Naive "last two DNS labels" heuristic — NOT a real public-suffix-list
-    /// lookup. It misidentifies multi-part suffixes such as "example.co.uk"
-    /// (collapses to "co.uk" instead of "example.co.uk"). Accepted as a known
-    /// limitation for the Phase 4 MVP; revisit with a PSL library before
-    /// widening scope beyond simple .com/.org/.net-style domains.
+    /// Public-suffix-list (PSL) lookup via `MyPassKit.PublicSuffixList`,
+    /// correctly handling multi-label suffixes such as "co.uk", "com.ua", and
+    /// private-section rules like "github.io" — "example.co.uk" resolves to
+    /// "example.co.uk", not "co.uk".
+    ///
+    /// A host that is itself a public suffix (e.g. "co.uk", "github.io") has
+    /// no registrable domain to reduce to, so — consistent with the
+    /// single-label and IP-literal branches below — it is compared whole.
     ///
     /// IP literals have no registrable domain and are never reduced to their
     /// last two labels — they are compared whole. This matters for IPv4:
@@ -60,7 +63,7 @@ enum ExtensionEntryMatcher {
         }
         if isIPv4Literal { return resolvedHost }
 
-        return labels.suffix(2).joined(separator: ".")
+        return PublicSuffixList.registrableDomain(of: resolvedHost) ?? resolvedHost
     }
 
     static func matchingEntries(in group: KdbxGroup, forURL urlString: String) -> [KdbxEntry] {

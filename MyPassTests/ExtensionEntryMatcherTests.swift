@@ -123,14 +123,42 @@ final class ExtensionEntryMatcherTests: XCTestCase {
         XCTAssertTrue(matches.isEmpty)
     }
 
-    // MARK: - registrableDomain: known .co.uk limitation (unchanged by this fix)
+    // MARK: - registrableDomain: PSL-correct multi-label suffixes
 
-    func testRegistrableDomainCoDotUkLimitationIsUnchanged() {
-        // Documented limitation: a real PSL would keep "example.co.uk" whole,
-        // but the "last two labels" heuristic collapses it to "co.uk". This
-        // is a separate, already-known issue and is intentionally NOT fixed
-        // here — only IP-literal handling is in scope for this fix.
-        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://example.co.uk"), "co.uk")
+    func testRegistrableDomainKeepsMultiLabelCoDotUkSuffixWhole() {
+        // Previously collapsed to "co.uk" under the "last two labels"
+        // heuristic; a real PSL lookup keeps "example.co.uk" whole.
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://example.co.uk"), "example.co.uk")
+    }
+
+    func testRegistrableDomainAccountsGoogleCoDotUk() {
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://accounts.google.co.uk/signin"), "google.co.uk")
+    }
+
+    func testMatchingEntriesDoesNotOverMatchAcrossDifferentCoDotUkSites() {
+        let entry = makeEntry(url: "https://www.amazon.co.uk")
+        let group = makeGroup(entries: [entry])
+        let matches = ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://accounts.google.co.uk")
+        XCTAssertTrue(matches.isEmpty, "amazon.co.uk and google.co.uk must not be treated as the same site")
+    }
+
+    func testMatchingEntriesMatchesSameCoDotUkSite() {
+        let entry = makeEntry(url: "https://google.co.uk")
+        let group = makeGroup(entries: [entry])
+        let matches = ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://mail.google.co.uk")
+        XCTAssertEqual(matches.map(\.uuid), [entry.uuid])
+    }
+
+    func testMatchingEntriesDoesNotOverMatchAcrossDifferentGithubIoSites() {
+        let entry = makeEntry(url: "https://foo.github.io")
+        let group = makeGroup(entries: [entry])
+        let matches = ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://bar.github.io")
+        XCTAssertTrue(matches.isEmpty, "foo.github.io and bar.github.io must not be treated as the same site")
+    }
+
+    func testRegistrableDomainOfBarePublicSuffixHostsComparesWhole() {
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://github.io"), "github.io")
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://co.uk"), "co.uk")
     }
 
     // MARK: - registrableDomain: IPv4 literals (the reported bug)
