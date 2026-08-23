@@ -30,12 +30,12 @@ anywhere in Swift or JS sources.
 
 | Item | Where | State |
 |------|-------|-------|
-| Gate 6 manual walk (passkeys, Piece C) | `ROADMAP.md:424-427` says "Gate 6 stays open until the manual half is walked against a real Chrome 127+"; the progress row at `:557` says "code complete, Gate 6 manual walk open"; `RUN.md:133-148`'s passkey checklist is entirely `[ ]` while the neighbouring Stage 5/7/8 walks are `[x]`; no "close Gate 6" commit exists (compare `998b44a` "close Gate 7") | **Open.** The total row at `:560` counts Stage 6 as done, which contradicts the surrounding text. Recommendation: either walk it and close it, or restate the total as 62/71 + "Gate 6 open" so the summary stops disagreeing with its own table. |
-| `.co.uk`-style multi-label suffixes in `ExtensionEntryMatcher.registrableDomain` (`MyPass/State/ExtensionBridge/ExtensionEntryMatcher.swift:5-9, 66`) | The 2026-08-15 Decisions table records this as "under-match, which is the safe direction" | **Mis-classified — this is an OVER-match and a security issue, not a safe under-match.** `labels.suffix(2)` reduces `accounts.google.co.uk` and `www.amazon.co.uk` to the same registrable domain, `co.uk`, so `matchingEntries` will offer one site's saved credentials on the other. The same collapse happens for `.com.ua`, `.com.au`, `.co.jp`, `.github.io`, `.herokuapp.com`, and any other multi-label public suffix. Fix: bundle the Public Suffix List (or a trimmed copy) and compute suffix + 1 label instead of a fixed last-two-labels heuristic. See proposal P1. |
-| Citadel smoke test env gate | `Packages/SyncKit/Tests/SyncKitTests/CitadelDependencySmokeTests.swift` reads `/tmp/citadel_smoke_key` with no environment gate, and is documented as a "known trap" | Still open. |
-| Piece B parked follow-ups (Decisions, 2026-08-08) | Per-image QR decode memoization, `isReplacingTotp` recompute on a cleared field, picker panel polish, and `img.onload` rescan — none of these appear in `content.js` or `popup.js`. `event.isTrusted` was added for the inline fill icon (`content.js:405`) but not for the TOTP banner buttons. | Still open. |
+| Gate 6 manual walk (passkeys, Piece C) | `ROADMAP.md:424-427` says "Gate 6 stays open until the manual half is walked against a real Chrome 127+"; the progress row at `:557` says "code complete, Gate 6 manual walk open"; `RUN.md:133-148`'s passkey checklist is entirely `[ ]` while the neighbouring Stage 5/7/8 walks are `[x]`; no "close Gate 6" commit exists (compare `998b44a` "close Gate 7") | **Open.** The total row at `:560` counts Stage 6 as done, which contradicts the surrounding text. Recommendation: either walk it and close it, or restate the total as 62/71 + "Gate 6 open" so the summary stops disagreeing with its own table. ROADMAP total row reworded. |
+| `.co.uk`-style multi-label suffixes in `ExtensionEntryMatcher.registrableDomain` (`MyPass/State/ExtensionBridge/ExtensionEntryMatcher.swift:5-9, 66`) | The 2026-08-15 Decisions table records this as "under-match, which is the safe direction" | **Mis-classified — this is an OVER-match and a security issue, not a safe under-match.** `labels.suffix(2)` reduces `accounts.google.co.uk` and `www.amazon.co.uk` to the same registrable domain, `co.uk`, so `matchingEntries` will offer one site's saved credentials on the other. The same collapse happens for `.com.ua`, `.com.au`, `.co.jp`, `.github.io`, `.herokuapp.com`, and any other multi-label public suffix. Fix: bundle the Public Suffix List (or a trimmed copy) and compute suffix + 1 label instead of a fixed last-two-labels heuristic. See proposal P1. Fixed on branch `roadmap-open-items` (2026-08-23). |
+| Citadel smoke test env gate | `Packages/SyncKit/Tests/SyncKitTests/CitadelDependencySmokeTests.swift` reads `/tmp/citadel_smoke_key` with no environment gate, and is documented as a "known trap" | Fixed on branch `roadmap-open-items` (2026-08-23). |
+| Piece B parked follow-ups (Decisions, 2026-08-08) | Per-image QR decode memoization, `isReplacingTotp` recompute on a cleared field, picker panel polish, and `img.onload` rescan — none of these appear in `content.js` or `popup.js`. `event.isTrusted` was added for the inline fill icon (`content.js:405`) but not for the TOTP banner buttons. | Fixed on branch `roadmap-open-items` (2026-08-23). |
 | Lowercase manual TOTP keys in `detectManualSetupKey` (`content.js:296`) | Deferred at the time | Still open. |
-| `SecuritySettingsPane.swift:251` "TEMPORARY diagnostic detail" | Code comment; the raw Swift error is surfaced to the user in the enable-device-unlock alert | Still open. |
+| `SecuritySettingsPane.swift:251` "TEMPORARY diagnostic detail" | Code comment; the raw Swift error is surfaced to the user in the enable-device-unlock alert | Kept deliberately — see ROADMAP Decisions. |
 | Uncommitted `RUN.md` diff in the working tree | Formatting-only pass (114+/116−): strips the `- ` list markers from checkboxes and wraps markdown links in backticks, which turns working links into inert code spans | Recommend reverting rather than committing — it degrades the file without changing its content. |
 
 ---
@@ -471,17 +471,17 @@ model:
 
 ## 6. Housekeeping before new features
 
-- Close or explicitly re-state Gate 6 (passkey manual walk) in `ROADMAP.md`.
+- Close or explicitly re-state Gate 6 (passkey manual walk) in `ROADMAP.md`. (done 2026-08-23)
 - Fix `.co.uk`-style domain matching (P1) — bump it to the front of the queue; it's a
-  security bug, not a feature gap.
+  security bug, not a feature gap. (done 2026-08-23)
 - Gate the Citadel smoke test on an environment variable, or make it self-provision its
-  key file.
+  key file. (done 2026-08-23)
 - Revert the formatting-only `RUN.md` diff currently in the working tree.
 - Clear the `SecuritySettingsPane.swift:251` "TEMPORARY diagnostic detail" comment and its
   raw-error alert.
 - Decide the parked Piece-B follow-ups (QR memoization, `isReplacingTotp` recompute,
   picker panel polish, `img.onload` rescan) — either do them or drop them with a Decisions
-  row explaining why.
+  row explaining why. (done 2026-08-23)
 
 ---
 
