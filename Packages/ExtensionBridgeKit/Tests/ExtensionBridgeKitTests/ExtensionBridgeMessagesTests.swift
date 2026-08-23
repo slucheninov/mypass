@@ -330,7 +330,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
     }
 
     func testPasskeyProxyStatusResponseRoundTrips() throws {
-        let response = ExtensionBridgeResponse.passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true)
+        let response = ExtensionBridgeResponse.passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true, enabled: true)
         let data = try JSONEncoder().encode(response)
         XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
         let json = try jsonObject(from: data)
@@ -338,6 +338,18 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         XCTAssertEqual(json["unlocked"] as? Bool, true)
         XCTAssertEqual(json["paired"] as? Bool, true)
         XCTAssertEqual(json["attachAllowed"] as? Bool, true)
+        XCTAssertEqual(json["enabled"] as? Bool, true)
+    }
+
+    // `enabled` is the app's opt-in independent of `attachAllowed` (which folds in lock
+    // state too) — a locked-but-enabled vault must round-trip as enabled:true, attachAllowed:false.
+    func testPasskeyProxyStatusResponseCarriesEnabledSeparatelyFromAttachAllowed() throws {
+        let response = ExtensionBridgeResponse.passkeyProxyStatus(unlocked: false, paired: true, attachAllowed: false, enabled: true)
+        let data = try JSONEncoder().encode(response)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
+        let json = try jsonObject(from: data)
+        XCTAssertEqual(json["attachAllowed"] as? Bool, false)
+        XCTAssertEqual(json["enabled"] as? Bool, true)
     }
 
     func testSetPasskeyProxyEnabledRoundTrips() throws {

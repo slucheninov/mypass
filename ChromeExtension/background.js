@@ -301,16 +301,40 @@ async function fetchPasskeyProxyStatus() {
   return status && status.type === "passkeyProxyStatus" ? status : null;
 }
 
+function writePasskeyProxyEnabledCache(enabled) {
+  return new Promise((resolve) => {
+    chrome.storage.local.set({ [PASSKEY_ENABLED_KEY]: !!enabled }, () => resolve());
+  });
+}
+
+// The app is authoritative; the extension's local cache is only a mirror of the last
+// known status. Every status fetch — not just the popup toggle — must resync both the
+// cache and the actual attach/detach state, or the app's Settings toggle only takes
+// effect after the next service-worker restart (the bug this closes).
+async function syncPasskeyProxyFromStatus(status) {
+  await writePasskeyProxyEnabledCache(status.enabled);
+  if (status.enabled && status.attachAllowed) {
+    try {
+      await chrome.webAuthenticationProxy.attach();
+    } catch (error) {
+      console.warn("MyPass: passkey proxy attach failed", error);
+    }
+    return;
+  }
+  if (!status.enabled) {
+    await chrome.webAuthenticationProxy.detach().catch(() => {});
+  }
+  // enabled && !attachAllowed (locked): the lock already gates ceremonies via
+  // attachAllowed on every request, so neither attaching nor detaching is needed here.
+}
+
 async function attachPasskeyProxyIfEligible() {
-  if (!(await readPasskeyProxyEnabled())) return;
   if (!chrome.webAuthenticationProxy) return;
   const status = await fetchPasskeyProxyStatus();
-  if (!status || !status.attachAllowed) return;
-  try {
-    await chrome.webAuthenticationProxy.attach();
-  } catch (error) {
-    console.warn("MyPass: passkey proxy attach failed", error);
-  }
+  // App unreachable: nothing authoritative to sync against. Leave the cache and the
+  // current attach state untouched rather than guessing from the local flag.
+  if (!status) return;
+  await syncPasskeyProxyFromStatus(status);
 }
 
 function openPasskeyPopup() {
@@ -447,6 +471,15 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     return true;
   }
 
+  // Fire-and-forget internal message the popup sends on every open — not a native-message
+  // type, so it sits ahead of the knownTypes gate alongside passkeyCancelUI. This is the
+  // re-check trigger that closes the gap between the app-side toggle and a service-worker
+  // restart: popup open is a much more frequent event than a restart.
+  if (message && message.type === "refreshPasskeyProxy") {
+    attachPasskeyProxyIfEligible();
+    return false;
+  }
+
   if (!message || !knownTypes.includes(message.type)) {
     return false;
   }
@@ -551,6 +584,7 @@ if (typeof module !== "undefined") {
     PENDING_KEY,
     knownTypes,
     attachPasskeyProxyIfEligible,
+    syncPasskeyProxyFromStatus,
     handlePasskeyRequest,
     completePasskeyRequest,
     passkeyNotAllowedError,

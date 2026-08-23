@@ -560,7 +560,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
         UserDefaults.standard.set(true, forKey: "passkeyProxyEnabled")
         let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
-        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true))
+        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true, enabled: true))
     }
 
     /// Turning the feature off in Settings has to actually stop the extension attaching.
@@ -569,7 +569,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
         UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
         let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
-        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: false))
+        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: false, enabled: false))
     }
 
     /// The one message that must answer past the blanket locked gate — otherwise the
@@ -579,7 +579,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         UserDefaults.standard.set(true, forKey: "passkeyProxyEnabled")
         session.lock()
         let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
-        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: false, paired: true, attachAllowed: false))
+        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: false, paired: true, attachAllowed: false, enabled: true))
     }
 
     func testGetPasskeyProxyStatusReturnsPairingRequiredWithoutSecret() {

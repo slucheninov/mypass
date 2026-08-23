@@ -217,8 +217,12 @@ final class ExtensionBridgeService {
             // extension mirrors this flag locally, and without the app's value in the
             // answer, turning the feature off in Settings would leave an already-attached
             // Chrome attached indefinitely (there is no push channel to tell it otherwise).
+            // `enabled` is reported separately (and even while locked) so the extension can
+            // learn the app-side opt-in on its own and resync its cache/attachment without
+            // waiting for a service-worker restart — the app is authoritative, the
+            // extension's local flag is only a cache.
             let enabled = UserDefaults.standard.bool(forKey: "passkeyProxyEnabled")
-            return .passkeyProxyStatus(unlocked: unlocked, paired: true, attachAllowed: unlocked && enabled)
+            return .passkeyProxyStatus(unlocked: unlocked, paired: true, attachAllowed: unlocked && enabled, enabled: enabled)
 
         case .setPasskeyProxyEnabled(_, let enabled, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {

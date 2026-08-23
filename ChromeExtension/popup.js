@@ -1072,9 +1072,11 @@ if (typeof document !== 'undefined') {
     });
   };
 
-  // `checked` comes from the extension's own stored flag, not from `attachAllowed` —
-  // attachAllowed is false whenever the vault is locked, which says nothing about
-  // whether the user turned the feature on.
+  // The app is authoritative (2026-08-23 fix): `checked` is set from a fresh
+  // `status.enabled` whenever the app answers, and only falls back to the extension's
+  // stored flag while the app cannot be reached (matching the 2026-08-09 "C popup toggle
+  // state" decision for the unreachable case). `attachAllowed`/`unlocked` still only
+  // decide whether the control itself is enabled, not its checked state.
   initPasskeySettingsToggle = function () {
     passkeySettingsFooter.hidden = false;
     chrome.storage.local.get(['passkeyProxyEnabled'], (stored) => {
@@ -1082,8 +1084,15 @@ if (typeof document !== 'undefined') {
     });
     chrome.runtime.sendMessage({ type: 'getPasskeyProxyStatus' }, (status) => {
       const reachable = !!(status && status.type === 'passkeyProxyStatus');
+      if (reachable) {
+        passkeyProxyToggle.checked = !!status.enabled;
+      }
       passkeyProxyToggle.disabled = !(reachable && status.unlocked && status.paired);
     });
+    // Fire-and-forget: lets the background service worker resync its cache and
+    // attach/detach against the app's current status on every popup open, rather than
+    // only at service-worker startup.
+    chrome.runtime.sendMessage({ type: 'refreshPasskeyProxy' });
     passkeyProxyToggle.addEventListener('change', () => {
       chrome.runtime.sendMessage({ type: 'setPasskeyProxyEnabled', enabled: passkeyProxyToggle.checked });
     });

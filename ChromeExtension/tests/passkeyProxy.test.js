@@ -6,7 +6,7 @@ const localStore = { passkeyProxyEnabled: true };
 let sessionStore = {};
 const sentNativeMessages = [];
 const alarms = {};
-let nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true });
+let nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true, enabled: true });
 
 function makeArea(store) {
   return {
@@ -99,7 +99,7 @@ function resetState() {
   notified = 0;
   localStore.passkeyProxyEnabled = true;
   openPopupResult = () => Promise.resolve();
-  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true });
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true, enabled: true });
 }
 
 assert.deepStrictEqual(passkeyNotAllowedError('x'), { name: 'NotAllowedError', message: 'x' });
@@ -131,32 +131,69 @@ const detailsFor = (origin) => JSON.stringify({
 });
 
 (async () => {
-  // --- attach gating -------------------------------------------------------
+  // --- attach gating (app-authoritative: every status fetch resyncs the cache) --------
   resetState();
   await attachPasskeyProxyIfEligible();
   assert.strictEqual(attachCalled, true, 'attach() called when setting enabled and status allows it');
   console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible attaches when eligible OK');
 
+  // The app said disabled while the extension's cache still says enabled (e.g. toggled
+  // off in the app, no restart yet): sync must detach and correct the cache. This is the
+  // Gate 6 defect this fix closes — nothing used to ever detach on an app-side disable.
+  resetState();
+  localStore.passkeyProxyEnabled = true;
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: false, enabled: false });
+  await attachPasskeyProxyIfEligible();
+  assert.strictEqual(detachCalled, true, 'detach() called when the app reports enabled:false');
+  assert.strictEqual(attachCalled, false);
+  assert.strictEqual(localStore.passkeyProxyEnabled, false, 'the local cache must be corrected to match the app');
+  console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible detaches and corrects the cache when the app says disabled OK');
+
+  // The app said enabled while the extension's cache still says disabled (toggled on in
+  // the app, no restart yet): sync must attach and correct the cache.
   resetState();
   localStore.passkeyProxyEnabled = false;
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true, enabled: true });
   await attachPasskeyProxyIfEligible();
-  assert.strictEqual(attachCalled, false, 'attach() not called when setting disabled');
-  assert.strictEqual(sentNativeMessages.length, 0, 'a disabled proxy must not even ask the app for status');
-  console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible skips when disabled OK');
+  assert.strictEqual(attachCalled, true, 'attach() called when the app reports enabled:true and attachAllowed:true');
+  assert.strictEqual(detachCalled, false);
+  assert.strictEqual(localStore.passkeyProxyEnabled, true, 'the local cache must be corrected to match the app');
+  console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible attaches and corrects the cache when the app says enabled OK');
 
+  // Enabled app-side but locked: neither attach nor detach — the lock already gates
+  // ceremonies via attachAllowed on every request — but the cache still tracks `enabled`.
   resetState();
-  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: false, paired: true, attachAllowed: false });
+  localStore.passkeyProxyEnabled = false;
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: false, paired: true, attachAllowed: false, enabled: true });
   await attachPasskeyProxyIfEligible();
   assert.strictEqual(attachCalled, false, 'attach() not called when status.attachAllowed is false (locked)');
-  console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible skips when locked OK');
+  assert.strictEqual(detachCalled, false, 'detach() not called either — enabled is still true, just locked');
+  assert.strictEqual(localStore.passkeyProxyEnabled, true);
+  console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible skips when locked but tracks enabled OK');
 
   // sendNativeMessage resolves an {type:"error"} envelope rather than rejecting when
   // the host is unreachable, so the guard has to test the envelope, not just catch.
+  // Without a status to trust, neither attach/detach nor the cache may be touched.
   resetState();
+  localStore.passkeyProxyEnabled = false;
   nativeResponder = () => ({ type: 'error', message: 'app_not_running' });
   await attachPasskeyProxyIfEligible();
   assert.strictEqual(attachCalled, false, 'attach() not called when MyPass is not running');
-  console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible skips when app unavailable OK');
+  assert.strictEqual(detachCalled, false, 'detach() not called when MyPass is not running');
+  assert.strictEqual(localStore.passkeyProxyEnabled, false, 'the cache must be left untouched when the app is unreachable');
+  console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible skips and leaves the cache untouched when app unavailable OK');
+
+  // --- popup-open refresh ----------------------------------------------------------
+  // popup.js sends this fire-and-forget on every open; it must re-run the same
+  // app-authoritative eligibility check rather than waiting for a service-worker restart.
+  resetState();
+  localStore.passkeyProxyEnabled = false;
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true, enabled: true });
+  handleRuntimeMessage({ type: 'refreshPasskeyProxy' }, {}, () => {});
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.strictEqual(attachCalled, true, 'the refreshPasskeyProxy message re-evaluates and attaches');
+  assert.strictEqual(localStore.passkeyProxyEnabled, true);
+  console.log('passkeyProxy.test.js: refreshPasskeyProxy message triggers attachPasskeyProxyIfEligible OK');
 
   // --- ceremony relay ------------------------------------------------------
   resetState();
@@ -289,7 +326,7 @@ const detailsFor = (origin) => JSON.stringify({
   localStore.passkeyProxyEnabled = false;
   nativeResponder = (msg) => (msg.type === 'setPasskeyProxyEnabled'
     ? { type: 'passkeyProxyEnabled', enabled: true }
-    : { type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true });
+    : { type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true, enabled: true });
   await new Promise((resolve) => {
     handleRuntimeMessage({ type: 'setPasskeyProxyEnabled', enabled: true }, {}, resolve);
   });
