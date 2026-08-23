@@ -818,6 +818,106 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertTrue(matches.isEmpty)
     }
 
+    /// Gate 6 regression: two plain Login entries already exist for the page host but
+    /// neither has a passkey yet. Both must surface as picker candidates instead of the
+    /// popup falling back to the generic "create a brand-new entry" panel.
+    func testPasskeyCreateOffersDomainMatchedLoginEntriesWithoutExistingPasskeys() {
+        let first = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
+        let second = addFixtureEntry(title: "Site Backup Login", username: "alice-2", password: "s3cret2", url: "http://localhost:8765")
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 30, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
+        XCTAssertEqual(matches.count, 2)
+        XCTAssertEqual(Set(matches.map { $0.id }), Set([first, second].map(\.uuidString)))
+        XCTAssertTrue(matches.allSatisfy { $0.hasPasskey == false })
+    }
+
+    /// Single domain-matched Login entry with no passkey yet: the picker should collapse
+    /// to exactly one candidate, matching the spec's "1 match" popup path.
+    func testPasskeyCreateOffersSingleDomainMatchedLoginEntry() {
+        let id = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 31, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
+        XCTAssertEqual(matches.count, 1)
+        XCTAssertEqual(matches.first?.id, id.uuidString)
+        XCTAssertEqual(matches.first?.hasPasskey, false)
+    }
+
+    /// An entry already carrying a passkey for the rpId — but saved under a different (or
+    /// empty) URL, so it does not domain-match the current origin — must still be offered
+    /// (so "replace passkey" stays reachable), unioned with the domain-matched Login and
+    /// without appearing twice when an entry satisfies both predicates.
+    func testPasskeyCreateUnionsRpIdPasskeyEntriesWithDomainMatchesWithoutDuplicates() {
+        let passkeyOnly = addFixtureEntry(title: "Old Passkey Entry", username: "carol", password: "s3cret", url: "")
+        attachPasskey(to: passkeyOnly, rpId: "localhost")
+        let loginOnly = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
+
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 32, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
+        XCTAssertEqual(matches.count, 2)
+        XCTAssertEqual(Set(matches.map { $0.id }), Set([passkeyOnly, loginOnly].map(\.uuidString)))
+        XCTAssertEqual(matches.first { $0.id == passkeyOnly.uuidString }?.hasPasskey, true)
+        XCTAssertEqual(matches.first { $0.id == loginOnly.uuidString }?.hasPasskey, false)
+
+        // Now attach a passkey for the same rpId on the domain-matched entry too, so it
+        // satisfies both predicates — it must still appear exactly once.
+        attachPasskey(to: loginOnly, rpId: "localhost")
+        let secondResponse = service.handle(.passkeyCreate(
+            token: "t", requestId: 33, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending(_, _, _, let secondMatches) = secondResponse else {
+            return XCTFail("expected pending, got \(secondResponse)")
+        }
+        XCTAssertEqual(secondMatches.count, 2, "an entry satisfying both predicates must not be listed twice")
+    }
+
+    /// Recycle-bin exclusion must also hold for the domain-matched half of the union, not
+    /// just the passkey-only half already covered by `testPasskeyCreateIgnoresRecycleBinEntriesWhenListingMatches`.
+    func testPasskeyCreateIgnoresRecycleBinEntriesAmongDomainMatches() {
+        let id = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
+        moveEntryToRecycleBin(id)
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 34, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
+        XCTAssertTrue(matches.isEmpty)
+    }
+
+    /// `passkeyCreateConfirm` must write to whichever of several domain-matched entries the
+    /// user picked, not just "the first one found" — regression guard for choosing the
+    /// second of two candidates from the new union-based picker.
+    func testPasskeyCreateConfirmWritesToTheChosenEntryAmongMultipleDomainMatches() {
+        _ = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
+        let second = addFixtureEntry(title: "Site Backup Login", username: "alice-2", password: "s3cret2", url: "http://localhost:8765")
+
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 35, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
+        ))
+        let response = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 35, entryId: second.uuidString, replace: false, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, let responseJson, let error) = response else { return XCTFail("expected complete") }
+        XCTAssertNil(error)
+        XCTAssertNotNil(responseJson)
+
+        let entries = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup)
+        let updated = entries.first { $0.uuid == second }
+        XCTAssertEqual(updated?.passkeyRelyingParty, "localhost")
+        XCTAssertTrue(updated?.passkeyPrivateKeyPEM?.contains("PRIVATE KEY") == true)
+        XCTAssertEqual(entries.count, 2, "confirming against an existing entry must not also create a new one")
+    }
+
     func testPasskeyGetThenApproveSignsAssertion() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         _ = service.handle(.passkeyCreate(

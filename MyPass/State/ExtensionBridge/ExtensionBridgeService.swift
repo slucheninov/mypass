@@ -79,6 +79,27 @@ final class ExtensionBridgeService {
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
     }
 
+    /// Candidate entries for a `passkeyCreate` prompt: the union of entries whose saved
+    /// URL domain-matches the page origin (so a plain Login the user already has for the
+    /// site is offered as the save target) and entries that already carry a passkey for
+    /// `rpId` (so "replace passkey" is reachable even if the entry's own URL doesn't PSL-
+    /// match the current origin, e.g. it was saved from a different subdomain). Domain
+    /// matches are listed first; passkey-only entries are appended without duplicating any
+    /// entry that satisfied both. This differs deliberately from `.passkeyGet`, where only
+    /// entries that already hold a passkey for the rpId are ever candidates — signing in
+    /// must never offer to "create" against a plain Login that has no key to assert with.
+    private func passkeyCreateCandidates(forOriginUrl originUrl: String, rpId: String, in database: KdbxDatabase) -> [KdbxEntry] {
+        let domainMatches = matchingEntries(forURL: originUrl, in: database)
+        let passkeyMatches = passkeyEntries(forRelyingParty: rpId, in: database)
+        var seen = Set(domainMatches.map(\.uuid))
+        var candidates = domainMatches
+        for entry in passkeyMatches where !seen.contains(entry.uuid) {
+            seen.insert(entry.uuid)
+            candidates.append(entry)
+        }
+        return candidates
+    }
+
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
         guard vaultSession?.currentDatabase != nil || request.isAnswerableWhileLocked else {
             return .locked
@@ -228,7 +249,7 @@ final class ExtensionBridgeService {
                 )
             }
             // Phase 1 parses and routes only — no key generation, no vault write.
-            let matches = passkeyEntries(forRelyingParty: context.rpId, in: database)
+            let matches = passkeyCreateCandidates(forOriginUrl: originUrl, rpId: context.rpId, in: database)
             pendingPasskeyCreates[requestId] = (context: context, originUrl: originUrl)
             return .passkeyCreatePending(
                 requestId: requestId, rpId: context.rpId, rpName: context.rpName,
