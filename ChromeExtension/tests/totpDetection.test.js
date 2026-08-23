@@ -145,22 +145,29 @@ global.jsQR = () => global.__fakeQrResult || null;
 
 const { decodeQrFromImage, detectQrCandidate } = require('../content.js');
 
+// Each assertion below uses its own <img> (distinct `src`) rather than reusing one object:
+// decodeQrFromImage now memoizes per image (see the dedicated memoization test further down),
+// so re-using the same element/src pair here would return the FIRST call's cached result
+// instead of exercising the fresh-decode path each assertion is actually testing.
 global.__fakeQrResult = { data: 'otpauth://totp/Example:alice?secret=JBSWY3DP' };
-const decodableImg = { complete: true, naturalWidth: 200, naturalHeight: 200 };
+const decodableImg = { complete: true, naturalWidth: 200, naturalHeight: 200, src: 'https://example.com/qr-alice.png' };
 assert.strictEqual(decodeQrFromImage(decodableImg), 'otpauth://totp/Example:alice?secret=JBSWY3DP');
 
 global.__fakeQrResult = null;
-assert.strictEqual(decodeQrFromImage(decodableImg), null, 'no QR payload decodes to null');
+const noPayloadImg = { complete: true, naturalWidth: 200, naturalHeight: 200, src: 'https://example.com/qr-no-payload.png' };
+assert.strictEqual(decodeQrFromImage(noPayloadImg), null, 'no QR payload decodes to null');
 
 global.__fakeCanvasThrows = true;
-assert.strictEqual(decodeQrFromImage(decodableImg), null, 'CORS-tainted canvas is caught and skipped, not thrown');
+const taintedImg = { complete: true, naturalWidth: 200, naturalHeight: 200, src: 'https://example.com/qr-tainted.png' };
+assert.strictEqual(decodeQrFromImage(taintedImg), null, 'CORS-tainted canvas is caught and skipped, not thrown');
 global.__fakeCanvasThrows = false;
 
 const incompleteImg = { complete: false, naturalWidth: 0, naturalHeight: 0 };
 assert.strictEqual(decodeQrFromImage(incompleteImg), null, 'unloaded image is skipped');
 
 global.__fakeQrResult = { data: 'otpauth://totp/Example:carol?secret=ABCDEFGH' };
-const qrDoc = { querySelectorAll: (sel) => (sel === 'img' ? [decodableImg] : []) };
+const carolImg = { complete: true, naturalWidth: 200, naturalHeight: 200, src: 'https://example.com/qr-carol.png' };
+const qrDoc = { querySelectorAll: (sel) => (sel === 'img' ? [carolImg] : []) };
 assert.strictEqual(detectQrCandidate(qrDoc), 'otpauth://totp/Example:carol?secret=ABCDEFGH');
 
 console.log('totpDetection.test.js: QR detection OK');
