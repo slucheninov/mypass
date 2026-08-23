@@ -1079,20 +1079,30 @@ if (typeof document !== 'undefined') {
   // decide whether the control itself is enabled, not its checked state.
   initPasskeySettingsToggle = function () {
     passkeySettingsFooter.hidden = false;
+    // `statusApplied` guards against the async chrome.storage.local.get callback below
+    // clobbering a fresher value already set from the app's status — the two callbacks
+    // race with no ordering guarantee between them.
+    let statusApplied = false;
     chrome.storage.local.get(['passkeyProxyEnabled'], (stored) => {
+      if (statusApplied) return;
       passkeyProxyToggle.checked = !!(stored && stored.passkeyProxyEnabled);
     });
     chrome.runtime.sendMessage({ type: 'getPasskeyProxyStatus' }, (status) => {
       const reachable = !!(status && status.type === 'passkeyProxyStatus');
-      if (reachable) {
+      // A pre-`enabled` app (old wire shape) reports no opt-in at all; that is not
+      // authoritative, so fall back to whatever the stored cache/checkbox already shows.
+      if (reachable && status.enabled !== undefined) {
         passkeyProxyToggle.checked = !!status.enabled;
+        statusApplied = true;
       }
       passkeyProxyToggle.disabled = !(reachable && status.unlocked && status.paired);
     });
     // Fire-and-forget: lets the background service worker resync its cache and
     // attach/detach against the app's current status on every popup open, rather than
-    // only at service-worker startup.
-    chrome.runtime.sendMessage({ type: 'refreshPasskeyProxy' });
+    // only at service-worker startup. The no-op callback reads chrome.runtime.lastError
+    // so Chrome doesn't log an "Unchecked runtime.lastError" warning if the message port
+    // closes before a response (the handler never sends one for this message).
+    chrome.runtime.sendMessage({ type: 'refreshPasskeyProxy' }, () => { void chrome.runtime.lastError; });
     passkeyProxyToggle.addEventListener('change', () => {
       chrome.runtime.sendMessage({ type: 'setPasskeyProxyEnabled', enabled: passkeyProxyToggle.checked });
     });

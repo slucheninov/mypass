@@ -322,7 +322,11 @@ extension ExtensionBridgeResponse: Codable {
             let unlocked = try container.decode(Bool.self, forKey: .unlocked)
             let paired = try container.decode(Bool.self, forKey: .paired)
             let attachAllowed = try container.decode(Bool.self, forKey: .attachAllowed)
-            let enabled = try container.decode(Bool.self, forKey: .enabled)
+            // Tolerant decode: production always encodes `enabled` (see below), but a
+            // decoder must survive an older wire shape without it — the extension's own
+            // fallback (treat a missing field as "no authority yet") lives in background.js,
+            // not here; this default only keeps the type itself decodable.
+            let enabled = try container.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
             self = .passkeyProxyStatus(unlocked: unlocked, paired: paired, attachAllowed: attachAllowed, enabled: enabled)
         case "passkeyProxyEnabled":
             let enabled = try container.decode(Bool.self, forKey: .enabled)

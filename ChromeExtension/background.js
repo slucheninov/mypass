@@ -312,6 +312,11 @@ function writePasskeyProxyEnabledCache(enabled) {
 // cache and the actual attach/detach state, or the app's Settings toggle only takes
 // effect after the next service-worker restart (the bug this closes).
 async function syncPasskeyProxyFromStatus(status) {
+  // A pre-`enabled` app (old wire shape) has no opt-in field at all — there is nothing
+  // authoritative to sync against. Treating that as "disabled" would detach an already
+  // legitimately-attached proxy and clobber the cache to false, and the popup toggle
+  // could never turn it back on (set -> refetch old-shaped status -> detach again).
+  if (status.enabled === undefined) return;
   await writePasskeyProxyEnabledCache(status.enabled);
   if (status.enabled && status.attachAllowed) {
     try {

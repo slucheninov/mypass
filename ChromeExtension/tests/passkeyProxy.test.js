@@ -183,6 +183,19 @@ const detailsFor = (origin) => JSON.stringify({
   assert.strictEqual(localStore.passkeyProxyEnabled, false, 'the cache must be left untouched when the app is unreachable');
   console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible skips and leaves the cache untouched when app unavailable OK');
 
+  // Old-shaped app (pre-`enabled` wire format): a status with attachAllowed but no
+  // `enabled` field at all must not be treated as "disabled" — that would detach an
+  // already legitimately-attached proxy and clobber the cache, and the popup toggle could
+  // never re-enable (set -> refetch old-shaped status -> detach again).
+  resetState();
+  localStore.passkeyProxyEnabled = true;
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true });
+  await attachPasskeyProxyIfEligible();
+  assert.strictEqual(attachCalled, false, 'no attach without an authoritative enabled field');
+  assert.strictEqual(detachCalled, false, 'no detach without an authoritative enabled field');
+  assert.strictEqual(localStore.passkeyProxyEnabled, true, 'the cache must be left untouched for an old-shaped status');
+  console.log('passkeyProxy.test.js: attachPasskeyProxyIfEligible ignores an old-shaped status missing enabled OK');
+
   // --- popup-open refresh ----------------------------------------------------------
   // popup.js sends this fire-and-forget on every open; it must re-run the same
   // app-authoritative eligibility check rather than waiting for a service-worker restart.
