@@ -918,6 +918,39 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(entries.count, 2, "confirming against an existing entry must not also create a new one")
     }
 
+    /// Regression guard: `passkeyCreateConfirm` must reject an `entryId` that was never a
+    /// candidate the popup was shown for this ceremony — otherwise a stale UI, a forged
+    /// message, or a race with a changed candidate set could attach a passkey to an
+    /// unrelated entry, the same domain-scoping `fillCredential`/`getTotp`/`proposeSaveTotp`
+    /// already enforce via `matchingEntries(forURL:)`.
+    func testPasskeyCreateConfirmRejectsEntryIdOutsideTheCandidateSet() {
+        let hostEntry = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
+        let otherHostEntry = addFixtureEntry(title: "Other Site", username: "bob", password: "s3cret2", url: "https://other-site.example")
+
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 36, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
+        ))
+        let response = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 36, entryId: otherHostEntry.uuidString, replace: false, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, let responseJson, let error) = response else { return XCTFail("expected complete") }
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "NotAllowedError")
+
+        let entries = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup)
+        XCTAssertTrue(entries.allSatisfy { $0.passkeyPrivateKeyPEM?.isEmpty != false }, "no entry must have gained a passkey")
+        XCTAssertEqual(entries.count, 2, "an out-of-candidate-set entryId must not fall back to creating a new entry either")
+
+        // A confirm carrying the pending request's own requestId again must fail, not
+        // resurrect it — the pending record was cleared on the rejected attempt above.
+        let retry = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 36, entryId: hostEntry.uuidString, replace: false, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, _, let retryError) = retry else { return XCTFail("expected complete") }
+        XCTAssertEqual(retryError?.name, "NotAllowedError", "the pending record must be cleared after a rejected entryId")
+    }
+
     func testPasskeyGetThenApproveSignsAssertion() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         _ = service.handle(.passkeyCreate(

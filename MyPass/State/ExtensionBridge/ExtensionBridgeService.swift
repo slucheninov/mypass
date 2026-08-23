@@ -269,8 +269,19 @@ final class ExtensionBridgeService {
                     error: PasskeyErrorDetails(name: "NotAllowedError", message: "No pending request")
                 )
             }
-            let targetEntry = entryId.flatMap { id in
-                EntrySearch.allEntries(in: database.rootGroup)
+            // Resolved from the same candidate set `.passkeyCreate` offered the popup — not
+            // "any entry in the vault" — matching the pattern `fillCredential`/`getTotp`/
+            // `proposeSaveTotp` already use via `matchingEntries(forURL:)`. Without this, a
+            // confirm carrying an `entryId` the popup never actually listed (stale UI, a
+            // forged message, a race with a since-changed candidate set) would silently
+            // attach a passkey to an unrelated entry.
+            let candidateIds = Set(
+                passkeyCreateCandidates(forOriginUrl: pending.originUrl, rpId: pending.context.rpId, in: database)
+                    .map(\.uuid.uuidString)
+            )
+            let targetEntry = entryId.flatMap { id -> KdbxEntry? in
+                guard candidateIds.contains(id) else { return nil }
+                return EntrySearch.allEntries(in: database.rootGroup)
                     .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
                     .first(where: { $0.uuid.uuidString == id })
             }
@@ -278,10 +289,14 @@ final class ExtensionBridgeService {
                 pendingPasskeyCreates.removeValue(forKey: requestId)
                 return .passkeyCreateComplete(
                     requestId: requestId, responseJson: nil,
-                    error: PasskeyErrorDetails(name: "NotAllowedError", message: "Entry not found")
+                    error: PasskeyErrorDetails(name: "NotAllowedError", message: "Entry not found or domain mismatch")
                 )
             }
             if let targetEntry, targetEntry.passkeyPrivateKeyPEM?.isEmpty == false, !replace {
+                // The ceremony is already being completed with an error on the extension
+                // side here — nothing can legitimately consume a pending record left alive
+                // after this point, so it is cleared like every other failure return.
+                pendingPasskeyCreates.removeValue(forKey: requestId)
                 return .passkeyCreateComplete(
                     requestId: requestId, responseJson: nil,
                     error: PasskeyErrorDetails(name: "InvalidStateError", message: "Entry already has a passkey")

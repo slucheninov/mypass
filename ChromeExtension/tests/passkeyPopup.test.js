@@ -211,7 +211,7 @@ console.log('passkeyPopup.test.js: picker renders every match and can be cancell
 // confirm, not silently overwrite it via a direct passkeyCreateConfirm call.
 resetPanels();
 renderPasskeyCeremonyPanel({ kind: 'create', requestId: 12, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey, withoutPasskey] });
-const [passkeyRow, plainRow] = elements['passkey-picker-list'].children;
+const [passkeyRow] = elements['passkey-picker-list'].children;
 passkeyRow.listeners.click[0]();
 assert.strictEqual(sentMessages.length, 0, 'selecting an entry that already has a passkey must not confirm directly');
 assert.strictEqual(elements['passkey-replace-panel'].hidden, false, 'it must route to the Replace confirm panel instead');
