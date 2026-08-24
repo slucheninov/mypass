@@ -1061,4 +1061,36 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         guard case .passkeyCreateComplete(_, _, let error) = response else { return XCTFail("expected complete") }
         XCTAssertEqual(error?.name, "NotAllowedError")
     }
+
+    // MARK: - Auto-lock activity notification
+
+    func testFillCredentialNotifiesAutoLockActivityRecorder() {
+        let recorder = SpyAutoLockActivityRecorder()
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let notifying = ExtensionBridgeService(
+            vaultSession: session, pairingManager: ExtensionPairingManager(store: InMemoryExtensionPairingStore()),
+            autoLockActivityRecorder: recorder
+        )
+
+        _ = notifying.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
+
+        XCTAssertEqual(recorder.recordActivityCallCount, 1, "fillCredential is a deliberate user action and must reset the idle timer")
+    }
+
+    func testGetPasskeyProxyStatusDoesNotNotifyAutoLockActivityRecorder() {
+        let recorder = SpyAutoLockActivityRecorder()
+        let notifying = ExtensionBridgeService(
+            vaultSession: session, pairingManager: ExtensionPairingManager(store: InMemoryExtensionPairingStore()),
+            autoLockActivityRecorder: recorder
+        )
+
+        _ = notifying.handle(.getPasskeyProxyStatus(token: "t", pairing: nil))
+
+        XCTAssertEqual(recorder.recordActivityCallCount, 0, "background status polling must not reset the idle timer")
+    }
+}
+
+final class SpyAutoLockActivityRecorder: AutoLockActivityRecording {
+    private(set) var recordActivityCallCount = 0
+    func recordActivity() { recordActivityCallCount += 1 }
 }

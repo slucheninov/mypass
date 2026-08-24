@@ -6,11 +6,22 @@ import ExtensionBridgeKit
 /// UI-agnostic request handler for the browser-extension bridge. Token
 /// validation happens one layer up, in `LoopbackServer` (Phase 4, Task 6),
 /// before a request ever reaches this type — `handle(_:)` trusts its caller.
+/// Notified when a bridge request represents deliberate user activity, so the idle
+/// auto-lock timer can be reset the same way it is for in-app key/mouse events.
+/// `AutoLockController.recordActivity()` already matches this shape.
+protocol AutoLockActivityRecording: AnyObject {
+    func recordActivity()
+}
+
 final class ExtensionBridgeService {
     weak var vaultSession: VaultSession?
     private let pairingManager: ExtensionPairingManager
     /// Injectable so the debounce is testable without sleeping.
     private let now: () -> Date
+    /// Weak, like `vaultSession` — the service observes the auto-lock controller's
+    /// lifecycle, it does not own it. `nil` in contexts that don't wire one up (most
+    /// existing tests), which simply means bridge traffic never resets any timer.
+    private weak var autoLockActivityRecorder: AutoLockActivityRecording?
     private var lastAcceptedUnlockRequestAt: Date?
     /// Phase-1 parse results, held between `passkeyCreate`/`passkeyGet` and the user's
     /// confirm click. Deliberately in memory only: a ceremony that does not survive an
@@ -37,11 +48,13 @@ final class ExtensionBridgeService {
     init(
         vaultSession: VaultSession,
         pairingManager: ExtensionPairingManager,
-        now: @escaping () -> Date = Date.init
+        now: @escaping () -> Date = Date.init,
+        autoLockActivityRecorder: AutoLockActivityRecording? = nil
     ) {
         self.vaultSession = vaultSession
         self.pairingManager = pairingManager
         self.now = now
+        self.autoLockActivityRecorder = autoLockActivityRecorder
         // Locking the vault must invalidate anything mid-ceremony. Without this a
         // confirm arriving after a re-unlock would still find its phase-1 context and
         // write a passkey the user approved under a session that has since ended.
@@ -101,6 +114,12 @@ final class ExtensionBridgeService {
     }
 
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
+        // Deliberately keyed off the request's own case, not whether it ends up
+        // succeeding below — see `resetsAutoLockTimer`'s doc comment for why the
+        // decision is per-case and exhaustive.
+        if request.resetsAutoLockTimer {
+            autoLockActivityRecorder?.recordActivity()
+        }
         guard vaultSession?.currentDatabase != nil || request.isAnswerableWhileLocked else {
             return .locked
         }

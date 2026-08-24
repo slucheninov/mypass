@@ -13,7 +13,7 @@ protocol AutoLockSleepObserving {
     func onWillSleep(_ handler: @escaping () -> Void) -> AutoLockCancelable
 }
 
-final class AutoLockController: ObservableObject {
+final class AutoLockController: ObservableObject, AutoLockActivityRecording {
     private let vaultSession: VaultSession
     private let clock: AutoLockClock
     private var pendingTick: AutoLockCancelable?

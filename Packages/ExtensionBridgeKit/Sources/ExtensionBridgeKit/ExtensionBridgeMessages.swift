@@ -226,6 +226,33 @@ public extension ExtensionBridgeRequest {
             return false
         }
     }
+
+    /// Whether handling this request should reset the app's idle auto-lock timer.
+    ///
+    /// A user working entirely in the browser extension never touches the MyPass window,
+    /// so the idle timer's only other reset source (`NSEvent` key/mouse monitoring in
+    /// `MyPassApp.swift`) never fires for them — the vault would silently re-lock under an
+    /// active user. The fix is to reset on extension traffic too, but only the requests that
+    /// represent a deliberate user action (clicking "fill", approving a passkey, unlocking).
+    /// Background/status polling that can fire without the user doing anything — proxy
+    /// status checks, the app-side toggle, pairing handshakes — must NOT reset the timer,
+    /// or a page left open with the extension merely attached would keep the vault awake
+    /// indefinitely.
+    ///
+    /// The switch is deliberately exhaustive with no `default`, mirroring
+    /// `isAnswerableWhileLocked` above: a new request case must make an explicit decision
+    /// here rather than silently inheriting one.
+    var resetsAutoLockTimer: Bool {
+        switch self {
+        case .getCredentials, .fillCredential, .getTotp, .proposeSaveLogin, .proposeSaveTotp,
+             .passkeyCreateConfirm, .passkeyGetApprove, .passkeyCreate, .passkeyGet, .requestUnlock:
+            return true
+        // Can all fire without the user acting: status polling, the app-side toggle
+        // mirrored from Settings, and the pairing handshake driven by the browser side.
+        case .getPasskeyProxyStatus, .setPasskeyProxyEnabled, .startPairing, .completePairing, .passkeyCancel:
+            return false
+        }
+    }
 }
 
 // MARK: - Shared value types

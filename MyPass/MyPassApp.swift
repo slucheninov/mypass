@@ -153,6 +153,21 @@ struct MyPassApp: App {
         // in-session switch to iCloud from `VaultLocationChangeSheet` keeps it
         // working without this call site having to remember to re-wire it.
 
+        // Created here, ahead of `ExtensionBridgeService`, purely so the service can
+        // be handed a reference at init (mirroring how it already receives
+        // `vaultSession`/`pairingManager`) instead of a settable-after-the-fact
+        // singleton. See the `resetsAutoLockTimer` reset below for why this exists:
+        // a user working entirely in the browser extension never triggers the
+        // in-app key/mouse monitor that otherwise keeps this timer alive.
+        let controller = AutoLockController(
+            vaultSession: session,
+            clock: RealAutoLockClock(),
+            sleepObserver: NSWorkspaceSleepObserver(),
+            timeout: autoLockIdleTimeout.seconds,
+            lockOnSleepEnabled: lockOnDeviceSleepEnabled
+        )
+        _autoLockController = StateObject(wrappedValue: controller)
+
         let pairingStore = KeychainExtensionPairingStore()
         let pairingStoreModel = ExtensionPairingStoreModel(store: pairingStore)
         let pairingManager = ExtensionPairingManager(store: pairingStore)
@@ -161,7 +176,8 @@ struct MyPassApp: App {
         AppDelegate.extensionPairingManager = pairingManager
         let extensionBridgeService = ExtensionBridgeService(
             vaultSession: session,
-            pairingManager: pairingManager
+            pairingManager: pairingManager,
+            autoLockActivityRecorder: controller
         )
         let extensionBridgeServer = LoopbackServer(
             tokenStore: ExtensionBridgeTokenStore(),
@@ -248,19 +264,14 @@ struct MyPassApp: App {
         // derived key under a fixed "master" account. Safe to call even if nothing is stored.
         try? BiometricKeyStore().remove(account: "master")
 
+        // `controller` was created and assigned to `_autoLockController` above,
+        // ahead of `ExtensionBridgeService`, so the service could receive it at init.
+        //
         // Falls back to `defaultAutoLockTimeout` / `true` only on a true first-ever
         // launch, i.e. when the "autoLockIdleTimeout" AppStorage key isn't set yet or
         // fails to parse; `AutoLockIdleTimeout.thirtyMinutes` above already covers that
         // case for the timeout itself, so this constant is now unused for that purpose
         // and kept only as a documented fallback value.
-        let controller = AutoLockController(
-            vaultSession: session,
-            clock: RealAutoLockClock(),
-            sleepObserver: NSWorkspaceSleepObserver(),
-            timeout: autoLockIdleTimeout.seconds,
-            lockOnSleepEnabled: lockOnDeviceSleepEnabled
-        )
-        _autoLockController = StateObject(wrappedValue: controller)
 
         // Reset the auto-lock timer on real user input so the vault locks after a
         // period of inactivity, not simply `timeout` seconds after launch.

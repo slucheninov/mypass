@@ -250,6 +250,35 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         }
     }
 
+    func testResetsAutoLockTimerOnlyForDeliberateUserActionRequests() {
+        let resetting: [ExtensionBridgeRequest] = [
+            .getCredentials(token: "t", url: "https://example.com", pairing: nil),
+            .fillCredential(token: "t", id: "e", url: "https://example.com", pairing: nil),
+            .getTotp(token: "t", id: "e", url: "https://example.com", pairing: nil),
+            .proposeSaveLogin(token: "t", url: "https://example.com", username: "u", password: "p", pairing: nil),
+            .proposeSaveTotp(token: "t", url: "https://example.com", otpauthOrSecret: "secret", entryId: nil, pairing: nil),
+            .passkeyCreateConfirm(token: "t", requestId: 1, entryId: nil, replace: false, pairing: nil),
+            .passkeyGetApprove(token: "t", requestId: 1, entryId: "e", pairing: nil),
+            .passkeyCreate(token: "t", requestId: 1, requestDetailsJson: "{}", originUrl: "https://example.com", pairing: nil),
+            .passkeyGet(token: "t", requestId: 1, requestDetailsJson: "{}", originUrl: "https://example.com", pairing: nil),
+            .requestUnlock(token: "t", pairing: nil),
+        ]
+        for request in resetting {
+            XCTAssertTrue(request.resetsAutoLockTimer, "\(request) should reset the idle auto-lock timer")
+        }
+
+        let nonResetting: [ExtensionBridgeRequest] = [
+            .getPasskeyProxyStatus(token: "t", pairing: nil),
+            .setPasskeyProxyEnabled(token: "t", enabled: true, pairing: nil),
+            .startPairing(token: "t", browser: nil),
+            .completePairing(token: "t", code: "123456"),
+            .passkeyCancel(token: "t", requestId: 1, pairing: nil),
+        ]
+        for request in nonResetting {
+            XCTAssertFalse(request.resetsAutoLockTimer, "\(request) must not reset the idle auto-lock timer")
+        }
+    }
+
     func testGetTotpRoundTripsAndHasExpectedShape() throws {
         let request = ExtensionBridgeRequest.getTotp(token: "tok", id: "entry-1", url: "https://example.com", pairing: "pair-secret")
         let data = try JSONEncoder().encode(request)
