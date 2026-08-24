@@ -250,24 +250,34 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         }
     }
 
-    func testResetsAutoLockTimerOnlyForDeliberateUserActionRequests() {
+    func testResetsAutoLockTimerOnlyForGestureGatedRequests() {
+        // Gesture-gated: cannot be produced without a deliberate user action (a
+        // content-script `trustedClickHandler`/`isTrustedActivation` check, or a
+        // popup button click).
         let resetting: [ExtensionBridgeRequest] = [
-            .getCredentials(token: "t", url: "https://example.com", pairing: nil),
             .fillCredential(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .getTotp(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .proposeSaveLogin(token: "t", url: "https://example.com", username: "u", password: "p", pairing: nil),
             .proposeSaveTotp(token: "t", url: "https://example.com", otpauthOrSecret: "secret", entryId: nil, pairing: nil),
             .passkeyCreateConfirm(token: "t", requestId: 1, entryId: nil, replace: false, pairing: nil),
             .passkeyGetApprove(token: "t", requestId: 1, entryId: "e", pairing: nil),
-            .passkeyCreate(token: "t", requestId: 1, requestDetailsJson: "{}", originUrl: "https://example.com", pairing: nil),
-            .passkeyGet(token: "t", requestId: 1, requestDetailsJson: "{}", originUrl: "https://example.com", pairing: nil),
             .requestUnlock(token: "t", pairing: nil),
         ]
         for request in resetting {
             XCTAssertTrue(request.resetsAutoLockTimer, "\(request) should reset the idle auto-lock timer")
         }
 
+        // Page-triggerable without any user gesture: `content.js` fires
+        // `requestCredentials()` automatically whenever a login form is found (runs at
+        // `<all_urls>`, all frames), and `background.js` forwards every
+        // `webAuthenticationProxy` create/get event, which page script can trigger on
+        // its own via `navigator.credentials.create/get()` (including conditional
+        // mediation at page load) — a hostile or merely noisy background tab must not
+        // be able to keep the vault awake by spamming these.
         let nonResetting: [ExtensionBridgeRequest] = [
+            .getCredentials(token: "t", url: "https://example.com", pairing: nil),
+            .passkeyCreate(token: "t", requestId: 1, requestDetailsJson: "{}", originUrl: "https://example.com", pairing: nil),
+            .passkeyGet(token: "t", requestId: 1, requestDetailsJson: "{}", originUrl: "https://example.com", pairing: nil),
             .getPasskeyProxyStatus(token: "t", pairing: nil),
             .setPasskeyProxyEnabled(token: "t", enabled: true, pairing: nil),
             .startPairing(token: "t", browser: nil),

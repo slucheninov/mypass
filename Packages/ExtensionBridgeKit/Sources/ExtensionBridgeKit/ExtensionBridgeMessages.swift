@@ -232,21 +232,39 @@ public extension ExtensionBridgeRequest {
     /// A user working entirely in the browser extension never touches the MyPass window,
     /// so the idle timer's only other reset source (`NSEvent` key/mouse monitoring in
     /// `MyPassApp.swift`) never fires for them — the vault would silently re-lock under an
-    /// active user. The fix is to reset on extension traffic too, but only the requests that
-    /// represent a deliberate user action (clicking "fill", approving a passkey, unlocking).
-    /// Background/status polling that can fire without the user doing anything — proxy
-    /// status checks, the app-side toggle, pairing handshakes — must NOT reset the timer,
-    /// or a page left open with the extension merely attached would keep the vault awake
-    /// indefinitely.
+    /// active user. The fix is to reset on extension traffic too, but ONLY on requests that
+    /// cannot be produced without a deliberate user gesture. Background/status polling and
+    /// anything a page can trigger on its own — proxy status checks, the app-side toggle,
+    /// the pairing handshake, and (critically) `getCredentials`/`passkeyCreate`/`passkeyGet`
+    /// — must NOT reset the timer: `content.js` fires `requestCredentials()` automatically
+    /// whenever a login form is found (runs at `<all_urls>`, all frames), and
+    /// `background.js` forwards every `webAuthenticationProxy` create/get event, which page
+    /// script triggers on its own timing via `navigator.credentials.create/get()` (including
+    /// conditional mediation at page load, with no user gesture at all). Resetting on those
+    /// would let a hostile or merely noisy background tab defeat idle auto-lock entirely.
+    ///
+    /// Classification rule: resets only if the request cannot be produced without a
+    /// deliberate user gesture (verified per case against the content-script
+    /// `trustedClickHandler`/`isTrustedActivation` guards, or a popup button click).
     ///
     /// The switch is deliberately exhaustive with no `default`, mirroring
     /// `isAnswerableWhileLocked` above: a new request case must make an explicit decision
     /// here rather than silently inheriting one.
     var resetsAutoLockTimer: Bool {
         switch self {
-        case .getCredentials, .fillCredential, .getTotp, .proposeSaveLogin, .proposeSaveTotp,
-             .passkeyCreateConfirm, .passkeyGetApprove, .passkeyCreate, .passkeyGet, .requestUnlock:
+        // Gesture-gated: a popup button click (`fillCredential`, `getTotp`,
+        // `proposeSaveLogin`, `proposeSaveTotp`, `passkeyCreateConfirm`,
+        // `passkeyGetApprove`, `requestUnlock`) — none of these can fire on a page's
+        // own timing.
+        case .fillCredential, .getTotp, .proposeSaveLogin, .proposeSaveTotp,
+             .passkeyCreateConfirm, .passkeyGetApprove, .requestUnlock:
             return true
+        // Page-triggerable, no user gesture required: `content.js`'s automatic
+        // `requestCredentials()` on any detected login form, and the
+        // `webAuthenticationProxy` create/get events `background.js` forwards for
+        // page-initiated `navigator.credentials.create/get()` calls.
+        case .getCredentials, .passkeyCreate, .passkeyGet:
+            return false
         // Can all fire without the user acting: status polling, the app-side toggle
         // mirrored from Settings, and the pairing handshake driven by the browser side.
         case .getPasskeyProxyStatus, .setPasskeyProxyEnabled, .startPairing, .completePairing, .passkeyCancel:

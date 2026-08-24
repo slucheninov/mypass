@@ -1064,7 +1064,10 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     // MARK: - Auto-lock activity notification
 
-    func testFillCredentialNotifiesAutoLockActivityRecorder() {
+    /// A request must not count as "the user did something" unless it was actually
+    /// served — an unpaired client that can read nothing must not keep the vault awake
+    /// just by being gesture-shaped.
+    func testUnpairedFillCredentialDoesNotNotifyAutoLockActivityRecorder() {
         let recorder = SpyAutoLockActivityRecorder()
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         let notifying = ExtensionBridgeService(
@@ -1072,9 +1075,30 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             autoLockActivityRecorder: recorder
         )
 
-        _ = notifying.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
+        let response = notifying.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
 
-        XCTAssertEqual(recorder.recordActivityCallCount, 1, "fillCredential is a deliberate user action and must reset the idle timer")
+        XCTAssertEqual(response, .pairingRequired)
+        XCTAssertEqual(recorder.recordActivityCallCount, 0, "an unpaired request was refused, not served — must not reset the idle timer")
+    }
+
+    func testPairedAndServedFillCredentialNotifiesAutoLockActivityRecorder() {
+        let recorder = SpyAutoLockActivityRecorder()
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let store = InMemoryExtensionPairingStore()
+        let secret = ExtensionBridgeTokenStore.generateToken()
+        let hash = SHA256.hash(data: Data(secret.utf8))
+            .compactMap { String(format: "%02x", $0) }
+            .joined()
+        try! store.add(PairedBrowser(id: UUID(), label: "Test", createdAt: Date(), secretHash: hash))
+        let notifying = ExtensionBridgeService(
+            vaultSession: session, pairingManager: ExtensionPairingManager(store: store),
+            autoLockActivityRecorder: recorder
+        )
+
+        let response = notifying.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: secret))
+
+        guard case .credential = response else { return XCTFail("expected the request to actually be served") }
+        XCTAssertEqual(recorder.recordActivityCallCount, 1, "a paired, served fillCredential is a deliberate user action and must reset the idle timer")
     }
 
     func testGetPasskeyProxyStatusDoesNotNotifyAutoLockActivityRecorder() {

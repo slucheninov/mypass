@@ -3,9 +3,6 @@ import Foundation
 import MyPassKit
 import ExtensionBridgeKit
 
-/// UI-agnostic request handler for the browser-extension bridge. Token
-/// validation happens one layer up, in `LoopbackServer` (Phase 4, Task 6),
-/// before a request ever reaches this type — `handle(_:)` trusts its caller.
 /// Notified when a bridge request represents deliberate user activity, so the idle
 /// auto-lock timer can be reset the same way it is for in-app key/mouse events.
 /// `AutoLockController.recordActivity()` already matches this shape.
@@ -13,6 +10,9 @@ protocol AutoLockActivityRecording: AnyObject {
     func recordActivity()
 }
 
+/// UI-agnostic request handler for the browser-extension bridge. Token
+/// validation happens one layer up, in `LoopbackServer` (Phase 4, Task 6),
+/// before a request ever reaches this type — `handle(_:)` trusts its caller.
 final class ExtensionBridgeService {
     weak var vaultSession: VaultSession?
     private let pairingManager: ExtensionPairingManager
@@ -114,12 +114,37 @@ final class ExtensionBridgeService {
     }
 
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
-        // Deliberately keyed off the request's own case, not whether it ends up
-        // succeeding below — see `resetsAutoLockTimer`'s doc comment for why the
-        // decision is per-case and exhaustive.
-        if request.resetsAutoLockTimer {
+        let response = response(for: request)
+        // Recorded only once the response is known, and only if the request was both
+        // gesture-gated (`resetsAutoLockTimer`) AND actually served — an unpaired,
+        // locked, or refused request must not keep the vault awake just because it was
+        // gesture-shaped. See `requestWasServed(_:)` below.
+        if request.resetsAutoLockTimer, requestWasServed(response) {
             autoLockActivityRecorder?.recordActivity()
         }
+        return response
+    }
+
+    /// Whether `response` represents the request actually being served, as opposed to
+    /// being refused for a reason unrelated to anything the user did (not paired, vault
+    /// locked, or an explicit error/refusal). Used solely to gate auto-lock activity
+    /// recording in `handle(_:)` above.
+    private func requestWasServed(_ response: ExtensionBridgeResponse) -> Bool {
+        switch response {
+        case .locked, .pairingRequired, .error:
+            return false
+        case .passkeyCreateComplete(_, _, let error):
+            return error == nil
+        case .passkeyGetComplete(_, _, let error):
+            return error == nil
+        case .pairingStarted, .paired, .credentialList, .credential, .totp, .saveProposalAccepted,
+             .unlockPresented, .unlockNotNeeded, .passkeyProxyStatus, .passkeyProxyEnabled,
+             .passkeyCreatePending, .passkeyGetPending, .passkeyCancelled:
+            return true
+        }
+    }
+
+    private func response(for request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
         guard vaultSession?.currentDatabase != nil || request.isAnswerableWhileLocked else {
             return .locked
         }
