@@ -185,6 +185,15 @@ function shouldShowTotpCircle(hasTotp) {
   return hasTotp === true;
 }
 
+/// Shared by the ordinary credential list and the passkey picker rows, so the two
+/// surfaces that can name "this entry has a passkey" always agree on markup/class.
+function buildPasskeyBadgeElement() {
+  const badge = document.createElement('span');
+  badge.className = 'passkey-badge';
+  badge.textContent = 'Passkey';
+  return badge;
+}
+
 function createTotpCircleController(circleEl, requestTotp, options = {}) {
   const textEl = options.textEl || circleEl;
   let hideTimer = null;
@@ -369,6 +378,7 @@ function describeSaveProposalOutcome(response) {
 // `buildLetterAvatarElement`, routeTotpCandidate needs renderTotpPicker, and
 // restorePendingTotpCandidate needs `totpPasteInput`/`showPanel`. Declared here (rather
 // than only inside the DOM block) so module.exports at the bottom of this file can see them.
+let renderCredentials = null;
 let renderTotpPicker = null;
 let routeTotpCandidate = null;
 let restorePendingTotpCandidate = null;
@@ -427,7 +437,9 @@ function passkeyTargetSummary(pending, overrideMatch) {
     return { headline: `New entry for ${pending.rpId}`, detail };
   }
   const who = match.username ? `"${match.title}" (${match.username})` : `"${match.title}"`;
-  const headline = match.hasPasskey ? `Replace passkey in ${who}?` : `Save passkey to ${who}?`;
+  const headline = pending.kind === 'get'
+    ? `Sign in as ${who}?`
+    : (match.hasPasskey ? `Replace passkey in ${who}?` : `Save passkey to ${who}?`);
   return { headline, detail };
 }
 
@@ -593,7 +605,7 @@ if (typeof document !== 'undefined') {
     return avatar;
   }
 
-  function renderCredentials(credentials, url) {
+  renderCredentials = function (credentials, url) {
     listEl.innerHTML = '';
     credentials.forEach((credential) => {
       const item = document.createElement('li');
@@ -622,6 +634,10 @@ if (typeof document !== 'undefined') {
         item.appendChild(buildTotpCircleElement(credential, url));
       }
 
+      if (credential.hasPasskey) {
+        item.appendChild(buildPasskeyBadgeElement());
+      }
+
       item.addEventListener('click', () => {
         chrome.runtime.sendMessage(
           { type: 'fillCredential', id: credential.id, url },
@@ -632,7 +648,7 @@ if (typeof document !== 'undefined') {
       });
       listEl.appendChild(item);
     });
-  }
+  };
 
   function startPairingFlow() {
     resetPairingFlow();
@@ -987,11 +1003,8 @@ if (typeof document !== 'undefined') {
       }
       item.appendChild(textCol);
 
-      if (pending.kind === 'create' && credential.hasPasskey) {
-        const badge = document.createElement('span');
-        badge.className = 'passkey-badge';
-        badge.textContent = 'Passkey';
-        item.appendChild(badge);
+      if (credential.hasPasskey) {
+        item.appendChild(buildPasskeyBadgeElement());
       }
 
       item.addEventListener('click', () => {
@@ -1044,7 +1057,9 @@ if (typeof document !== 'undefined') {
     }
 
     if (panel === 'passkey-use') {
-      document.getElementById('passkey-use-summary').textContent = summaryText;
+      const { headline, detail } = passkeyTargetSummary(pending);
+      document.getElementById('passkey-use-summary').textContent = headline;
+      document.getElementById('passkey-use-detail').textContent = detail;
       document.getElementById('passkey-approve-btn').onclick = () => sendPasskeyGetApprove(pending.requestId, entryId);
       document.getElementById('passkey-use-cancel-btn').onclick = () => sendPasskeyCancel(pending.requestId);
       showPanel('passkey-use');
@@ -1193,6 +1208,8 @@ if (typeof module !== 'undefined') {
     shouldShowTotpCircle,
     createTotpCircleController,
     buildTotpCircleElement,
+    buildPasskeyBadgeElement,
+    renderCredentials,
     totpRemainingFraction,
     totpRingDashOffset,
     tickTotpRings,

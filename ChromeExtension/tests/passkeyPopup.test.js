@@ -88,7 +88,8 @@ const {
   sendPasskeyCancel,
   PENDING_PASSKEY_KEY,
   initPasskeySettingsToggle,
-  initPasskeyPopupUI
+  initPasskeyPopupUI,
+  renderCredentials
 } = require('../popup.js');
 
 // --- pure routing -----------------------------------------------------------
@@ -153,6 +154,18 @@ assert.deepStrictEqual(
   passkeyTargetSummary({ ...basePending, matches: [withPasskey, withoutPasskey] }, withoutPasskey),
   { headline: 'Save passkey to "Example" (bob)?', detail: 'example.com — https://example.com' }
 );
+
+// The get flow was left behind when the create flow got a named headline: a single get
+// match must also name the entry ("Sign in as ..."), not just repeat the bare rpId/origin.
+assert.deepStrictEqual(passkeyTargetSummary({ ...basePending, kind: 'get', matches: [withPasskey] }), {
+  headline: 'Sign in as "Example" (alice)?',
+  detail: 'example.com — https://example.com'
+});
+const noUsernameWithPasskey = { id: 'e4', title: 'No Username Passkey', username: '', hasPasskey: true };
+assert.deepStrictEqual(passkeyTargetSummary({ ...basePending, kind: 'get', matches: [noUsernameWithPasskey] }), {
+  headline: 'Sign in as "No Username Passkey"?',
+  detail: 'example.com — https://example.com'
+});
 console.log('passkeyPopup.test.js: passkeyTargetSummary headline/detail OK');
 
 // --- rendering --------------------------------------------------------------
@@ -197,9 +210,13 @@ console.log('passkeyPopup.test.js: replace panel sends replace:true and names th
 resetPanels();
 renderPasskeyCeremonyPanel({ kind: 'get', requestId: 3, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey] });
 assert.strictEqual(elements['passkey-use-panel'].hidden, false);
+// Gate: the "Use passkey" panel used to render only the bare rpId/origin summary, never
+// naming which entry it was about to sign in as.
+assert.strictEqual(elements['passkey-use-summary'].textContent, 'Sign in as "Example" (alice)?', 'the use panel must name the target entry');
+assert.strictEqual(elements['passkey-use-detail'].textContent, 'example.com — https://example.com', 'the rpId/origin line stays visible for phishing resistance');
 elements['passkey-approve-btn'].onclick();
 assert.deepStrictEqual(sentMessages[0], { type: 'passkeyGetApprove', requestId: 3, entryId: 'e1' });
-console.log('passkeyPopup.test.js: use panel approves with the matched entry OK');
+console.log('passkeyPopup.test.js: use panel names the target entry and approves with the matched entry OK');
 
 resetPanels();
 renderPasskeyCeremonyPanel({ kind: 'get', requestId: 4, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey, withoutPasskey] });
@@ -209,11 +226,37 @@ elements['passkey-picker-cancel-btn'].onclick();
 assert.deepStrictEqual(sentMessages[0], { type: 'passkeyCancelUI', requestId: 4 });
 console.log('passkeyPopup.test.js: picker renders every match and can be cancelled OK');
 
+// A real get ceremony's matches always have hasPasskey === true (that's what made them
+// match), so both rows must carry the green badge — it used to be gated on
+// `pending.kind === 'create'` and never showed for the get flow at all.
+const withPasskeyAlice = { id: 'e5', title: 'Alice Site', username: 'alice', hasPasskey: true };
+const withPasskeyCarol = { id: 'e6', title: 'Carol Site', username: 'carol', hasPasskey: true };
+resetPanels();
+renderPasskeyCeremonyPanel({ kind: 'get', requestId: 4.5, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskeyAlice, withPasskeyCarol] });
+const [getRowWithBadge, getRowAlsoWithBadge] = elements['passkey-picker-list'].children;
+assert.ok(
+  getRowWithBadge.children.some((c) => c.className === 'passkey-badge'),
+  'a get-flow picker row for a passkey-bearing entry must show the passkey badge'
+);
+assert.ok(
+  getRowAlsoWithBadge.children.some((c) => c.className === 'passkey-badge'),
+  'every get-flow picker row (all of which have a passkey) must show the badge'
+);
+console.log('passkeyPopup.test.js: get-flow picker rows show the passkey badge OK');
+
 // Gate 6 regression: picking a row that already has a passkey must land on the Replace
 // confirm, not silently overwrite it via a direct passkeyCreateConfirm call.
 resetPanels();
 renderPasskeyCeremonyPanel({ kind: 'create', requestId: 12, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey, withoutPasskey] });
-const [passkeyRow] = elements['passkey-picker-list'].children;
+const [passkeyRow, plainRowNoBadge] = elements['passkey-picker-list'].children;
+assert.ok(
+  passkeyRow.children.some((c) => c.className === 'passkey-badge'),
+  'a create-flow row for an entry that already has a passkey must show the badge'
+);
+assert.ok(
+  !plainRowNoBadge.children.some((c) => c.className === 'passkey-badge'),
+  'a create-flow row with no existing passkey must not show the badge'
+);
 passkeyRow.listeners.click[0]();
 assert.strictEqual(sentMessages.length, 0, 'selecting an entry that already has a passkey must not confirm directly');
 assert.strictEqual(elements['passkey-replace-panel'].hidden, false, 'it must route to the Replace confirm panel instead');
@@ -296,5 +339,27 @@ assert.strictEqual(
 );
 assert.strictEqual(elements['passkey-proxy-toggle'].checked, true, 'checkbox still synced from stored cache');
 console.log('passkeyPopup.test.js: refreshPasskeyProxy fires and settings footer/checkbox still initialize when idle OK');
+
+// --- ordinary credential list: passkey badge --------------------------------
+// Gate: the plain #list-panel rows never surfaced credential.hasPasskey at all, even
+// though the summary the extension already receives carries it.
+resetPanels();
+renderCredentials(
+  [
+    { id: 'e1', title: 'Example', username: 'alice', hasPasskey: true },
+    { id: 'e2', title: 'Other', username: 'bob', hasPasskey: false }
+  ],
+  'https://example.com'
+);
+const [listRowWithPasskey, listRowWithoutPasskey] = elements['list'].children;
+assert.ok(
+  listRowWithPasskey.children.some((c) => c.className === 'passkey-badge'),
+  'a list row for an entry with a passkey must show the badge'
+);
+assert.ok(
+  !listRowWithoutPasskey.children.some((c) => c.className === 'passkey-badge'),
+  'a list row for an entry without a passkey must not show the badge'
+);
+console.log('passkeyPopup.test.js: ordinary credential list shows the passkey badge OK');
 
 console.log('passkeyPopup.test.js OK');
