@@ -103,7 +103,9 @@ struct MenuBarUnlockPanelView: View {
 
         guard canShowDeviceUnlockButton else {
             deviceUnlockPromptCoordinator.promptFinished()
-            errorMessage = "Device unlock is unavailable. Enter your master password."
+            if trigger == .explicit {
+                errorMessage = "Device unlock is unavailable. Enter your master password."
+            }
             return false
         }
         guard let accessControl = DeviceUnlockAccessControl.forToggles(
@@ -111,7 +113,9 @@ struct MenuBarUnlockPanelView: View {
             macPasswordEnabled: macPasswordEnabled
         ) else {
             deviceUnlockPromptCoordinator.promptFinished()
-            errorMessage = "Device unlock is unavailable. Enter your master password."
+            if trigger == .explicit {
+                errorMessage = "Device unlock is unavailable. Enter your master password."
+            }
             return false
         }
         DeviceUnlockAuthenticator.authenticate(accessControl: accessControl) { success in

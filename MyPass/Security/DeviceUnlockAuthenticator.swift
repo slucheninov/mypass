@@ -18,7 +18,12 @@ enum DeviceUnlockAuthenticator {
             return
         }
 
-        context.evaluatePolicy(policy, localizedReason: reason) { success, _ in
+        // Captured explicitly: `context` is otherwise only a local `let`, and the
+        // trailing closure below doesn't reference it, so ARC could deallocate it
+        // before the (asynchronous, system-driven) completion handler ever fires —
+        // silently cancelling the evaluation and leaking a callback that never runs.
+        context.evaluatePolicy(policy, localizedReason: reason) { [context] success, _ in
+            _ = context
             DispatchQueue.main.async {
                 completion(success)
             }

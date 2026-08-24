@@ -120,13 +120,12 @@ struct UnlockView: View {
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestDeviceUnlockPrompt)) { _ in
+            // `MyPassApp.onUnlockRequested` already calls `MainWindowActivator.request()`
+            // right before posting this notification, so there is nothing left to do
+            // here when a second prompt is suppressed — the window is already coming
+            // forward either way.
             guard canShowDeviceUnlockButton else { return }
-            // If a prompt already auto-fired for this locked session (or one is
-            // literally in flight), a second sheet must not appear — surface the
-            // window instead so the user notices the window is waiting on them.
-            if !attemptDeviceUnlock(trigger: .automatic) {
-                MainWindowActivator.request()
-            }
+            attemptDeviceUnlock(trigger: .automatic)
         }
         .sheet(isPresented: Binding(
             get: { openExistingVaultURL != nil },
@@ -201,7 +200,9 @@ struct UnlockView: View {
 
         guard canShowDeviceUnlockButton else {
             deviceUnlockPromptCoordinator.promptFinished()
-            errorMessage = "Device unlock is unavailable. Enter your master password."
+            if trigger == .explicit {
+                errorMessage = "Device unlock is unavailable. Enter your master password."
+            }
             return false
         }
         guard let accessControl = DeviceUnlockAccessControl.forToggles(
@@ -209,7 +210,9 @@ struct UnlockView: View {
             macPasswordEnabled: macPasswordEnabled
         ) else {
             deviceUnlockPromptCoordinator.promptFinished()
-            errorMessage = "Device unlock is unavailable. Enter your master password."
+            if trigger == .explicit {
+                errorMessage = "Device unlock is unavailable. Enter your master password."
+            }
             return false
         }
         DeviceUnlockAuthenticator.authenticate(accessControl: accessControl) { success in
