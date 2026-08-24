@@ -4,6 +4,7 @@ import MyPassKit
 
 struct UnlockView: View {
     @EnvironmentObject var vaultSession: VaultSession
+    @EnvironmentObject var deviceUnlockPromptCoordinator: DeviceUnlockPromptCoordinator
     @AppStorage("unlockTouchIDEnabled") private var touchIDEnabled = false
     @AppStorage("unlockMacPasswordEnabled") private var macPasswordEnabled = false
     @AppStorage("unlockWithDeviceWindow") private var unlockWithDeviceWindow: UnlockDeviceWindow = .eightHours
@@ -14,7 +15,6 @@ struct UnlockView: View {
     @State private var password: String = ""
     @State private var errorMessage: String?
     @State private var isFirstRun = false
-    @State private var didAutoPromptDeviceUnlock = false
     @State private var openExistingVaultURL: URL?
 
     let biometricKeyStore: BiometricKeyStoring
@@ -93,7 +93,7 @@ struct UnlockView: View {
 
             if canShowDeviceUnlockButton {
                 Button(deviceUnlockButtonLabel, systemImage: deviceUnlockButtonSymbol) {
-                    attemptDeviceUnlock()
+                    attemptDeviceUnlock(trigger: .explicit)
                 }
                     .buttonStyle(.bordered)
                     .frame(maxWidth: 320)
@@ -115,16 +115,18 @@ struct UnlockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             isFirstRun = (try? vaultSession.loadVaultData()) == nil
-            if !isFirstRun, canShowDeviceUnlockButton, !didAutoPromptDeviceUnlock {
-                didAutoPromptDeviceUnlock = true
-                attemptDeviceUnlock(silentCancel: true)
+            if !isFirstRun, canShowDeviceUnlockButton {
+                attemptDeviceUnlock(trigger: .automatic)
             }
         }
         .onReceive(NotificationCenter.default.publisher(for: .requestDeviceUnlockPrompt)) { _ in
-            // `silentCancel: true` matches the `.onAppear` auto-prompt: a user who
-            // dismisses the system sheet should not be shown an error.
             guard canShowDeviceUnlockButton else { return }
-            attemptDeviceUnlock(silentCancel: true)
+            // If a prompt already auto-fired for this locked session (or one is
+            // literally in flight), a second sheet must not appear — surface the
+            // window instead so the user notices the window is waiting on them.
+            if !attemptDeviceUnlock(trigger: .automatic) {
+                MainWindowActivator.request()
+            }
         }
         .sheet(isPresented: Binding(
             get: { openExistingVaultURL != nil },
@@ -187,20 +189,41 @@ struct UnlockView: View {
         }
     }
 
-    private func attemptDeviceUnlock(silentCancel _: Bool = false) {
+    /// Returns whether a prompt was actually started. `false` (no error shown, no
+    /// authenticator call made) means the coordinator suppressed it — either another
+    /// prompt is in flight, or `.automatic` already fired once for this locked session.
+    @discardableResult
+    private func attemptDeviceUnlock(trigger: DeviceUnlockPromptTrigger) -> Bool {
+        let allowed = trigger == .automatic
+            ? deviceUnlockPromptCoordinator.requestAutoPrompt()
+            : deviceUnlockPromptCoordinator.requestExplicitPrompt()
+        guard allowed else { return false }
+
         guard canShowDeviceUnlockButton else {
+            deviceUnlockPromptCoordinator.promptFinished()
             errorMessage = "Device unlock is unavailable. Enter your master password."
-            return
+            return false
         }
         guard let accessControl = DeviceUnlockAccessControl.forToggles(
             touchIDEnabled: touchIDEnabled,
             macPasswordEnabled: macPasswordEnabled
         ) else {
+            deviceUnlockPromptCoordinator.promptFinished()
             errorMessage = "Device unlock is unavailable. Enter your master password."
-            return
+            return false
         }
         DeviceUnlockAuthenticator.authenticate(accessControl: accessControl) { success in
-            guard success else { return }
+            defer { deviceUnlockPromptCoordinator.promptFinished() }
+            guard success else {
+                // The automatic prompt stays silent by design — a cancelled or failed
+                // background Touch ID attempt should not interrupt the user. An
+                // explicit click is a deliberate action, though, and deserves feedback
+                // instead of silently doing nothing.
+                if trigger == .explicit {
+                    errorMessage = "Device unlock didn't complete. Try again or enter your master password."
+                }
+                return
+            }
             do {
                 let storedPassword = try DeviceUnlockEnrollment.retrievePassword(biometricKeyStore: biometricKeyStore)
                 try vaultSession.unlock(password: storedPassword)
@@ -211,5 +234,6 @@ struct UnlockView: View {
                 errorMessage = "Device unlock is unavailable. Enter your master password."
             }
         }
+        return true
     }
 }

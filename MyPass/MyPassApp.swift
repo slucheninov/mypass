@@ -22,6 +22,7 @@ struct MyPassApp: App {
     @StateObject private var vaultSession: VaultSession
     @StateObject private var navigationState: NavigationState
     @StateObject private var autoLockController: AutoLockController
+    @StateObject private var deviceUnlockPromptCoordinator: DeviceUnlockPromptCoordinator
 
     init() {
         let defaults = UserDefaults.standard
@@ -145,6 +146,11 @@ struct MyPassApp: App {
             localFileFallbackActive: resolution.localFileFallbackActive
         )
         _vaultSession = StateObject(wrappedValue: session)
+        // Shared across `UnlockView`, `MenuBarUnlockPanelView`, and the extension's
+        // `.requestDeviceUnlockPrompt` notification — deliberately one instance, not
+        // per-view @State, so no surface can start a second device-unlock prompt while
+        // another one is already in flight or already auto-fired this locked session.
+        _deviceUnlockPromptCoordinator = StateObject(wrappedValue: DeviceUnlockPromptCoordinator(vaultSession: session))
 
         // Design spec's external-change handling (reload-and-merge when
         // another device/process touches the same iCloud Drive file) is wired
@@ -315,6 +321,7 @@ struct MyPassApp: App {
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
                 .environmentObject(autoLockController)
+                .environmentObject(deviceUnlockPromptCoordinator)
                 .background(SettingsHotkeyObserver())
                 .background(OpenMainWindowOnDemand())
         }
@@ -326,6 +333,7 @@ struct MyPassApp: App {
             MenuBarExtraContent()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
+                .environmentObject(deviceUnlockPromptCoordinator)
                 .background(OpenMainWindowOnDemand())
         }
         .menuBarExtraStyle(.window)

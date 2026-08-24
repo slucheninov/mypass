@@ -2,6 +2,7 @@ import SwiftUI
 
 struct MenuBarUnlockPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
+    @EnvironmentObject private var deviceUnlockPromptCoordinator: DeviceUnlockPromptCoordinator
     @AppStorage("unlockTouchIDEnabled") private var touchIDEnabled = false
     @AppStorage("unlockMacPasswordEnabled") private var macPasswordEnabled = false
     @AppStorage("unlockWithDeviceWindow") private var unlockWithDeviceWindow: UnlockDeviceWindow = .eightHours
@@ -11,7 +12,6 @@ struct MenuBarUnlockPanelView: View {
 
     @State private var password = ""
     @State private var errorMessage: String?
-    @State private var didAutoPromptDeviceUnlock = false
 
     let biometricKeyStore: BiometricKeyStoring
 
@@ -60,7 +60,7 @@ struct MenuBarUnlockPanelView: View {
 
             if canShowDeviceUnlockButton {
                 Button("Unlock with Device", systemImage: "touchid") {
-                    attemptDeviceUnlock()
+                    attemptDeviceUnlock(trigger: .explicit)
                 }
                     .buttonStyle(.bordered)
             }
@@ -73,9 +73,8 @@ struct MenuBarUnlockPanelView: View {
         .padding(20)
         .frame(width: 280)
         .onAppear {
-            if canShowDeviceUnlockButton, !didAutoPromptDeviceUnlock {
-                didAutoPromptDeviceUnlock = true
-                attemptDeviceUnlock(silentCancel: true)
+            if canShowDeviceUnlockButton {
+                attemptDeviceUnlock(trigger: .automatic)
             }
         }
     }
@@ -93,20 +92,36 @@ struct MenuBarUnlockPanelView: View {
         }
     }
 
-    private func attemptDeviceUnlock(silentCancel _: Bool = false) {
+    /// Mirrors `UnlockView.attemptDeviceUnlock(trigger:)` — see its doc comment for
+    /// why `trigger` gates both the coordinator and the failure-feedback behavior.
+    @discardableResult
+    private func attemptDeviceUnlock(trigger: DeviceUnlockPromptTrigger) -> Bool {
+        let allowed = trigger == .automatic
+            ? deviceUnlockPromptCoordinator.requestAutoPrompt()
+            : deviceUnlockPromptCoordinator.requestExplicitPrompt()
+        guard allowed else { return false }
+
         guard canShowDeviceUnlockButton else {
+            deviceUnlockPromptCoordinator.promptFinished()
             errorMessage = "Device unlock is unavailable. Enter your master password."
-            return
+            return false
         }
         guard let accessControl = DeviceUnlockAccessControl.forToggles(
             touchIDEnabled: touchIDEnabled,
             macPasswordEnabled: macPasswordEnabled
         ) else {
+            deviceUnlockPromptCoordinator.promptFinished()
             errorMessage = "Device unlock is unavailable. Enter your master password."
-            return
+            return false
         }
         DeviceUnlockAuthenticator.authenticate(accessControl: accessControl) { success in
-            guard success else { return }
+            defer { deviceUnlockPromptCoordinator.promptFinished() }
+            guard success else {
+                if trigger == .explicit {
+                    errorMessage = "Device unlock didn't complete. Try again or enter your master password."
+                }
+                return
+            }
             do {
                 let storedPassword = try DeviceUnlockEnrollment.retrievePassword(biometricKeyStore: biometricKeyStore)
                 try vaultSession.unlock(password: storedPassword)
@@ -117,5 +132,6 @@ struct MenuBarUnlockPanelView: View {
                 errorMessage = "Device unlock is unavailable. Enter your master password."
             }
         }
+        return true
     }
 }
