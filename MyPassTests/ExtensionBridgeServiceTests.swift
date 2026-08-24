@@ -594,6 +594,10 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     func testSetPasskeyProxyEnabledPersistsAndReturnsEnabled() {
         defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
+        // setUpWithError defaults this to true for the passkey-create/get tests; set it false
+        // first so this test actually exercises the false -> true persistence, rather than
+        // passing merely because the default already happened to be true.
+        UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
         let response = service.handle(.setPasskeyProxyEnabled(token: "t", enabled: true, pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .passkeyProxyEnabled(enabled: true))
         XCTAssertTrue(UserDefaults.standard.bool(forKey: "passkeyProxyEnabled"))

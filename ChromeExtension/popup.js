@@ -382,6 +382,7 @@ let sendPasskeyGetApprove = null;
 let sendPasskeyCancel = null;
 let initPasskeySettingsToggle = null;
 let refreshPasskeyProxy = null;
+let initPasskeyPopupUI = null;
 
 const PENDING_PASSKEY_KEY = 'pendingPasskeyCeremony';
 
@@ -1141,21 +1142,30 @@ if (typeof document !== 'undefined') {
   // popup was opened *by* that ceremony, and the user is being asked to make a security
   // decision. Running the ordinary credential lookup alongside it would let whichever
   // callback resolved last win the panel.
-  rehydratePendingPasskeyCeremony((tookOver) => {
-    refreshPasskeyProxy();
-    if (tookOver) return;
-    initPasskeySettingsToggle();
-    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const activeTab = tabs[0];
-      if (!activeTab || !activeTab.url) {
-        appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
-        showAppUnavailableActions(null);
-        return;
-      }
-      queryCredentials(activeTab.url);
-      requestPageTotpCandidate(activeTab.id);
+  //
+  // Wrapped in a named, exported function (rather than run inline) so tests can re-invoke
+  // this exact composition after seeding a pending ceremony, instead of hand-rolling the
+  // rehydrate/refresh/tookOver sequence themselves — a hand-rolled copy in a test would not
+  // notice a regression at this call site (e.g. refreshPasskeyProxy() moving back below the
+  // `if (tookOver) return;` line).
+  initPasskeyPopupUI = function () {
+    rehydratePendingPasskeyCeremony((tookOver) => {
+      refreshPasskeyProxy();
+      if (tookOver) return;
+      initPasskeySettingsToggle();
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const activeTab = tabs[0];
+        if (!activeTab || !activeTab.url) {
+          appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
+          showAppUnavailableActions(null);
+          return;
+        }
+        queryCredentials(activeTab.url);
+        requestPageTotpCandidate(activeTab.id);
+      });
     });
-  });
+  };
+  initPasskeyPopupUI();
 }
 
 if (typeof module !== 'undefined') {
@@ -1208,6 +1218,7 @@ if (typeof module !== 'undefined') {
     sendPasskeyGetApprove,
     sendPasskeyCancel,
     initPasskeySettingsToggle,
-    refreshPasskeyProxy
+    refreshPasskeyProxy,
+    initPasskeyPopupUI
   };
 }

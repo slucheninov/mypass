@@ -88,7 +88,7 @@ const {
   sendPasskeyCancel,
   PENDING_PASSKEY_KEY,
   initPasskeySettingsToggle,
-  refreshPasskeyProxy
+  initPasskeyPopupUI
 } = require('../popup.js');
 
 // --- pure routing -----------------------------------------------------------
@@ -265,16 +265,17 @@ console.log('passkeyPopup.test.js: rehydration takeover OK');
 // Regression coverage for the bug where the only resync send lived inside
 // initPasskeySettingsToggle, which is skipped whenever a ceremony takes over the
 // popup — meaning the proxy almost never resynced/detached during real passkey use.
-// Mirrors the production composition at the bottom of popup.js: refreshPasskeyProxy()
-// runs unconditionally before branching on tookOver.
+//
+// These drive the *production* call site directly via the exported `initPasskeyPopupUI`
+// (the exact function popup.js itself invokes on load), rather than re-composing
+// rehydrate/refresh/tookOver by hand in the test — a hand-rolled copy would not notice a
+// regression such as `refreshPasskeyProxy()` moving back below `if (tookOver) return;`.
 resetPanels();
 sessionStore[PENDING_PASSKEY_KEY] = {
   kind: 'create', requestId: 30, rpId: 'example.com', originUrl: 'https://example.com', matches: []
 };
-rehydratePendingPasskeyCeremony((tookOver) => {
-  refreshPasskeyProxy();
-  assert.strictEqual(tookOver, true, 'pending ceremony still takes over the popup');
-});
+initPasskeyPopupUI();
+assert.strictEqual(elements['passkey-save-panel'].hidden, false, 'the ceremony must still take over the popup');
 assert.strictEqual(
   sentMessages.filter((m) => m.type === 'refreshPasskeyProxy').length, 1,
   'refreshPasskeyProxy must fire even while a ceremony panel is being shown'
@@ -284,11 +285,7 @@ console.log('passkeyPopup.test.js: refreshPasskeyProxy fires during an active ce
 resetPanels();
 sessionStore = {};
 elements['passkey-settings-footer'].hidden = true;
-rehydratePendingPasskeyCeremony((tookOver) => {
-  refreshPasskeyProxy();
-  if (tookOver) return;
-  initPasskeySettingsToggle();
-});
+initPasskeyPopupUI();
 assert.strictEqual(
   sentMessages.filter((m) => m.type === 'refreshPasskeyProxy').length, 1,
   'refreshPasskeyProxy must still fire when there is no pending ceremony'
