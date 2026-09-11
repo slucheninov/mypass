@@ -527,19 +527,27 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     // MARK: - Passkeys
 
-    private func createFixtureRequestJSON(rpId: String = "example.com") -> String {
+    /// `origin` defaults to the same `https://example.com` the existing tests already pass
+    /// as `originUrl`, so call sites that don't care about origin validation keep passing
+    /// unchanged. Call sites that vary `originUrl` (localhost fixtures, the no-match fixture)
+    /// pass a matching `origin` explicitly, exactly like `background.js` stamps the two
+    /// fields from the same source and the app now checks they agree.
+    private func createFixtureRequestJSON(rpId: String = "example.com", origin: String = "https://example.com") -> String {
         """
         {
           "challenge": "\(PasskeyBase64URL.encode(Data([1, 2, 3, 4])))",
           "rp": { "id": "\(rpId)", "name": "Example" },
           "user": { "id": "\(PasskeyBase64URL.encode(Data([9, 9])))", "name": "alice", "displayName": "Alice" },
           "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
-          "attestation": "none"
+          "attestation": "none",
+          "extensions": { "remoteDesktopClientOverride": { "origin": "\(origin)" } }
         }
         """
     }
 
-    private func getFixtureRequestJSON(rpId: String = "example.com", allowCredentials: [Data] = []) -> String {
+    private func getFixtureRequestJSON(
+        rpId: String = "example.com", allowCredentials: [Data] = [], origin: String = "https://example.com"
+    ) -> String {
         let allow = allowCredentials
             .map { "{ \"type\": \"public-key\", \"id\": \"\(PasskeyBase64URL.encode($0))\" }" }
             .joined(separator: ", ")
@@ -547,7 +555,8 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         {
           "challenge": "\(PasskeyBase64URL.encode(Data([4, 4, 4])))",
           "rpId": "\(rpId)",
-          "allowCredentials": [\(allow)]
+          "allowCredentials": [\(allow)],
+          "extensions": { "remoteDesktopClientOverride": { "origin": "\(origin)" } }
         }
         """
     }
@@ -631,6 +640,92 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(rpId, "example.com")
         XCTAssertEqual(rpName, "Example")
         XCTAssertTrue(matches.isEmpty)
+    }
+
+    // MARK: - Passkey origin validation
+
+    /// Check 1 alone: the extension's own payload claims a different origin than the
+    /// message envelope's `originUrl`. A single compromised field is exactly what Check 1
+    /// exists to catch — see `PasskeyCeremony.validateOrigin`.
+    func testPasskeyCreateRejectsWhenOriginUrlDisagreesWithPayloadOrigin() {
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 50, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://attacker.example", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(let requestId, let responseJson, let error) = response else {
+            return XCTFail("expected passkeyCreateComplete with error, got \(response)")
+        }
+        XCTAssertEqual(requestId, 50)
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "SecurityError")
+    }
+
+    /// Fail closed, matching `background.js`'s own `originFromRequestDetails()`: a payload
+    /// that never carries `extensions.remoteDesktopClientOverride` must not be trusted just
+    /// because `originUrl` happens to look plausible.
+    func testPasskeyCreateRejectsWhenPayloadHasNoRemoteDesktopClientOverride() {
+        let json = """
+        {
+          "challenge": "\(PasskeyBase64URL.encode(Data([1, 2, 3, 4])))",
+          "rp": { "id": "example.com", "name": "Example" },
+          "user": { "id": "\(PasskeyBase64URL.encode(Data([9, 9])))", "name": "alice", "displayName": "Alice" },
+          "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
+          "attestation": "none"
+        }
+        """
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 51, requestDetailsJson: json,
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(let requestId, let responseJson, let error) = response else {
+            return XCTFail("expected passkeyCreateComplete with error, got \(response)")
+        }
+        XCTAssertEqual(requestId, 51)
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "SecurityError")
+    }
+
+    /// Check 2: an unrelated rpId must not be authorized just because Check 1 passed.
+    func testPasskeyCreateRejectsRpIdNotAuthorizedForOrigin() {
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 52, requestDetailsJson: createFixtureRequestJSON(rpId: "evil.com"),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(let requestId, let responseJson, let error) = response else {
+            return XCTFail("expected passkeyCreateComplete with error, got \(response)")
+        }
+        XCTAssertEqual(requestId, 52)
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "SecurityError")
+    }
+
+    /// Check 2's Public Suffix List half: an rpId must not climb past the registrable
+    /// domain — "co.uk" is a public suffix, not a domain "evil.co.uk" can claim.
+    func testPasskeyCreateRejectsRpIdClimbingPastPublicSuffix() {
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 53,
+            requestDetailsJson: createFixtureRequestJSON(rpId: "co.uk", origin: "https://evil.co.uk"),
+            originUrl: "https://evil.co.uk", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(let requestId, let responseJson, let error) = response else {
+            return XCTFail("expected passkeyCreateComplete with error, got \(response)")
+        }
+        XCTAssertEqual(requestId, 53)
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "SecurityError")
+    }
+
+    /// A subdomain origin authorizing its parent registrable domain's rpId is the normal,
+    /// legitimate WebAuthn case and must still work once origin validation is in place.
+    func testPasskeyCreateAllowsRpIdOnParentRegistrableDomain() {
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 54,
+            requestDetailsJson: createFixtureRequestJSON(rpId: "example.com", origin: "https://login.example.com"),
+            originUrl: "https://login.example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending = response else {
+            return XCTFail("expected passkeyCreatePending, got \(response)")
+        }
     }
 
     func testPasskeyCreateReturnsUnsupportedAlgorithmError() {
@@ -825,12 +920,43 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
     func testPasskeyGetReturnsNotAllowedErrorWhenNoMatch() {
         let response = service.handle(.passkeyGet(
-            token: "t", requestId: 7, requestDetailsJson: getFixtureRequestJSON(rpId: "no-such-site.com"),
+            token: "t", requestId: 7, requestDetailsJson: getFixtureRequestJSON(rpId: "no-such-site.com", origin: "https://no-such-site.com"),
             originUrl: "https://no-such-site.com", pairing: authorizedPairingSecret
         ))
         guard case .passkeyGetComplete(_, let responseJson, let error) = response else { return XCTFail("expected complete, got \(response)") }
         XCTAssertNil(responseJson)
         XCTAssertEqual(error?.name, "NotAllowedError")
+    }
+
+    /// Same origin-mismatch gate as create, exercised on the get/assertion path.
+    func testPasskeyGetRejectsWhenOriginUrlDisagreesWithPayloadOrigin() {
+        let response = service.handle(.passkeyGet(
+            token: "t", requestId: 60, requestDetailsJson: getFixtureRequestJSON(),
+            originUrl: "https://attacker.example", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetComplete(let requestId, let responseJson, let error) = response else {
+            return XCTFail("expected passkeyGetComplete with error, got \(response)")
+        }
+        XCTAssertEqual(requestId, 60)
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "SecurityError")
+    }
+
+    /// A subdomain origin authorizing its parent registrable domain's rpId must still reach
+    /// the normal candidate lookup rather than being rejected outright by origin validation.
+    func testPasskeyGetAllowsRpIdOnParentRegistrableDomain() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://login.example.com")
+        attachPasskey(to: id, rpId: "example.com")
+        let response = service.handle(.passkeyGet(
+            token: "t", requestId: 61,
+            requestDetailsJson: getFixtureRequestJSON(rpId: "example.com", origin: "https://login.example.com"),
+            originUrl: "https://login.example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetPending(_, let rpId, let matches) = response else {
+            return XCTFail("expected pending, got \(response)")
+        }
+        XCTAssertEqual(rpId, "example.com")
+        XCTAssertEqual(matches.count, 1)
     }
 
     /// Same choke-point rule the other four bridge requests already follow: a
@@ -866,7 +992,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let first = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
         let second = addFixtureEntry(title: "Site Backup Login", username: "alice-2", password: "s3cret2", url: "http://localhost:8765")
         let response = service.handle(.passkeyCreate(
-            token: "t", requestId: 30, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            token: "t", requestId: 30, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost", origin: "http://localhost:8765"),
             originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
         ))
         guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
@@ -880,7 +1006,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     func testPasskeyCreateOffersSingleDomainMatchedLoginEntry() {
         let id = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
         let response = service.handle(.passkeyCreate(
-            token: "t", requestId: 31, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            token: "t", requestId: 31, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost", origin: "http://localhost:8765"),
             originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
         ))
         guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
@@ -899,7 +1025,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let loginOnly = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
 
         let response = service.handle(.passkeyCreate(
-            token: "t", requestId: 32, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            token: "t", requestId: 32, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost", origin: "http://localhost:8765"),
             originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
         ))
         guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
@@ -912,7 +1038,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         // satisfies both predicates — it must still appear exactly once.
         attachPasskey(to: loginOnly, rpId: "localhost")
         let secondResponse = service.handle(.passkeyCreate(
-            token: "t", requestId: 33, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            token: "t", requestId: 33, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost", origin: "http://localhost:8765"),
             originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
         ))
         guard case .passkeyCreatePending(_, _, _, let secondMatches) = secondResponse else {
@@ -927,7 +1053,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let id = addFixtureEntry(title: "Site Login", username: "alice", password: "s3cret", url: "http://localhost:8765")
         moveEntryToRecycleBin(id)
         let response = service.handle(.passkeyCreate(
-            token: "t", requestId: 34, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            token: "t", requestId: 34, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost", origin: "http://localhost:8765"),
             originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
         ))
         guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
@@ -942,7 +1068,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let second = addFixtureEntry(title: "Site Backup Login", username: "alice-2", password: "s3cret2", url: "http://localhost:8765")
 
         _ = service.handle(.passkeyCreate(
-            token: "t", requestId: 35, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            token: "t", requestId: 35, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost", origin: "http://localhost:8765"),
             originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
         ))
         let response = service.handle(.passkeyCreateConfirm(
@@ -969,7 +1095,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let otherHostEntry = addFixtureEntry(title: "Other Site", username: "bob", password: "s3cret2", url: "https://other-site.example")
 
         _ = service.handle(.passkeyCreate(
-            token: "t", requestId: 36, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost"),
+            token: "t", requestId: 36, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost", origin: "http://localhost:8765"),
             originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
         ))
         let response = service.handle(.passkeyCreateConfirm(

@@ -256,6 +256,75 @@ final class PasskeyCeremonyTests: XCTestCase {
         XCTAssertNil(inner["userHandle"])
     }
 
+    // MARK: Origin validation
+
+    /// Minimal payload carrying only what `validateOrigin` itself reads — the
+    /// `extensions.remoteDesktopClientOverride.origin` field. `nil` omits the whole
+    /// `extensions` block, matching a payload the extension never stamped.
+    private func requestJSONWithOrigin(_ origin: String?) -> String {
+        guard let origin else { return "{}" }
+        return """
+        { "extensions": { "remoteDesktopClientOverride": { "origin": "\(origin)" } } }
+        """
+    }
+
+    func testValidateOriginAcceptsExactRpIdMatch() {
+        let json = requestJSONWithOrigin("https://example.com")
+        XCTAssertNoThrow(
+            try PasskeyCeremony.validateOrigin("https://example.com", requestDetailsJson: json, rpId: "example.com")
+        )
+    }
+
+    func testValidateOriginAcceptsLocalhost() {
+        let json = requestJSONWithOrigin("http://localhost:8765")
+        XCTAssertNoThrow(
+            try PasskeyCeremony.validateOrigin("http://localhost:8765", requestDetailsJson: json, rpId: "localhost")
+        )
+    }
+
+    func testValidateOriginAcceptsRpIdOnParentRegistrableDomain() {
+        let json = requestJSONWithOrigin("https://login.example.com")
+        XCTAssertNoThrow(
+            try PasskeyCeremony.validateOrigin("https://login.example.com", requestDetailsJson: json, rpId: "example.com")
+        )
+    }
+
+    func testValidateOriginRejectsWireOriginDisagreeingWithPayloadOrigin() {
+        let json = requestJSONWithOrigin("https://example.com")
+        XCTAssertThrowsError(
+            try PasskeyCeremony.validateOrigin("https://attacker.example", requestDetailsJson: json, rpId: "example.com")
+        ) { error in
+            XCTAssertEqual(error as? PasskeyCeremonyError, .originMismatch)
+        }
+    }
+
+    func testValidateOriginFailsClosedWhenPayloadHasNoRemoteDesktopClientOverride() {
+        let json = requestJSONWithOrigin(nil)
+        XCTAssertThrowsError(
+            try PasskeyCeremony.validateOrigin("https://example.com", requestDetailsJson: json, rpId: "example.com")
+        ) { error in
+            XCTAssertEqual(error as? PasskeyCeremonyError, .originMismatch)
+        }
+    }
+
+    func testValidateOriginRejectsUnrelatedRpId() {
+        let json = requestJSONWithOrigin("https://example.com")
+        XCTAssertThrowsError(
+            try PasskeyCeremony.validateOrigin("https://example.com", requestDetailsJson: json, rpId: "evil.com")
+        ) { error in
+            XCTAssertEqual(error as? PasskeyCeremonyError, .rpIdNotAuthorized)
+        }
+    }
+
+    func testValidateOriginRejectsRpIdClimbingPastPublicSuffix() {
+        let json = requestJSONWithOrigin("https://evil.co.uk")
+        XCTAssertThrowsError(
+            try PasskeyCeremony.validateOrigin("https://evil.co.uk", requestDetailsJson: json, rpId: "co.uk")
+        ) { error in
+            XCTAssertEqual(error as? PasskeyCeremonyError, .rpIdNotAuthorized)
+        }
+    }
+
     // MARK: CBOR
 
     func testCBOREncodesCanonicalHeadersAcrossLengthBoundaries() {

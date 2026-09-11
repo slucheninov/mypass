@@ -305,6 +305,28 @@ final class ExtensionBridgeService {
                     error: PasskeyErrorDetails(name: "NotAllowedError", message: "Invalid passkey request")
                 )
             }
+            // Validate the ceremony's origin before doing anything else with it — never
+            // trust `originUrl` just because the extension sent it. See
+            // `PasskeyCeremony.validateOrigin` for what each of the two checks defends
+            // against.
+            do {
+                try PasskeyCeremony.validateOrigin(originUrl, requestDetailsJson: requestDetailsJson, rpId: context.rpId)
+            } catch PasskeyCeremonyError.originMismatch {
+                return .passkeyCreateComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "SecurityError", message: "Passkey request origin could not be verified")
+                )
+            } catch PasskeyCeremonyError.rpIdNotAuthorized {
+                return .passkeyCreateComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "SecurityError", message: "This site is not authorized for the requested passkey relying party")
+                )
+            } catch {
+                return .passkeyCreateComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "NotAllowedError", message: "Invalid passkey request")
+                )
+            }
             // Phase 1 parses and routes only — no key generation, no vault write.
             let matches = passkeyCreateCandidates(forOriginUrl: originUrl, rpId: context.rpId, in: database)
             pendingPasskeyCreates[requestId] = (context: context, originUrl: originUrl)
@@ -432,6 +454,28 @@ final class ExtensionBridgeService {
             let context: PasskeyGetContext
             do {
                 context = try PasskeyCeremony.parseGetRequest(requestDetailsJson)
+            } catch {
+                return .passkeyGetComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "NotAllowedError", message: "Invalid passkey request")
+                )
+            }
+            // Validate the ceremony's origin before doing anything else with it — never
+            // trust `originUrl` just because the extension sent it. See
+            // `PasskeyCeremony.validateOrigin` for what each of the two checks defends
+            // against.
+            do {
+                try PasskeyCeremony.validateOrigin(originUrl, requestDetailsJson: requestDetailsJson, rpId: context.rpId)
+            } catch PasskeyCeremonyError.originMismatch {
+                return .passkeyGetComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "SecurityError", message: "Passkey request origin could not be verified")
+                )
+            } catch PasskeyCeremonyError.rpIdNotAuthorized {
+                return .passkeyGetComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "SecurityError", message: "This site is not authorized for the requested passkey relying party")
+                )
             } catch {
                 return .passkeyGetComplete(
                     requestId: requestId, responseJson: nil,

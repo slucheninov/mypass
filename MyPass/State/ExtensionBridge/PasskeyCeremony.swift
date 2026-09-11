@@ -1,11 +1,22 @@
 import Foundation
 import CryptoKit
+import MyPassKit
 
 enum PasskeyCeremonyError: Error, Equatable {
     case unsupportedAlgorithm
     case noMatchingCredential
     case userCancelled
     case invalidRequestJSON
+    /// The `originUrl` the extension put on the wire disagrees with the `origin` it
+    /// stamped into `extensions.remoteDesktopClientOverride` inside the same
+    /// `requestDetailsJson` payload — or that field is missing entirely. See
+    /// `PasskeyCeremony.validateOrigin` for why this check is weak on its own but still
+    /// worth having.
+    case originMismatch
+    /// The relying party ID the request asked to sign for is not one the origin is
+    /// permitted to claim under the WebAuthn RP ID rules (same host, or a registrable
+    /// domain no narrower than the Public Suffix List boundary).
+    case rpIdNotAuthorized
 }
 
 struct PasskeyCreateContext {
@@ -127,6 +138,68 @@ enum PasskeyCeremony {
         let allowCredentials = json["allowCredentials"] as? [[String: Any]] ?? []
         let allowCredentialIds = allowCredentials.compactMap { ($0["id"] as? String).flatMap(PasskeyBase64URL.decode) }
         return PasskeyGetContext(rpId: rpId, challenge: challenge, allowCredentialIds: allowCredentialIds)
+    }
+
+    // MARK: Origin validation
+
+    /// Validates the origin of a passkey ceremony instead of trusting whatever the
+    /// extension sent as `originUrl` — `originUrl` alone is just a string the message
+    /// carried, and `performCreate`/`performGet` stamp it verbatim into
+    /// `clientDataJSON.origin`, which is exactly the value a relying party trusts when
+    /// verifying the signature we hand back. Two independent checks, both required.
+    ///
+    /// Check 1 re-parses `requestDetailsJson` and compares `originUrl` against the origin
+    /// the extension's own `background.js` (`originFromRequestDetails()`) stamped into
+    /// `extensions.remoteDesktopClientOverride.origin` inside that same payload, failing
+    /// closed when the field is absent. This check is weak on its own: a fully compromised
+    /// extension controls both copies and can simply lie in agreement. What it actually
+    /// buys is cheap — it stops a *partially* wrong message (a bug or a MITM rewriting only
+    /// one of the two fields in transit) and keeps the two copies from silently drifting
+    /// apart, which would otherwise mask the exact class of bug this hardening exists to
+    /// catch.
+    ///
+    /// Check 2 is the real gate: it enforces the WebAuthn RP ID invariant that an origin may
+    /// only assert relying-party IDs equal to its own host or a registrable domain of it.
+    /// Without this check the app would happily sign an assertion binding an
+    /// attacker-chosen origin to an attacker-chosen relying party — e.g. a page at
+    /// `evil.example` claiming `rpId: "bank.com"` — which is precisely the cross-origin
+    /// confusion WebAuthn's RP ID scoping exists to prevent. The Public Suffix List is what
+    /// stops an rpId from climbing past the registrable domain (an origin at
+    /// `evil.co.uk` must not be able to claim `rpId: "co.uk"` just because `"evil.co.uk"`
+    /// ends with `".co.uk"` — `"co.uk"` is a public suffix, not a domain anyone registers
+    /// under).
+    static func validateOrigin(_ originUrl: String, requestDetailsJson: String, rpId: String) throws {
+        // Check 1: the wire origin must match the payload's own origin.
+        guard let data = requestDetailsJson.data(using: .utf8),
+              let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let extensions = json["extensions"] as? [String: Any],
+              let override = extensions["remoteDesktopClientOverride"] as? [String: Any],
+              let payloadOrigin = override["origin"] as? String else {
+            throw PasskeyCeremonyError.originMismatch
+        }
+        guard payloadOrigin == originUrl else {
+            throw PasskeyCeremonyError.originMismatch
+        }
+
+        // Check 2: rpId must be authorized for the origin's host.
+        guard let host = URL(string: originUrl)?.host?.lowercased() else {
+            throw PasskeyCeremonyError.rpIdNotAuthorized
+        }
+        let normalizedRpId = rpId.lowercased()
+
+        if normalizedRpId == host {
+            return
+        }
+        if host.hasSuffix("." + normalizedRpId) {
+            guard let registrable = PublicSuffixList.registrableDomain(of: host) else {
+                throw PasskeyCeremonyError.rpIdNotAuthorized
+            }
+            if normalizedRpId == registrable || normalizedRpId.hasSuffix("." + registrable) {
+                return
+            }
+            throw PasskeyCeremonyError.rpIdNotAuthorized
+        }
+        throw PasskeyCeremonyError.rpIdNotAuthorized
     }
 
     // MARK: Building blocks shared by create + get
