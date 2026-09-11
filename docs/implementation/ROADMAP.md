@@ -4,7 +4,7 @@
 outstanding workstreams is tracked. Tick a box only when the item is implemented **and**
 its tests pass — see "Definition of done" below.
 
-Last updated: 2026-08-23
+Last updated: 2026-09-11
 
 ---
 
@@ -128,10 +128,10 @@ spec deviation in the ceremony core (Task 3). Fix the plan text **before** execu
         domain-match gate that consumes `originUrl`. Amends **C3**, **C4**, **C8**.
         Use the payload origin as authoritative; fail closed if it is absent.
         Applied to **C8**. **C3/C4 need no signature change** — the wire `originUrl` now
-        carries the true origin. Still open as a **C4** hardening item: have the app
-        cross-check the received `originUrl` against the payload's own
-        `remoteDesktopClientOverride.origin` and reject on mismatch, so a compromised
-        extension cannot steer the domain gate by lying about the origin.
+        carries the true origin. The **C4** hardening item is **closed (2026-09-11)**: the
+        app re-parses the payload and refuses any `originUrl` that disagrees with its own
+        `remoteDesktopClientOverride.origin`, and on top of that enforces the WebAuthn
+        RP ID invariant against the Public Suffix List. See Decisions.
   - [x] **`requestId` is negative in practice** (`-56026996`, `-913466539`). Plan C already
         types it `Int`, which is correct — but the tests use `42`. Add a negative-value
         round-trip case. Amends **C1**.
@@ -421,11 +421,14 @@ ChromeExtension/` returns nothing, and no `ExtensionBridgeResponse` case carries
 Criterion 13 verified the same way: all seven new handler cases open with
 `pairingManager.isAuthorized`.
 
-**Gate 6 stays open** until the manual half is walked against a real Chrome 127+ and a
-real MyPass build — the thirteen new `RUN.md` bullets. Nothing in the proxy lifecycle
-(`attach`/`detach`, `chrome.action.openPopup()`, a real `requestDetailsJson`) is reachable
-from an automated test, so this is a manual-only guarantee, as Stage 3 and Stage 5 both
-proved the hard way.
+**⛳ Gate 6 — PASSED (after the 2026-08-24 fixes).** The manual half was walked against a
+real Chrome 127+ and a real MyPass build — the thirteen new `RUN.md` bullets. Nothing in
+the proxy lifecycle (`attach`/`detach`, `chrome.action.openPopup()`, a real
+`requestDetailsJson`) is reachable from an automated test, so this is a manual-only
+guarantee, as Stage 3 and Stage 5 both proved the hard way. The first walk on 2026-08-23
+surfaced three defects — candidate matching, the app-side toggle not taking effect, and a
+follow-up because the first toggle fix only half worked — all three recorded in Decisions
+and fixed within a day. The checklist was then re-walked green.
 
 ---
 
@@ -554,10 +557,10 @@ branch they claimed to cover.
 | 3 — Unlock from popup (U1–U9) | 9 | **9 — complete** |
 | 4 — Piece A (A1–A7) | 7 | **7 — complete** |
 | 5 — Piece B (B1–B11) | 11 | **11 — complete** |
-| 6 — Piece C rest (C1, C4–C11) | 9 | **9 — code complete, Gate 6 manual walk open** |
+| 6 — Piece C rest (C1, C4–C11) | 9 | **9 — complete** |
 | 7 — Inline fill icon (I1–I7) | 7 | **7 — complete** |
 | 8 — Inline icon follow-ups (F1–F9) | 9 | **9 — complete** |
-| **Total** | **71** | **71 code-complete — Gate 6 manual walk still open** |
+| **Total** | **71** | **71 — complete** |
 
 ## Decisions
 
@@ -609,6 +612,10 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-23 | Gate 6 walk finding — passkey create candidates | `passkeyCreate` listed only entries that already had a passkey for the rpId, so with existing Login entries for the host the popup showed a generic "Save passkey" for `<rpId — origin>` and confirm created a new, unrelated entry. Candidates are now the union of PSL-domain-matched Login entries and rpId passkey entries (spec step 4); the save/replace panels name the target entry and username, 0 matches says "New entry". |
 | 2026-08-23 | Gate 6 walk finding — app-side passkey toggle | Toggling **Use MyPass for Chrome passkeys** in the app took effect only after a service-worker restart: `attachPasskeyProxyIfEligible` gated on the extension's own local cache (written only by the popup toggle), and nothing ever called `detach()` when the app's status said disabled — an app-side "off" left Chrome attached indefinitely. `passkeyProxyStatus` now carries `enabled` (the app's opt-in, reported separately from `attachAllowed` so it survives a locked vault); every status fetch resyncs the local cache and attaches/detaches accordingly (`syncPasskeyProxyFromStatus`), and the popup now sends a fire-and-forget `refreshPasskeyProxy` on every open, so a much more frequent event than a restart re-checks the app's authoritative state. App unreachable (no status) leaves both the cache and the current attachment untouched. |
 | 2026-08-23 | Gate 6 walk finding — toggle still didn't take effect | The claim above ("the popup now sends a fire-and-forget `refreshPasskeyProxy` on every open") was false: that send lived inside `initPasskeySettingsToggle()`, which only ran when `rehydratePendingPasskeyCeremony` reported `tookOver === false` — i.e. it was skipped in exactly the scenario that matters, an active passkey ceremony. Real passkey use almost never resynced/detached the proxy. Separately, `.passkeyCreate`/`.passkeyGet` in `ExtensionBridgeService.swift` never checked `passkeyProxyEnabled` at all, so even a stale-attached Chrome would have the app process the ceremony anyway. Fixed on both sides: `popup.js` now sends `refreshPasskeyProxy` unconditionally (extracted into its own `refreshPasskeyProxy()` function, called before the `tookOver` branch), and `.passkeyCreate`/`.passkeyGet` now refuse outright with a `NotAllowedError` (`"MyPass passkeys are turned off in Settings"`) whenever `passkeyProxyEnabled` is off, regardless of Chrome's attach state. A known consistency hole remains, accepted rather than gated: if the user toggles the feature off while a `.passkeyCreate` Save panel is already showing (i.e. after `.passkeyCreate` returned pending), the popup's now-unconditional `refreshPasskeyProxy` detaches the proxy immediately, yet Save still writes the passkey into the vault while the page's in-flight ceremony fails against a detached proxy — passkey saved, error surfaced on the page. This is accepted under the existing "in-flight ceremony finishes" rule; `passkeyCreateConfirm`/`passkeyGetApprove` remain authorization-safe transitively (they can't be reached without the initial request having passed the new gate) but are not consistency-safe against a mid-ceremony toggle-off. |
+| 2026-08-24 | Auto-lock idle timer vs extension activity | The idle timer was reset only by key and mouse events in the MyPass window, so a user working entirely in Chrome had the vault re-lock under them mid-session. `ExtensionBridgeRequest.resetsAutoLockTimer` now marks the gesture-gated requests and `ExtensionBridgeService` reports them through the new `AutoLockActivityRecording` protocol. The first cut was wrong and was corrected the same day: `getCredentials`, `passkeyCreate` and `passkeyGet` are page-controllable rather than user actions, so a hostile or merely noisy background tab could have defeated idle auto-lock entirely. The reset set is now exactly `fillCredential`, `getTotp`, `proposeSaveLogin`, `proposeSaveTotp`, `passkeyCreateConfirm`, `passkeyGetApprove` and `requestUnlock`. Activity is also recorded only after the response is computed, and only when `requestWasServed(_:)` says the request was actually served — a refusal (`locked`, `pairingRequired`, `error`, or a `*Complete` carrying an error) never counts as activity. |
+| 2026-08-24 | One device-unlock prompt per locked session | Three independent auto-prompt paths — opening the window, an extension unlock request, and opening the menu bar panel — each tracked their own per-view `@State` flag, so each could fire its own Touch ID sheet. `MenuBarExtra`'s content closure is recreated on every menu open, which makes a per-view flag useless as a cross-open guard. `DeviceUnlockPromptCoordinator` now owns the decision: at most one `.automatic` prompt per locked session, an explicit click always allowed unless a prompt is literally in flight, and `vaultDidLock()` restoring the allowance. Failure feedback is surfaced only for `.explicit` triggers; an automatic prompt that fails stays silent. A prompt left in flight longer than `staleInFlightThreshold` (60s) is treated as finished so a dropped callback cannot wedge the gate for the rest of the session — and the root cause of those drops, an `LAContext` released before `evaluatePolicy` called back, is fixed by capturing it in the completion closure. |
+| 2026-08-24 | Post-gate housekeeping | `scripts/run.sh` now stops a running MyPass before `open`, because `open` was activating the stale process and making fixes look like no-ops; it escalates TERM to KILL after five seconds and fails loudly rather than launching over a survivor. The passkey get flow in the popup was brought to parity with create — it names the target entry and shows the passkey badge in both the picker and the ordinary credential list. Two regression tests were repaired at the same time: the popup resync tests hand-rolled the init composition instead of exercising `initPasskeyPopupUI`, and `testSetPasskeyProxyEnabledPersistsAndReturnsEnabled` had been de-fanged by a `true` default in `setUpWithError`. |
+| 2026-09-11 | C4 origin gate closed | The app now validates the origin of a passkey ceremony instead of trusting what the extension sent. `PasskeyCeremony.validateOrigin(_:requestDetailsJson:rpId:)` runs two independent checks, called from both `.passkeyCreate` and `.passkeyGet` immediately after the payload parses and before any candidate matching. First, the wire `originUrl` must equal the payload's own `extensions.remoteDesktopClientOverride.origin`, and an absent override is a refusal — the same fail-closed rule `background.js` already applies on its own side. On its own this check is weak, because a fully compromised extension controls both fields and would simply rewrite them together; its real value is that it removes the cheap lie and stops the two copies of the origin from drifting apart unnoticed. Second, and this is the actual gate, `rpId` must be the origin's host or a parent of it no higher than the registrable domain, which is the WebAuthn RP ID invariant. Without it the app would sign an assertion binding an attacker-chosen origin to an attacker-chosen relying party, and the Public Suffix List is what stops `rpId` climbing to something like `co.uk`. Both refusals surface as `SecurityError` through the existing `*Complete(error:)` channel. Worth recording: the pre-existing test fixtures carried no `remoteDesktopClientOverride` block at all, so the first check failed closed on every passkey test until the fixture builders were taught to emit one — the check was not relaxed to accommodate them. |
 
 ## Known trap when running the suite
 
