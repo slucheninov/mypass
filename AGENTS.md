@@ -1,0 +1,221 @@
+# AGENTS.md
+
+Shared instruction file for every coding agent working in this repository (Claude Code, Cursor, Codex, and anything else that reads `AGENTS.md`). `CLAUDE.md` points here; there is no second source of truth.
+
+User instructions in the chat ALWAYS win. Everything below is the default for when the user did not specify otherwise.
+
+---
+
+# 1. The project
+
+**MyPass** is a native macOS password manager built on the KeePass **KDBX4** vault format, paired with a Chromium browser extension for autofill, TOTP and WebAuthn passkeys.
+
+| Component | Stack | Notes |
+|---|---|---|
+| macOS app | Swift + SwiftUI, macOS 14.0+ | bundle id `com.mypass.app`, `MARKETING_VERSION 0.1.0` |
+| Native messaging host | Swift CLI, target `ChromeHost` | bundle id `com.mypass.chromehost` |
+| Browser extension | Plain JavaScript, MV3, no bundler | `minimum_chrome_version: 127`, pinned extension id `hjijbabodfldconmhdcdphlbgaajkejn` |
+
+There is no `package.json`, no Node toolchain and no Electron. Build manifests are `project.yml` (XcodeGen) plus three `Package.swift` files under `Packages/`. `MyPass.xcodeproj` is generated and gitignored — regenerate it, never edit it.
+
+Third-party dependencies: `swift-sodium` (Argon2id), `Citadel` + `swift-nio` + `swift-nio-ssh` (SFTP sync), vendored `jsQR.js` in the extension.
+
+## Repo layout
+
+| Path | Contents |
+|---|---|
+| `MyPass/` | SwiftUI app. `MyPassApp.swift` is `@main`. Subfolders `App/ Import/ Models/ Security/ State/ Storage/ UI/` |
+| `MyPass/State/ExtensionBridge/` | `LoopbackServer`, `ExtensionBridgeService`, `ExtensionPairingManager/Store`, `ExtensionEntryMatcher`, `PasskeyCeremony` |
+| `MyPass/UI/` | `Sidebar/ Settings/ MenuBar/ Shell/ EntryList/ EntryDetail/ ExtensionPairing/` |
+| `MyPassTests/` | XCTest suite for the app target (auto-lock, passkeys, TOTP, pairing, vault stores) |
+| `Packages/MyPassKit/` | KDBX4 engine, TOTP generator, password generator, Public Suffix List |
+| `Packages/SyncKit/` | `SFTPBackend`, `iCloudBackend`, `LocalFolderBackend`, `MergeEngine`, `SyncEngine`, TOFU host-key validator |
+| `Packages/ExtensionBridgeKit/` | Shared app-to-host protocol: messages, native messaging codec, token store |
+| `ChromeHost/` | `main.swift`, `Relay.swift`, `com.mypass.chromehost.json`, entitlements |
+| `ChromeExtension/` | `manifest.json`, `background.js`, `content.js`, `popup.html/js`, `shared/`, `vendor/`, `tests/` |
+| `scripts/` | Build, run, test, generate, extension-setup shell scripts |
+| `docs/implementation/ROADMAP.md` | Single status-tracking file |
+| `docs/superpowers/` | `plans/`, `specs/`, `spikes/` — named `YYYY-MM-DD-slug[-design].md` |
+| `RUN.md` | Ukrainian run + manual verification checklist. Do not translate it. |
+
+## Build, run, test
+
+```sh
+brew install xcodegen             # prerequisite, plus Xcode
+./scripts/generate.sh             # xcodegen generate -> MyPass.xcodeproj
+./scripts/build-all.sh            # app + ChromeHost
+./scripts/run.sh                  # build, stop a running MyPass, relaunch
+./scripts/test.sh                 # full suite
+./scripts/setup-chrome-extension.sh   # install ChromeHost + native messaging manifests
+```
+
+`scripts/test.sh` runs `xcodebuild test -scheme MyPass`, then `swift test` in each of the three packages, then 15 standalone `node ChromeExtension/tests/*.test.js` scripts. There is no JS test framework — each test file is a plain node script. Node tests are skipped with a warning when `node` is absent.
+
+Opt-in integration tests: `MYPASS_KEYCHAIN_TESTS=1`, `MYPASS_SFTP_INTEGRATION_TESTS=1` (needs `Packages/SyncKit/Tests/Fixtures/docker-sshd/run.sh`), `MYPASS_ICLOUD_INTEGRATION_TESTS=1`.
+
+The extension has no build step. Load `ChromeExtension/` unpacked and reload it on `chrome://extensions` after editing JavaScript. Manual end-to-end fixtures are served with `python3 -m http.server 8765` from `ChromeExtension/tests/fixtures`; the checklist lives in the second half of `RUN.md`.
+
+**No linter or formatter is configured** anywhere in this repo. Match the style of the surrounding code by hand.
+
+**No CI.** Nothing runs the tests for you. Run `./scripts/test.sh` before claiming work is done.
+
+## Architecture essentials
+
+- **Vault engine.** `Packages/MyPassKit` implements KDBX4 from scratch: outer and inner headers, `VariantDictionary`, HMAC block streams, AES-256-CBC and ChaCha20, header authentication, Argon2id via libsodium. Known limitation: libsodium hardcodes a 16-byte Argon2 salt while KDBX4 uses 32, so real Argon2id files need a different KDF binding.
+- **Session state.** `MyPass/State/VaultSession.swift` is an `ObservableObject` holding `enum VaultState { locked, unlocked(KdbxDatabase) }`, with debounced background persistence and a sync merge on save.
+- **Auto-lock and device unlock.** `AutoLockController`, `AutoLockIdleTimeout`, `UnlockWindowPolicy`, `DeviceUnlockPromptCoordinator`, plus `Security/BiometricKeyStore.swift` guarding a Keychain access group behind `LAContext`.
+- **Signing constraint.** `project.yml` pins a stable `DEVELOPMENT_TEAM`. Ad-hoc signing changes the cdhash on every build and silently breaks the biometric key ACL. Do not switch it to ad-hoc.
+- **Browser bridge, three hops.** `background.js` talks Chrome native messaging to `ChromeHost`, which relays over a TCP loopback on `127.0.0.1` at an OS-assigned port served by `LoopbackServer.swift`. Endpoint and token are shared through the Keychain-backed `ExtensionBridgeTokenStore`; the host answers `app_not_running` when no token exists.
+- **Bridge protocol.** `ExtensionBridgeMessages.swift` holds a 15-case request enum with hand-written `Codable`. Every request carries a per-launch token and an optional pairing token. Switches over it are deliberately exhaustive with no `default` — add the new case everywhere rather than silencing the compiler.
+- **Pairing.** A 6-digit code shown in the app, valid 120 seconds, entered in the popup. Per-browser pairings are revocable in Settings, Browser tab.
+- **Passkeys.** The extension proxies create and get ceremonies through Chrome's `webAuthenticationProxy` API to `PasskeyCeremony.swift`. Credentials live in KeePassXC-compatible `KPEX_PASSKEY_*` custom fields, hidden from the normal custom-field UI. The app-side toggle is authoritative over the extension's state.
+- **Domain matching** uses the bundled Public Suffix List for registrable-domain comparison, never naive suffix heuristics. Frame-level matching is hostname-only, and save banners are top-frame only.
+- **Sync.** `SyncKit` exposes a pluggable `StorageBackend` with SFTP, iCloud Drive and local folder implementations, plus `MergeEngine` and `SyncCheckpointStore` for three-way merge.
+- **Content script safety.** The inline fill icon lives in a closed shadow root, defends against hostile page CSS with `!important`, gates actions on `event.isTrusted`, and never mutates the site's own `<input>` elements.
+
+## Conventions
+
+- **Language: English everywhere** — code, comments, commit messages, UI strings, extension copy, docs, plans, specs, error messages, and `Info.plist` / `project.yml` usage descriptions. The single exception is root `RUN.md`, which is Ukrainian and must not be translated. Never introduce Russian copy anywhere. When a change touches a doc that still carries Cyrillic outside `RUN.md`, translate it to English as part of that change. Runtime localization (en, uk, de) is deferred to Phase 7, so ship English strings until then.
+- **Commits: Conventional Commits with a scope**, lowercase imperative subject, no trailing period. Scopes in use: `app`, `extension`, `chrome`, `scripts`, `entry-edit`. Example: `fix(app): reset auto-lock idle timer on deliberate extension activity`.
+- **Long explanatory comments are a feature here.** The codebase records *why* a constraint exists (signing and cdhash, libsodium salt length, `pgrep` under `set -e`, queue choices). Preserve that rationale when editing; do not strip it as noise.
+- **Documentation habit.** Substantial features get a spec in `docs/superpowers/specs/` and a plan in `docs/superpowers/plans/`, with progress tracked in `docs/implementation/ROADMAP.md`. Tick a roadmap box only when the item is implemented **and** its tests pass.
+- **Shell scripts** are `set -euo pipefail`, resolve the repo root themselves, and preflight-check required commands. Keep new scripts in that shape.
+- **Gitignored, do not commit or hand-edit:** `*.xcodeproj`, `MyPass/Info.plist`, `MyPassTests/Info.plist`, `.build/`, `Packages/*/.build/`, `.superpowers/`, `.worktrees/`.
+
+---
+
+# 2. Agent workflow conventions
+
+This repo carries no harness-specific agent config. There is no `.cursor/` directory, no custom agent persona files and no project `.claude/agents/`. Everything an agent needs is in this file, plus whatever skills and subagents the running harness provides globally.
+
+## The orchestrator delegates execution
+
+The main session runs on a deep reasoning model (Opus tier, or Fable as an acceptable alternative) because architectural reasoning, plan synthesis, review judgement and multi-source integration benefit from depth.
+
+Direct writes and edits by that model cost roughly 5x what a mid tier model costs for the same mechanical output. Without discipline the budget burns on work a cheaper model does equally well.
+
+The contract for every session:
+
+> **The orchestrator THINKS, DECIDES, DELEGATES, and VERIFIES.**
+> **The orchestrator does NOT write code, run long shell pipelines, or read large file sets directly past the thresholds below.**
+
+The thresholds are HARD numerical triggers, not preferences. When one fires, stop the in-progress tool call and dispatch a subagent instead. No exceptions for "I already have the context" or "it's just one file".
+
+## Two tiers only
+
+| Tier | Who | Model | May dispatch subagents? |
+|------|-----|-------|-------------------------|
+| **Orchestrator** | Main chat session only | Opus tier, or Fable | **Yes** |
+| **Executor, volume** | `general-purpose` for writes and edits, `Explore` for read-only search | `sonnet`, or `haiku` for trivial mechanical work | **No** — execute directly |
+| **Executor, judgement** | `Plan` for design work, `general-purpose` with a review prompt for verification | `sonnet` | **No** — execute directly |
+
+**Critical rule:** the hard thresholds below apply **only to the orchestrator tier**. A dispatched subagent is an executor: read, write, edit and shell directly within your prompt scope, and never re-delegate work you were sent to do.
+
+Harnesses name the dispatch tool differently — `Agent(...)` in Claude Code, `Task(...)` in Cursor. The tables below write it as `Agent(...)`.
+
+## HARD RULES — check before every tool call
+
+**Rule 1, writing files**
+
+| File size | Action |
+|---|---|
+| >30 lines | STOP. Dispatch `Agent(general-purpose, sonnet)`. |
+| 10–30 lines, mechanical | Prefer a dispatch. Direct write only when the user is reviewing inline. |
+| <10 lines, hand-written | Direct write OK. |
+
+Two or more small files in a row batch into ONE dispatch.
+
+**Rule 2, editing files**
+
+| Edit volume | Action |
+|---|---|
+| Single edit, <10 lines of diff | Direct edit OK. |
+| ≥2 edits, same or multiple files | STOP. Dispatch `Agent(general-purpose, sonnet)` with the full list. |
+
+**Rule 3, reading files**
+
+| Read volume | Action |
+|---|---|
+| 1–2 files | Direct read OK. |
+| ≥3 files for analysis | STOP. Dispatch `Agent(Explore, sonnet)` with the question. |
+
+Exception: the file the user is editing, or the literal subject of the question, is read directly.
+
+**Rule 4, shell context-gathering**
+
+| Command volume | Action |
+|---|---|
+| 1–2 quick commands | Direct shell OK (`git status`, `ls`, a short `head`). |
+| ≥3 commands for context | STOP. Dispatch `Agent(general-purpose, sonnet)` with the batch. |
+
+**Rule 5, self-audit at the start of every response**
+
+Count what the plan implies before issuing any tool call. Writes plus edits ≥2, reads ≥3, context commands ≥3, or any single file over 30 lines — any one of those means the FIRST tool call in the response is the dispatch. No "I'll start and switch later".
+
+## Dispatch templates
+
+```
+Agent(subagent_type: "general-purpose", model: "sonnet",
+      description: "<3-5 word title>",
+      prompt: "<paths, content verbatim or specs, acceptance criteria>")
+
+Agent(subagent_type: "Explore", model: "sonnet",
+      description: "<3-5 word title>",
+      prompt: "<the question + directory + expected return shape>")
+
+Agent(subagent_type: "Plan", model: "sonnet",
+      description: "<3-5 word title>",
+      prompt: "<the goal, the constraints, which files matter>")
+```
+
+Independent dispatches go out in a single message so they run concurrently.
+
+## What the orchestrator does directly
+
+Read one or two files for high-level reasoning. One or two orientation commands. A single edit of at most ten lines. Plan documents, design conversations and review verdicts in chat. Synthesis of subagent results. Direct dialogue with the user.
+
+## What the orchestrator never does directly
+
+Write a file over 30 lines. Apply two or more edits in one response. Read three or more files for analysis. Run three or more context-gathering commands. Multi-file refactors. Test runs over ten seconds — `./scripts/test.sh` is a full Xcode build plus three `swift test` runs plus 15 node scripts, so it always goes to a subagent.
+
+## Not valid reasons to skip a dispatch
+
+| Tempting thought | Reality |
+|---|---|
+| "It's faster if I do it directly" | A subagent returns in 10–30 seconds. Count the actual seconds. |
+| "I already have the context" | Pass it in the prompt. That is what prompts are for. |
+| "Just this one file" | Measure it. Over 30 lines? Dispatch. |
+| "Simple mechanical edit" | Simple means a cheap model handles it trivially. Dispatch. |
+| "The user is waiting" | The user waits longer when the budget burns on mechanical work. |
+| "The subagent might miss context" | Pass exact paths and snippets in the prompt. |
+| "I'll start and dispatch the rest later" | No. The first tool call is the dispatch. |
+| "A hook will catch me if I'm wrong" | A hook is a safety net, not a steering wheel. |
+
+## Skills
+
+Process skills come first and set the approach; implementation skills carry it out.
+
+1. `brainstorming` before any creative or feature work, and before entering plan mode.
+2. `systematic-debugging` before proposing a fix for any bug or test failure.
+3. `writing-plans` and `executing-plans` for multi-step work. Plans land in `docs/superpowers/plans/`, specs in `docs/superpowers/specs/`.
+4. `verification-before-completion` before claiming anything is done, fixed or passing.
+5. `/code-review` and `/security-review` for review passes on a finished branch.
+
+The orchestrator invokes the skill at the right moment. Executors inherit skill instructions through the dispatch prompt and execute directly instead of re-dispatching.
+
+## Cost heuristic
+
+A healthy week shows executor tokens well above orchestrator tokens: executors over 70% of the total, orchestrator under 30%. If the orchestrator share trends above 30%, these rules are being skipped. Pause, re-read this file, dispatch the next chunk.
+
+## Do not use
+
+- `claude-mem` skills (`make-plan`, `do`, `learn-codebase`, `pathfinder`, `smart-explore`). Use the superpowers equivalents. The plugin's cross-session memory stays active; only its skills are off-limits.
+- Anything `gsd-*`. Archived 2026-05-16 to `~/temp/dotfiles-cleanup-2026-05-16/`.
+
+## Anti-patterns
+
+- Sequential dispatches that could have been parallel. Batch them into one message.
+- Re-running tools already answered earlier in the session.
+- Skipping a review pass. A Sonnet review costs about two cents; a bug caught late costs far more.
+- An executor re-dispatching work it was sent to do. Executors do not delegate.
+- Claiming work is done without running `./scripts/test.sh`. There is no CI to catch it.
