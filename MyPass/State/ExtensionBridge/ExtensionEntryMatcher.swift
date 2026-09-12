@@ -66,10 +66,82 @@ enum ExtensionEntryMatcher {
         return PublicSuffixList.registrableDomain(of: resolvedHost) ?? resolvedHost
     }
 
+    /// Whole-host string comparison, including port, case-insensitive — no PSL
+    /// reduction at all. IP literals have nothing to reduce to, so this mode's
+    /// behaviour for an IP-literal entry coincides with `registrableDomain`'s
+    /// (Decision 9).
+    private static func hostAndPort(from urlString: String) -> String? {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var url = URL(string: trimmed)
+        if url?.host == nil {
+            url = URL(string: "https://" + trimmed)
+        }
+        guard let host = url?.host?.lowercased(), !host.isEmpty else { return nil }
+        guard let port = url?.port else { return host }
+        return "\(host):\(port)"
+    }
+
+    /// The scheme's own registered default port, so "https://x" and
+    /// "https://x:443" normalise identically for starts-with/exact matching.
+    private static let defaultPortsByScheme: [String: Int] = ["http": 80, "https": 443]
+
+    /// Lowercases scheme and host, drops the port only when it equals the
+    /// scheme's own default, and leaves path and query exactly as given —
+    /// including case, since a case-sensitive API path (`/API/v2/Login` vs
+    /// `/api/v2/login`) is a real, common shape. Used by both starts-with and
+    /// exact matching (Decision 9).
+    private static func normalizedURL(from urlString: String) -> String? {
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        var url = URL(string: trimmed)
+        if url?.scheme == nil || url?.host == nil {
+            url = URL(string: "https://" + trimmed)
+        }
+        guard let resolved = url,
+              let scheme = resolved.scheme?.lowercased(),
+              let host = resolved.host?.lowercased(), !host.isEmpty else {
+            return nil
+        }
+        var result = "\(scheme)://\(host)"
+        if let port = resolved.port, defaultPortsByScheme[scheme] != port {
+            result += ":\(port)"
+        }
+        result += resolved.path
+        if let query = resolved.query {
+            result += "?\(query)"
+        }
+        return result
+    }
+
+    /// Never-mode exclusion is enforced HERE, before a `credentialList` (or its
+    /// equivalent for the inline panel and the save-banner check) is ever
+    /// assembled by `ExtensionBridgeService` — never left to the extension to
+    /// filter client-side (Decision 9). Every bridge request that resolves
+    /// entries by URL goes through this one function.
     static func matchingEntries(in group: KdbxGroup, forURL urlString: String) -> [KdbxEntry] {
-        guard let targetDomain = registrableDomain(from: urlString) else { return [] }
-        return EntrySearch.allEntries(in: group).filter { entry in
-            entry.urls.contains { registrableDomain(from: $0) == targetDomain }
+        EntrySearch.allEntries(in: group).filter { matches(entry: $0, forURL: urlString) }
+    }
+
+    private static func matches(entry: KdbxEntry, forURL urlString: String) -> Bool {
+        switch entry.uriMatchMode {
+        case .never:
+            return false
+        case .registrableDomain:
+            guard let targetDomain = registrableDomain(from: urlString) else { return false }
+            return entry.urls.contains { registrableDomain(from: $0) == targetDomain }
+        case .host:
+            guard let targetHost = hostAndPort(from: urlString) else { return false }
+            return entry.urls.contains { hostAndPort(from: $0) == targetHost }
+        case .exact:
+            guard let targetNormalized = normalizedURL(from: urlString) else { return false }
+            return entry.urls.contains { normalizedURL(from: $0) == targetNormalized }
+        case .startsWith:
+            guard let targetNormalized = normalizedURL(from: urlString) else { return false }
+            return entry.urls.contains { entryURL in
+                guard let entryNormalized = normalizedURL(from: entryURL) else { return false }
+                return targetNormalized.hasPrefix(entryNormalized)
+            }
         }
     }
 }

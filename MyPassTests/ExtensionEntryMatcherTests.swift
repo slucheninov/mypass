@@ -276,4 +276,137 @@ final class ExtensionEntryMatcherTests: XCTestCase {
 
         XCTAssertEqual(matches.map(\.uuid), [entry.uuid])
     }
+
+    // MARK: - URIMatchMode: host
+
+    func testHostModeMatchesExactHostAndPortCaseInsensitively() {
+        var entry = makeEntry(url: "https://Example.com:8443/login")
+        entry.uriMatchMode = .host
+        let group = makeGroup(entries: [entry])
+        XCTAssertEqual(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com:8443/anything").map(\.uuid),
+            [entry.uuid]
+        )
+    }
+
+    func testHostModeDoesNotMatchASubdomain() {
+        var entry = makeEntry(url: "https://example.com")
+        entry.uriMatchMode = .host
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://login.example.com").isEmpty)
+    }
+
+    func testHostModeDoesNotMatchADifferentPort() {
+        var entry = makeEntry(url: "https://example.com:8443")
+        entry.uriMatchMode = .host
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com:9443").isEmpty)
+    }
+
+    func testHostModeComparesIPLiteralsWhole() {
+        var entry = makeEntry(url: "http://192.168.0.1/admin")
+        entry.uriMatchMode = .host
+        let group = makeGroup(entries: [entry])
+        XCTAssertEqual(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "http://192.168.0.1/login").map(\.uuid),
+            [entry.uuid]
+        )
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "http://127.0.0.1/login").isEmpty)
+    }
+
+    // MARK: - URIMatchMode: exact
+
+    func testExactModeMatchesOnlyTheIdenticalNormalizedURL() {
+        var entry = makeEntry(url: "https://Example.com:443/Login?x=1")
+        entry.uriMatchMode = .exact
+        let group = makeGroup(entries: [entry])
+        XCTAssertEqual(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com/Login?x=1").map(\.uuid),
+            [entry.uuid],
+            "default port 443 must drop out of both sides so they normalise identically"
+        )
+    }
+
+    func testExactModeIsCaseSensitiveOnThePath() {
+        var entry = makeEntry(url: "https://example.com/API/v2/Login")
+        entry.uriMatchMode = .exact
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com/api/v2/login").isEmpty,
+            "a case-sensitive API path must not fold to lowercase"
+        )
+    }
+
+    func testExactModeDoesNotMatchADifferentPath() {
+        var entry = makeEntry(url: "https://example.com/app")
+        entry.uriMatchMode = .exact
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com/app/extra").isEmpty)
+    }
+
+    // MARK: - URIMatchMode: starts-with
+
+    func testStartsWithModeMatchesAnyPageUnderThePrefix() {
+        var entry = makeEntry(url: "https://example.com/app")
+        entry.uriMatchMode = .startsWith
+        let group = makeGroup(entries: [entry])
+        XCTAssertEqual(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com/app/settings").map(\.uuid),
+            [entry.uuid]
+        )
+    }
+
+    func testStartsWithModeAcceptsTheDocumentedPrefixOverMatch() {
+        // The accepted trade-off from Decision 9: a plain string prefix, not a
+        // path-boundary-aware one, so "…/app" also matches "…/app-legacy".
+        var entry = makeEntry(url: "https://example.com/app")
+        entry.uriMatchMode = .startsWith
+        let group = makeGroup(entries: [entry])
+        XCTAssertEqual(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com/app-legacy").map(\.uuid),
+            [entry.uuid]
+        )
+    }
+
+    func testStartsWithModeDoesNotMatchAShorterURL() {
+        var entry = makeEntry(url: "https://example.com/app/settings")
+        entry.uriMatchMode = .startsWith
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com/app").isEmpty)
+    }
+
+    // MARK: - URIMatchMode: never
+
+    func testNeverModeEntryNeverMatchesAnyURL() {
+        var entry = makeEntry(url: "https://example.com")
+        entry.uriMatchMode = .never
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com").isEmpty)
+    }
+
+    // MARK: - Every mode: empty URL matches nothing
+
+    func testEveryModeTreatsAnEmptyTargetURLAsNoMatch() {
+        for mode in URIMatchMode.allCases {
+            var entry = makeEntry(url: "https://example.com")
+            entry.uriMatchMode = mode
+            let group = makeGroup(entries: [entry])
+            XCTAssertTrue(
+                ExtensionEntryMatcher.matchingEntries(in: group, forURL: "").isEmpty,
+                "\(mode) must not match an empty page URL"
+            )
+        }
+    }
+
+    func testEveryModeTreatsAnEntryWithNoStoredURLAsNoMatch() {
+        for mode in URIMatchMode.allCases {
+            var entry = makeEntry(url: "")
+            entry.uriMatchMode = mode
+            let group = makeGroup(entries: [entry])
+            XCTAssertTrue(
+                ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com").isEmpty,
+                "\(mode) must not match an entry with no stored URL"
+            )
+        }
+    }
 }

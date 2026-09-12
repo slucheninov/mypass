@@ -157,6 +157,22 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(response, .credentialList([]))
     }
 
+    func testNeverModeEntryIsAbsentFromTheCredentialListTheBridgeAssembles() {
+        let id = addFixtureEntry(title: "Legacy", username: "alice", password: "s3cret", url: "https://example.com")
+        session.mutate { db in
+            guard let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) else { return }
+            db.rootGroup.entries[index].uriMatchMode = .never
+        }
+        let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret))
+        guard case .credentialList(let summaries) = response else {
+            return XCTFail("expected credentialList, got \(response)")
+        }
+        XCTAssertTrue(
+            summaries.isEmpty,
+            "a never-mode entry must never be assembled into the credential list the bridge sends across the wire"
+        )
+    }
+
     func testFillCredentialReturnsPasswordForMatchingEntry() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
