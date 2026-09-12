@@ -48,7 +48,11 @@ let package = Package(
                 .product(name: "Sodium", package: "swift-sodium"),
                 .product(name: "Clibsodium", package: "swift-sodium")
             ],
-            resources: [.copy("Resources/public_suffix_list.dat")]
+            exclude: ["Resources/PASSWORD_RULES_PROVENANCE.md"],
+            resources: [
+                .copy("Resources/public_suffix_list.dat"),
+                .copy("Resources/password-rules.json")
+            ]
         ),
         .testTarget(
             name: "MyPassKitTests",
