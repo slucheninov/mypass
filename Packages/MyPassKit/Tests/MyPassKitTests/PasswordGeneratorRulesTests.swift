@@ -313,6 +313,37 @@ final class PasswordGeneratorRulesTests: XCTestCase {
         }
     }
 
+    func testSatisfiesRejectsACandidateContainingADisallowedCharacter() throws {
+        // Pins the exclusion check itself, not just its (currently)
+        // no-op behavior against every real vendored rule: `satisfies`
+        // must reject a candidate that contains even one character
+        // outside the rule's effective allowed set, regardless of
+        // whether every required clause and length/consecutive
+        // constraint is otherwise met. Nothing this generator's own draw
+        // functions produce can ever violate this (they only ever draw
+        // from `pool.characters`), so a hand-built candidate is the only
+        // way to exercise the rejecting branch -- without a test like
+        // this, a future regression in `effectivePool` that let a
+        // disallowed class leak into the pool would sail through every
+        // other check in this file, the conformance gate, and reach the
+        // user as a silently-wrong password for a site that forbids
+        // exactly that character.
+        let rules = PasswordRules(requiredClauses: [[.digit]], allowedClasses: [.digit, .lower])
+        let options = PasswordGeneratorOptions(length: 8, includeLowercase: true, includeUppercase: false, includeDigits: true, includeSymbols: false)
+        let pool = try PasswordGenerator.effectivePool(options: options, rules: rules)
+
+        // "a1234567" satisfies the required digit clause and has no
+        // max-consecutive limit to violate, so without the exclusion
+        // check this would incorrectly pass.
+        XCTAssertTrue(PasswordGenerator.satisfies("a1234567", requiredClauses: rules.requiredClauses, pool: pool, maxConsecutive: rules.maxConsecutive))
+
+        // The same candidate with an uppercase letter substituted in --
+        // the rule allows only .digit and .lower, so 'A' is outside the
+        // effective allowed set even though the candidate still satisfies
+        // the required digit clause.
+        XCTAssertFalse(PasswordGenerator.satisfies("A1234567", requiredClauses: rules.requiredClauses, pool: pool, maxConsecutive: rules.maxConsecutive))
+    }
+
     func testUnsatisfiableRulesThrowsForAnImpossibleCombination() {
         // maxlength: 1 with two distinct required clauses can never be
         // satisfied -- there is only one character to place, and it can

@@ -105,13 +105,29 @@ public enum PasswordGenerator {
 
     /// Which literal characters satisfy each `PasswordRules.CharacterClass`,
     /// built once per `generateHonoringRules` call from the rule and the
-    /// user's own toggles.
-    private struct EffectivePool {
+    /// user's own toggles. `internal` (no access modifier) rather than
+    /// `private`, the same testability seam used elsewhere in this file,
+    /// so `PasswordGeneratorRulesTests` can construct one directly (via
+    /// `effectivePool`, also `internal` for the same reason) to pin
+    /// `satisfies`'s exclusion check.
+    struct EffectivePool {
         let characters: [Character]
+        /// The exact set `characters` also holds, kept separately as a
+        /// `Set` for O(1) membership tests -- this is "the rule's
+        /// effective allowed set" `satisfies` checks every candidate
+        /// character against: every character ever added to `membership`
+        /// for ANY class (allowed, required, custom, or toggle-backed) is
+        /// in here, so a required class counts as allowed (Decision 4:
+        /// what a rule requires it also permits) and a rule with no
+        /// explicit `allowed:` at all still populates this from the
+        /// caller's own toggles (`noExplicitAllowList` in `effectivePool`)
+        /// rather than leaving it empty.
+        private let allowedCharacters: Set<Character>
         private let membership: [PasswordRules.CharacterClass: Set<Character>]
 
         init(characters: [Character], membership: [PasswordRules.CharacterClass: Set<Character>]) {
             self.characters = characters
+            self.allowedCharacters = Set(characters)
             self.membership = membership
         }
 
@@ -121,6 +137,10 @@ public enum PasswordGenerator {
 
         func contains(_ character: Character, in characterClass: PasswordRules.CharacterClass) -> Bool {
             membership[characterClass]?.contains(character) ?? false
+        }
+
+        func isAllowed(_ character: Character) -> Bool {
+            allowedCharacters.contains(character)
         }
     }
 
@@ -248,7 +268,9 @@ public enum PasswordGenerator {
         return false
     }
 
-    private static func effectivePool(options: PasswordGeneratorOptions, rules: PasswordRules) throws -> EffectivePool {
+    /// `internal` (no access modifier) rather than `private` -- see
+    /// `EffectivePool`'s doc comment for why.
+    static func effectivePool(options: PasswordGeneratorOptions, rules: PasswordRules) throws -> EffectivePool {
         var membership: [PasswordRules.CharacterClass: Set<Character>] = [:]
         var allCharacters: Set<Character> = []
 
@@ -318,13 +340,42 @@ public enum PasswordGenerator {
         return EffectivePool(characters: Array(allCharacters), membership: membership)
     }
 
-    private static func satisfies(
+    /// `internal` (no access modifier) rather than `private` so
+    /// `PasswordGeneratorRulesTests` can pin the exclusion check below
+    /// directly, by handing it a candidate that violates it -- the check
+    /// is otherwise a no-op against every candidate this generator's own
+    /// draw functions can produce (see the exclusion check's own comment
+    /// for why), so a test going only through the public `generate` API
+    /// could never exercise the rejecting branch.
+    static func satisfies(
         _ candidate: String,
         requiredClauses: [[PasswordRules.CharacterClass]],
         pool: EffectivePool,
         maxConsecutive: Int?
     ) -> Bool {
         let characters = Array(candidate)
+        // Every character must belong to the rule's effective allowed
+        // set -- the single most important guarantee the rule system
+        // makes, and until now the one thing nothing in this function (or
+        // the independent conformance-test check under Task 5) verified.
+        // `pool.isAllowed` is exactly the set `effectivePool` builds:
+        // a required class is also an allowed one (Decision 4), and a
+        // rule stating no explicit `allowed:` at all falls back to the
+        // caller's own toggles rather than to an empty set, so this check
+        // stays honest about both semantics rather than reimplementing a
+        // stricter, wrong version of them. This check gates the return
+        // (a `false` here sends the caller back to another draw, or
+        // eventually to `unsatisfiableRules`), so a defect in pool
+        // construction becomes a loud thrown error instead of a
+        // silently-wrong password handed to the user -- the failure
+        // direction a password manager wants. On every one of the 436
+        // vendored rules this is a no-op: every character this
+        // generator's `randomString`/`deterministicCandidate` can
+        // produce is drawn from `pool.characters` in the first place, so
+        // it is already a member of `pool.isAllowed` by construction --
+        // this exists to catch a FUTURE regression in that construction,
+        // not a defect either of them currently exhibits.
+        guard characters.allSatisfy({ pool.isAllowed($0) }) else { return false }
         for clause in requiredClauses {
             let clauseSatisfied = characters.contains { character in
                 clause.contains { pool.contains(character, in: $0) }
