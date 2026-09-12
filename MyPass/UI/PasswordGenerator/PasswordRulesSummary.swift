@@ -6,12 +6,6 @@ import MyPassKit
 /// not for a person deciding whether to trust the password MyPass just
 /// generated for them.
 enum PasswordRulesSummary {
-    /// Toggle-backed classes this summary reasons about, and their display
-    /// order wherever it renders a list of them -- matches
-    /// `PasswordRulesToggleEvaluator`'s own order so the popover text and
-    /// the toggle UI it sits next to never disagree about ordering either.
-    private static let toggleBackedClassOrder: [PasswordRules.CharacterClass] = [.lower, .upper, .digit, .special]
-
     /// Two sentences, not one list: `required:`, the length bounds and
     /// `max-consecutive` form a "needs" sentence, and what `allowed:`
     /// permits (when it restricts anything) is a separate sentence after
@@ -30,7 +24,7 @@ enum PasswordRulesSummary {
         var needsFragments: [String] = []
 
         for orClause in rules.requiredClauses {
-            needsFragments.append(orClause.map(name(for:)).joined(separator: " or "))
+            needsFragments.append(requiredClauseFragment(for: orClause))
         }
 
         if let minLength = rules.minLength, let maxLength = rules.maxLength {
@@ -95,12 +89,45 @@ enum PasswordRulesSummary {
     /// custom class's literal members -- see that function's doc comment.
     private static func permittedNamesJoined(for rules: PasswordRules) -> String? {
         guard let permitted = PasswordRulesToggleEvaluator.restrictedAllowedToggleClasses(for: rules),
-              !permitted.isEmpty, permitted.count < toggleBackedClassOrder.count
+              !permitted.isEmpty, permitted.count < PasswordRulesToggleEvaluator.toggleClassOrder.count
         else {
             return nil
         }
-        let names = toggleBackedClassOrder.filter(permitted.contains).map(pluralName(for:))
+        let names = PasswordRulesToggleEvaluator.toggleClassOrder.filter(permitted.contains).map(pluralName(for:))
         return joinedWithAnd(names)
+    }
+
+    /// Renders one `required:` clause -- its members are ORed, per
+    /// `PasswordRules.requiredClauses`'s own doc comment -- as a single
+    /// bounded phrase that cannot be misread as continuing the surrounding
+    /// comma-joined "needs" list.
+    ///
+    /// A single-member clause needs no marking: `name(for:)` alone reads
+    /// fine as one more item in that list ("a digit"). A clause with two
+    /// or more members is where this matters. account.samsung.com's real
+    /// rule ("required: digit; required: special; required: upper,lower;")
+    /// used to render its third clause as plain "an uppercase letter or a
+    /// lowercase letter", joined into the same list as the other two
+    /// required items with nothing marking where the list's implicit "and"
+    /// stops and this clause's "or" begins -- "needs a digit, a symbol, an
+    /// uppercase letter or a lowercase letter, ..." reads, to any ordinary
+    /// reader, as a single flat choice across all four of "a digit", "a
+    /// symbol", "an uppercase letter" and "a lowercase letter", when the
+    /// rule actually means the first two AND either of the last two.
+    /// "either ... or ..." (two members) and "one of ..., ... or ..."
+    /// (three or more) both close the clause off unambiguously: no reader
+    /// can attach a preceding list item to a phrase that opens with
+    /// "either" or "one of".
+    private static func requiredClauseFragment(for orClause: [PasswordRules.CharacterClass]) -> String {
+        let names = orClause.map(name(for:))
+        switch names.count {
+        case 1:
+            return names[0]
+        case 2:
+            return "either \(names[0]) or \(names[1])"
+        default:
+            return "one of " + joined(names, conjunction: "or")
+        }
     }
 
     private static func name(for characterClass: PasswordRules.CharacterClass) -> String {
@@ -165,8 +192,18 @@ enum PasswordRulesSummary {
     /// rather than the two ending up with two different list styles for
     /// what is, to a reader, the identical kind of sentence.
     static func joinedWithAnd(_ items: [String]) -> String {
+        joined(items, conjunction: "and")
+    }
+
+    /// Shared by `joinedWithAnd(_:)` and `requiredClauseFragment(for:)`'s
+    /// three-or-more-member "one of A, B or C" phrasing -- the same
+    /// "A", "A <conjunction> B", "A, B <conjunction> C" shape, just with a
+    /// different final word, so the two list styles this file renders
+    /// (an AND-list of requirements, an OR-list inside one clause) cannot
+    /// drift apart from each other structurally.
+    private static func joined(_ items: [String], conjunction: String) -> String {
         guard let last = items.last else { return "" }
         guard items.count > 1 else { return last }
-        return items.dropLast().joined(separator: ", ") + " and " + last
+        return items.dropLast().joined(separator: ", ") + " \(conjunction) " + last
     }
 }

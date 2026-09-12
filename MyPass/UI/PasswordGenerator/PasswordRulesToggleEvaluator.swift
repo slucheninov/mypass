@@ -49,8 +49,15 @@ enum PasswordRulesToggleEvaluator {
     }
 
     /// Toggle-backed classes this evaluator reasons about, and their
-    /// display order wherever a caller renders a list of them.
-    private static let toggleClassOrder: [PasswordRules.CharacterClass] = [.lower, .upper, .digit, .special]
+    /// display order wherever a caller renders a list of them. `internal`
+    /// (no access modifier) rather than `private` so `PasswordRulesSummary`
+    /// shares this exact list instead of declaring its own copy of it --
+    /// two independently maintained copies of "which four classes exist,
+    /// and in what order" is exactly the kind of drift that let the
+    /// popover and the toggle-locking UI disagree about a rule's permitted
+    /// set before this evaluator existed as their single shared source of
+    /// truth.
+    static let toggleClassOrder: [PasswordRules.CharacterClass] = [.lower, .upper, .digit, .special]
 
     static func evaluate(rule: PasswordRules, toggles: Toggles) -> Evaluation {
         let lockedOn = lockedOnClasses(for: rule)

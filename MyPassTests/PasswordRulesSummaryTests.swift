@@ -3,17 +3,22 @@ import MyPassKit
 @testable import MyPass
 
 final class PasswordRulesSummaryTests: XCTestCase {
-    // NOTE on the expected strings below: Task 7's original brief specified
-    // these two tests' expected strings verbatim, joining the final "needs"
-    // fragment with a bare comma ("...characters, at most 3 repeated...").
-    // A later review flagged that join style as producing outright
-    // ungrammatical (and in one case misleading) output once the
-    // permitted-set sentence was added, and explicitly directed joining the
-    // final fragment with "and" instead -- "which now matters because the
-    // sentences are longer." That join style applies uniformly through
-    // `PasswordRulesSummary.joinedWithAnd(_:)`, so these two pre-existing
-    // expected strings are updated to match rather than left as the one
-    // exception to the fix.
+    // NOTE on the expected string below: Task 7's original brief specified
+    // this test's expected string verbatim, joining the final "needs"
+    // fragment with a bare comma ("...characters, at most 3 repeated...")
+    // and rendering the third `required:` clause as plain "an uppercase
+    // letter or a lowercase letter". Two later review rounds both flagged
+    // that string: first for the bare-comma join (fixed by
+    // `PasswordRulesSummary.joinedWithAnd(_:)`), and then for a defect that
+    // shipped in the brief's own literal text and passed through both
+    // rounds untouched -- "needs a digit, a symbol, an uppercase letter or
+    // a lowercase letter, ..." reads, to an ordinary reader, as a flat
+    // choice across all four items, when the rule actually means the first
+    // two AND either of the last two. `requiredClauseFragment(for:)` now
+    // marks a multi-member `required:` clause with "either ... or ..." so
+    // it cannot be absorbed into the surrounding list. This expected
+    // string is updated to match both fixes rather than left as the one
+    // exception to either.
     func testDescribesRequiredClassesLengthAndMaxConsecutive() throws {
         // Real rule from the vendored 2026-09-12 snapshot, account.samsung.com.
         let ruleString = "minlength: 8; maxlength: 15; max-consecutive: 3; required: digit; required: special; required: upper,lower;"
@@ -23,7 +28,26 @@ final class PasswordRulesSummaryTests: XCTestCase {
         let summary = PasswordRulesSummary.describe(rules, domain: "account.samsung.com")
         XCTAssertEqual(
             summary,
-            "account.samsung.com needs a digit, a symbol, an uppercase letter or a lowercase letter, 8 to 15 characters and at most 3 repeated characters in a row."
+            "account.samsung.com needs a digit, a symbol, either an uppercase letter or a lowercase letter, 8 to 15 characters and at most 3 repeated characters in a row."
+        )
+    }
+
+    // No vendored 2026-09-12 rule happens to name three or more classes in
+    // a single `required:` clause, so this one is synthetic -- but the
+    // parser and `PasswordRulesParser.parse` both accept the syntax, and
+    // the same AND/OR ambiguity the "either ... or ..." fix addresses for
+    // two members applies just as much for three or more, so the phrasing
+    // needs its own direct coverage rather than relying on a real rule
+    // that never exercises it.
+    func testDescribesAThreeMemberRequiredClauseAsOneOf() throws {
+        let ruleString = "minlength: 4; required: upper,lower,digit;"
+        guard case .success(let rules) = PasswordRulesParser.parse(ruleString) else {
+            return XCTFail("expected a valid parse")
+        }
+        let summary = PasswordRulesSummary.describe(rules, domain: "example.com")
+        XCTAssertEqual(
+            summary,
+            "example.com needs one of an uppercase letter, a lowercase letter or a digit and at least 4 characters."
         )
     }
 
