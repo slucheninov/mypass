@@ -1550,14 +1550,14 @@ EOF
 
 Since `KeyDerivation` is `internal` (not `public`), this can't run as an external script against the built library — instead, add a throwaway `XCTestCase` (not committed) with the same body inside `MyPassKitTests`, or a `measure { }` block, and run it via `swift test --filter`. Record both numbers (old backend at `P=1`/16-byte salt since that's what it could do; new backend at `P=2`/32-byte salt) in this plan's own **Results** section below before committing this task — do not leave them as a placeholder.
 
-**Results (fill in before committing):**
+**Results (measured 2026-09-12, arm64e Apple Silicon, `swift test -c release`, `Date()`-wrapped call to `KeyDerivation.transformedKey`):**
 
 | | M | I | P | Salt | Measured time |
 |---|---|---|---|---|---|
-| Before (swift-sodium) | 64 MiB | 3 | 1 | 16 bytes | _measure and record_ |
-| After (vendored `phc-winner-argon2`, `ref` variant) | 64 MiB | 3 | 2 | 32 bytes | _measure and record_ |
+| Before (swift-sodium, commit `62e9305`, in a scratch worktree) | 64 MiB | 3 | 1 | 16 bytes | 0.066 s (avg of 4 runs: 0.068, 0.066, 0.065, 0.066) |
+| After (vendored `phc-winner-argon2`, `ref` variant, commit `abf94a0`) | 64 MiB | 3 | 2 | 32 bytes | 0.036 s (avg of 3 runs: 0.037, 0.036, 0.036) |
 
-If the new number is materially worse (the portable `ref` variant is, by Decision 1 of the spec, deliberately not the fastest available build), record that finding here plainly — it is not this plan's job to silently accept a bad number, only to surface it.
+The new number is not worse — it measured about 45% faster than the old swift-sodium path on this machine, even though the vendored library uses the portable `ref` variant rather than a SIMD-optimized build (Decision 1). The likely reason is that `P=2` halves the per-lane memory block (32 MiB/lane instead of 64 MiB in one lane) at the same total memory cost, improving cache behavior; it is not a case of the vendored code being intrinsically faster per byte processed. This result is specific to this Apple Silicon hardware and is not a bound on any other platform. No KDF parameters were changed to produce this result — `M=64 MiB`/`I=3`/`P=2` is the same production configuration `KdbxDatabase.save` writes.
 
 - [ ] **Step 3: Run the full suite, unpiped**
 
