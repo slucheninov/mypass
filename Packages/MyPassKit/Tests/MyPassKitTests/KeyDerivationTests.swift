@@ -293,6 +293,62 @@ final class KeyDerivationTests: XCTestCase {
         }
     }
 
+    /// Known-answer test with a 32-byte salt — the exact shape every real KDBX4
+    /// file uses, and the constraint this task lifts. Computed independently via
+    /// argon2-cffi 25.1.0 (same secret/I/M/P/V as
+    /// `testTransformedKeyMatchesIndependentArgon2idKnownAnswer`, only the salt
+    /// differs — 32 bytes 0x00..0x1F instead of 16 bytes 0x00..0x0F):
+    ///
+    /// ```python
+    /// from argon2.low_level import hash_secret_raw, Type
+    /// hash_secret_raw(
+    ///     secret=b"correct horse battery staple",
+    ///     salt=bytes(range(32)),
+    ///     time_cost=2, memory_cost=19 * 1024, parallelism=1,
+    ///     hash_len=32, type=Type.ID, version=19,
+    /// )
+    /// ```
+    func testTransformedKeyAccepts32ByteSaltKnownAnswer() throws {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data((0..<32).map { UInt8($0) })) // 0x00..0x1F
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+
+        let composite = Data("correct horse battery staple".utf8)
+        let derived = try KeyDerivation.transformedKey(compositeKey: composite, kdfParameters: kdf)
+
+        let expected = Data([
+            0x09, 0x2d, 0x6e, 0x91, 0x98, 0x78, 0x40, 0xe6,
+            0x3e, 0x2f, 0xac, 0x5e, 0x18, 0x7a, 0xc5, 0xd2,
+            0x9b, 0x48, 0x9f, 0x05, 0x59, 0x79, 0x71, 0xfd,
+            0x65, 0x54, 0x55, 0x5a, 0x1a, 0x20, 0xce, 0x2a,
+        ])
+        XCTAssertEqual(derived, expected)
+    }
+
+    /// The Argon2 reference library's own minimum (`ARGON2_MIN_SALT_LENGTH` in
+    /// `argon2.h`, an object-like macro that does not bridge into Swift — see
+    /// the comment at the guard site) — anything shorter is a malformed or
+    /// truncated header, not "try it and see what the library says."
+    func testSaltShorterThanMinimumThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x01, count: 7)) // below the 8-byte minimum
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
     func testMasterKeyAndHmacKeyBaseDiffer() {
         let seed = Data(repeating: 0x01, count: 32)
         let transformed = Data(repeating: 0x02, count: 32)

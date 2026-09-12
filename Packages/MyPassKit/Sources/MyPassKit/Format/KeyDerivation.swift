@@ -63,6 +63,19 @@ enum KeyDerivation {
               case .uint32(let version)? = params.items["V"] else {
             throw KeyDerivationError.invalidParameters
         }
+        // The Argon2 reference library's own minimum (ARGON2_MIN_SALT_LENGTH
+        // in argon2.h, defined as `#define ARGON2_MIN_SALT_LENGTH
+        // UINT32_C(8)`) — an object-like macro using UINT32_C, which does
+        // NOT bridge into Swift (confirmed: referencing it from Swift code
+        // fails to compile, "cannot find 'ARGON2_MIN_SALT_LENGTH' in
+        // scope" — Clang's importer does not evaluate object-like macros
+        // built from other macros). The literal 8 below is that same
+        // constant, just necessarily hardcoded on the Swift side; if
+        // phc-winner-argon2 is ever upgraded, re-check this value against
+        // the vendored argon2.h rather than assuming it's unchanged.
+        guard salt.count >= 8 else {
+            throw KeyDerivationError.invalidParameters
+        }
         guard parallelism == 1 else {
             throw KeyDerivationError.invalidParameters
         }
