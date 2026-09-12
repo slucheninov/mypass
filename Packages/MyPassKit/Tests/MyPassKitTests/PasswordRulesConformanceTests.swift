@@ -63,6 +63,32 @@ final class PasswordRulesConformanceTests: XCTestCase {
         }
     }
 
+    /// The two correctness properties of the `allowedClasses` check in
+    /// `assertConforms` below cannot be verified against the 436 real
+    /// vendored rules: a diagnostic sweep over the whole parsed dataset
+    /// (not committed -- run once to confirm this, then discarded) found
+    /// zero rules with an empty `allowedClasses` and zero rules where a
+    /// required class was not already present in `allowedClasses`,
+    /// because `PasswordRulesParser` always defaults an absent `allowed:`
+    /// to `[.asciiPrintable]` and always folds every required class into
+    /// `allowedClasses` before this test ever sees the rule (see
+    /// `PasswordRulesParser.swift` and the doc comment on
+    /// `PasswordRules.allowedClasses`). A bug in this test's own check --
+    /// the union missing or backwards, or the empty-list branch inverted
+    /// -- would therefore pass all 436 real domains silently: exactly the
+    /// "might never show up" risk raised in review. These two rules,
+    /// built directly and bypassing the parser's folding, close that
+    /// blind spot.
+    func testAllowedClassCheckTreatsARequiredClassAsImplicitlyAllowed() {
+        let rules = PasswordRules(requiredClauses: [[.upper]], allowedClasses: [.lower], minLength: 4, maxLength: 4)
+        assertConforms("Abcd", to: rules, domain: "synthetic.allowed-union-test", ruleString: "synthetic")
+    }
+
+    func testAllowedClassCheckTreatsAnEmptyAllowListAsNoRestriction() {
+        let rules = PasswordRules(requiredClauses: [], allowedClasses: [], minLength: 4, maxLength: 4)
+        assertConforms("!!!!", to: rules, domain: "synthetic.empty-allowed-test", ruleString: "synthetic")
+    }
+
     private func assertConforms(_ password: String, to rules: PasswordRules, domain: String, ruleString: String) {
         let characters = Array(password)
         let context = "\(domain): \(ruleString) -> \(password)"
