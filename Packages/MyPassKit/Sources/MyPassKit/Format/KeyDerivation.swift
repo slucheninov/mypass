@@ -91,6 +91,24 @@ enum KeyDerivation {
               case .uint32(let version)? = params.items["V"] else {
             throw KeyDerivationError.invalidParameters
         }
+        // KeePass's Argon2 KDF VariantDictionary also defines `K` (a secret
+        // key) and `A` (associated data) — both real, standardized Argon2
+        // parameters that a genuine KeePass/KeePassXC vault can carry
+        // (KeePass2::KDFPARAM_ARGON2_SECRET_KEY / KDFPARAM_ARGON2_ASSOC_DATA
+        // in KeePassXC's `src/format/KeePass2.cpp`). The vendored reference
+        // library's `argon2_hash` entry point used below has no parameters
+        // for either one — only its lower-level `argon2_ctx` does, and this
+        // code does not call it. Silently ignoring `K`/`A` would derive a
+        // key from `S`/`M`/`I`/`P`/`V` alone: self-consistent, 32 bytes,
+        // deterministic, and WRONG — indistinguishable from a correct
+        // derivation until the header HMAC check fails, at which point it
+        // looks exactly like a wrong master password with no clue that the
+        // real cause is an unsupported KDF parameter. Refusing outright,
+        // rather than pretending `K`/`A` don't exist, is what turns that
+        // silent wrong-key failure into a diagnosable error.
+        guard params.items["K"] == nil, params.items["A"] == nil else {
+            throw KeyDerivationError.invalidParameters
+        }
         // The Argon2 reference library's own minimum (ARGON2_MIN_SALT_LENGTH
         // in argon2.h, defined as `#define ARGON2_MIN_SALT_LENGTH
         // UINT32_C(8)`) — an object-like macro using UINT32_C, which does
@@ -153,6 +171,22 @@ enum KeyDerivation {
         // function.
         guard let memoryKibibytes = UInt32(exactly: memoryBytes / 1024),
               let iterations32 = UInt32(exactly: iterations) else {
+            throw KeyDerivationError.invalidParameters
+        }
+        // A sanity ceiling on top of the checked `UInt32(exactly:)`
+        // conversion above: that guard only rejects `M` values the vendored
+        // library's `m_cost` parameter cannot represent at all (~4.4 TB and
+        // up), and everything below that line is handed straight to
+        // `argon2_hash`, which allocates it. Key derivation necessarily
+        // runs before the header HMAC is verified, so this is reachable
+        // pre-authentication: a corrupt or hostile file claiming, say, 32
+        // GiB passes every guard above, the allocation succeeds under
+        // macOS's memory overcommit, and the process thrashes or is killed
+        // while merely opening a file — no password was even checked yet.
+        // 4 GiB is the cap: far above anything a real tool produces
+        // (KeePassXC's own default `M` is 64 MiB) while still generous
+        // enough for any deliberately hardened vault a user might configure.
+        guard memoryKibibytes <= 4 * 1024 * 1024 else {
             throw KeyDerivationError.invalidParameters
         }
 

@@ -7,8 +7,13 @@ final class KeyDerivationTests: XCTestCase {
     /// comes from libsodium's test suite (test/default/pwhash_argon2id.c, tv3()),
     /// NOT from the "raw" Argon2 reference vectors (phc-winner-argon2/kats), because
     /// libsodium's crypto_pwhash API does not support optional secret/associatedData
-    /// parameters of "raw" Argon2 (which is fine — KDBX4 does not use them either, see
-    /// Global Constraints). We verify via the encoded string, because that is exactly what
+    /// parameters of "raw" Argon2. Real KDBX4 files CAN carry them (KeePass's `K`/`A`
+    /// VariantDictionary keys) — `KeyDerivation.argon2Derive` rejects any file that does,
+    /// with `.invalidParameters`, rather than silently ignoring them (see
+    /// `testArgon2idSecretKeyParameterThrowsInvalidParameters` and
+    /// `testArgon2idAssociatedDataParameterThrowsInvalidParameters` below); this
+    /// particular libsodium round-trip just doesn't exercise that path at all.
+    /// We verify via the encoded string, because that is exactly what
     /// is fixed in the libsodium test source.
     ///
     /// NOTE: tv3()'s test index 0 (m=4096,t=0,p=1) is intentionally an edge case in
@@ -299,6 +304,26 @@ final class KeyDerivationTests: XCTestCase {
         }
     }
 
+    /// `ARGON2_MAX_LANES` (2^24-1) in argon2.h — the upper bound this task
+    /// introduced alongside lifting the old libsodium-inherited parallelism
+    /// ceiling. Only the lower bound (`P = 0`) was pinned before; this
+    /// exercises the other edge so the new bound isn't silently unenforced.
+    func testParallelismAboveMaximumThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(16_777_216) // one past ARGON2_MAX_LANES (2^24-1)
+        kdf.items["V"] = .uint32(0x13)
+
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
     /// Known-answer test at P=2 — computed independently via argon2-cffi 25.1.0,
     /// same secret/salt/I/M/V as `testTransformedKeyMatchesIndependentArgon2idKnownAnswer`:
     ///
@@ -390,6 +415,72 @@ final class KeyDerivationTests: XCTestCase {
         kdf.items["I"] = .uint64(UInt64(UInt32.max) + 1)
         kdf.items["P"] = .uint32(1)
         kdf.items["V"] = .uint32(0x13)
+
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
+    /// A corrupt or hostile header can claim an `M` the vendored library's
+    /// `m_cost` parameter can represent (unlike
+    /// `testArgon2idMemoryOutOfRangeThrowsInvalidParameters` above, which
+    /// pins the `UInt32(exactly:)` overflow case) but that is still an
+    /// absurd amount of memory to allocate just to open a file — 32 GiB,
+    /// well past the 4 GiB sanity ceiling `argon2Derive` enforces on top of
+    /// that conversion. Because key derivation runs before the header HMAC
+    /// is verified, this is reachable pre-authentication, so it must be
+    /// rejected rather than attempted.
+    func testArgon2idMemoryAboveSanityCeilingThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
+        kdf.items["M"] = .uint64(32 * 1024 * 1024 * 1024) // 32 GiB, in bytes
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
+    /// KeePass's Argon2 KDF VariantDictionary also defines `K` (secret key),
+    /// a real parameter the vendored `argon2_hash` entry point cannot honour
+    /// (only its `argon2_ctx` counterpart, which this code does not call,
+    /// takes one). A vault carrying `K` must be refused outright rather than
+    /// silently deriving a key computed without it — see the comment at the
+    /// guard site in `KeyDerivation.argon2Derive`.
+    func testArgon2idSecretKeyParameterThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+        kdf.items["K"] = .byteArray(Data(repeating: 0x03, count: 16))
+
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
+    /// Same as above, for `A` (associated data).
+    func testArgon2idAssociatedDataParameterThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+        kdf.items["A"] = .byteArray(Data(repeating: 0x04, count: 16))
 
         XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
             guard case KeyDerivationError.invalidParameters = error else {
