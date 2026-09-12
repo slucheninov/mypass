@@ -90,7 +90,23 @@ enum KeyDerivation {
         // independent Argon2id implementation — see
         // `testTransformedKeyMatchesIndependentArgon2idKnownAnswer`,
         // which pins exactly this path with M = 19 * 1024 * 1024 bytes.
-        let memoryKibibytes = UInt32(memoryBytes / 1024)
+        //
+        // The conversion is CHECKED, not a plain `UInt32(_:)` narrowing:
+        // `M` and `I` are `UInt64` values read straight out of the
+        // VariantDictionary, with nothing upstream in
+        // `VariantDictionary`/`KdbxOuterHeader` bounds-checking them
+        // against what the vendored library's `UInt32` `m_cost`/`t_cost`
+        // parameters can hold. Swift's plain `UInt32(_:)` initializer
+        // traps on overflow — it does not throw — so a malformed or
+        // hostile header claiming, say, `M` at or above ~4.4 TB would
+        // crash the whole app while merely opening a file. `UInt32(exactly:)`
+        // turns that into a typed `.invalidParameters` the caller can
+        // handle, matching every other malformed-header case in this
+        // function.
+        guard let memoryKibibytes = UInt32(exactly: memoryBytes / 1024),
+              let iterations32 = UInt32(exactly: iterations) else {
+            throw KeyDerivationError.invalidParameters
+        }
 
         var hash = [UInt8](repeating: 0, count: 32)
         let compositeKeyBytes = [UInt8](compositeKey)
@@ -99,7 +115,7 @@ enum KeyDerivation {
             saltBytes.withUnsafeBufferPointer { saltPtr in
                 hash.withUnsafeMutableBufferPointer { hashPtr in
                     argon2_hash(
-                        UInt32(iterations), memoryKibibytes, parallelism,
+                        iterations32, memoryKibibytes, parallelism,
                         pwdPtr.baseAddress, pwdPtr.count,
                         saltPtr.baseAddress, saltPtr.count,
                         hashPtr.baseAddress, hashPtr.count,

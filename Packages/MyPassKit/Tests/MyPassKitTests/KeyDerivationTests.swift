@@ -248,6 +248,51 @@ final class KeyDerivationTests: XCTestCase {
         }
     }
 
+    /// A hostile or malformed KDBX4 header can claim any `M` (memory, in
+    /// bytes) representable in a `UInt64` — nothing upstream in
+    /// `VariantDictionary`/`KdbxOuterHeader` bounds-checks it. The vendored
+    /// Argon2 library's `m_cost` parameter is a `UInt32` of KIBIBYTES, so
+    /// this pins that an out-of-range value is rejected with
+    /// `.invalidParameters` rather than trapping the process via an
+    /// overflowing `UInt32(_:)` narrowing conversion.
+    func testArgon2idMemoryOutOfRangeThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
+        // (UInt32.max + 1) KiB, in bytes: one KiB step past what the
+        // vendored library's `m_cost` parameter can represent.
+        kdf.items["M"] = .uint64((UInt64(UInt32.max) + 1) * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
+    /// Same shape as the memory test above, but for `I` (iterations): the
+    /// vendored library's `t_cost` parameter is also a `UInt32`, and a
+    /// header can claim any `UInt64` value for it.
+    func testArgon2idIterationsOutOfRangeThrowsInvalidParameters() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        // One past what `t_cost: UInt32` can represent.
+        kdf.items["I"] = .uint64(UInt64(UInt32.max) + 1)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.invalidParameters = error else {
+                return XCTFail("expected invalidParameters, got \(error)")
+            }
+        }
+    }
+
     func testMasterKeyAndHmacKeyBaseDiffer() {
         let seed = Data(repeating: 0x01, count: 32)
         let transformed = Data(repeating: 0x02, count: 32)
