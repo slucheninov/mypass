@@ -113,7 +113,8 @@ public extension KdbxEntry {
     /// passkey the first time the user edited anything else on the entry.
     static let standardFieldKeys: Set<String> = Set([
         "Title", "UserName", "Password", "URL", "Notes", "otp", "Favorite",
-        "MyPass.EntryType", "MyPass.CardNumber", "MyPass.CardholderName", "MyPass.ExpiryDate", "MyPass.CVV", "MyPass.NotesBody"
+        "MyPass.EntryType", "MyPass.CardNumber", "MyPass.CardholderName", "MyPass.ExpiryDate", "MyPass.CVV", "MyPass.NotesBody",
+        KdbxEntry.uriMatchModeFieldKey
     ]).union(KdbxEntry.passkeyFieldKeys)
     static let additionalURLsStringArrayKey = "KP2A_URL"
 
