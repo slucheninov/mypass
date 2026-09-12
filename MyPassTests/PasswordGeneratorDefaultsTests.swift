@@ -41,12 +41,14 @@ final class PasswordGeneratorDefaultsTests: XCTestCase {
 
     // `save` always writes all five keys together, so it cannot produce a
     // suite where only some keys are present -- these two tests write the
-    // raw keys directly to pin each key's independent absent-vs-stored
-    // guard. Without the `object(forKey:) as? T` pattern in `load`, a
-    // lookup that used `integer(forKey:)`/`bool(forKey:)` instead would
-    // still pass `testAbsentValuesYieldTheDocumentedDefaults` and
-    // `testRoundTripsSavedValues` above, because those two tests only ever
-    // present a suite that is either fully empty or fully populated.
+    // raw keys directly to cover that shape. A fully-empty suite (above)
+    // and a fully-populated suite (above) cannot distinguish correct
+    // per-key absent-vs-stored logic in `load` from a batched shortcut
+    // that treats "any keys present" as one branch and "no keys present"
+    // as another -- both suite shapes take the same branch either way, so
+    // a batched implementation would pass both tests above while still
+    // being wrong for a suite where some keys are set and others are not.
+    // A partial suite is the only shape that tells the two apart.
 
     func testOnlyLengthStoredStillYieldsDefaultClassFlags() {
         let defaults = makeThrowawaySuite("PasswordGeneratorDefaultsTests-partial-length-only")
