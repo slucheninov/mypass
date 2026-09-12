@@ -203,7 +203,7 @@ struct EntryEditView: View {
             FavoriteToggleToolbarItem(isFavorite: $isFavorite)
         }
         .sheet(isPresented: $showPasswordGenerator) {
-            PasswordGeneratorView { generated in
+            PasswordGeneratorView(initialSiteDomain: ExtensionEntryMatcher.registrableDomain(from: url) ?? "") { generated in
                 password = generated
                 showPasswordGenerator = false
             }
