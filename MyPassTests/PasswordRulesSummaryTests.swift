@@ -32,22 +32,57 @@ final class PasswordRulesSummaryTests: XCTestCase {
         )
     }
 
-    // No vendored 2026-09-12 rule happens to name three or more classes in
-    // a single `required:` clause, so this one is synthetic -- but the
-    // parser and `PasswordRulesParser.parse` both accept the syntax, and
-    // the same AND/OR ambiguity the "either ... or ..." fix addresses for
-    // two members applies just as much for three or more, so the phrasing
-    // needs its own direct coverage rather than relying on a real rule
-    // that never exercises it.
-    func testDescribesAThreeMemberRequiredClauseAsOneOf() throws {
-        let ruleString = "minlength: 4; required: upper,lower,digit;"
+    // MARK: - Three-or-more-member required clause, bounded at both ends
+    //
+    // "one of X, Y or Z" closes a clause at its START, but nothing closed
+    // it at its END the way "either ... or ..." does for a two-member
+    // clause ("either" grammatically expects exactly two branches, so it
+    // self-closes regardless of position; "one of" carries no such fixed
+    // count). Left in its natural required-clause position, a real
+    // vendored rule -- deutsche-bank.de's, identical in shape to
+    // consorsbank.de's and clegc-gckey.gc.ca's -- rendered "needs one of a
+    // lowercase letter, an uppercase letter or a digit and exactly 5
+    // characters", where "a digit and exactly 5 characters" can be misread
+    // as one more alternative inside the disjunction. `describe(_:domain:)`
+    // now moves every 3+-member clause to the end of the "needs" sentence,
+    // after length and `max-consecutive`, so it is followed only by the
+    // sentence's own full stop or by another 3+-member clause.
+
+    func testDescribesAThreeMemberRequiredClauseAtTheEndOfTheSentence() throws {
+        // Real rule from the vendored 2026-09-12 snapshot, deutsche-bank.de
+        // (byte-for-byte identical to consorsbank.de's and
+        // clegc-gckey.gc.ca's).
+        let ruleString = "minlength: 5; maxlength: 5; required: lower, upper, digit;"
+        guard case .success(let rules) = PasswordRulesParser.parse(ruleString) else {
+            return XCTFail("expected a valid parse")
+        }
+        let summary = PasswordRulesSummary.describe(rules, domain: "deutsche-bank.de")
+        XCTAssertEqual(
+            summary,
+            "deutsche-bank.de needs exactly 5 characters and one of a lowercase letter, an uppercase letter or a digit."
+        )
+    }
+
+    // No vendored 2026-09-12 rule carries two separate 3+-member `required:`
+    // clauses, so this one is synthetic -- but it is the case that most
+    // needs checking: with both clauses moved to the tail, does the second
+    // one's own "one of" still read as a fresh boundary rather than a
+    // continuation of the first? "... or a digit and one of a digit, a
+    // symbol or an uppercase letter." -- "one of" is as strong an opener as
+    // "either", so "and one of" reads as "AND [a fresh bounded choice]",
+    // not as extending the previous clause's alternatives with "one of
+    // ...". Order between the two clauses is preserved (first-declared,
+    // first-rendered), matching how every other multi-clause rule in this
+    // file already orders its fragments.
+    func testDescribesTwoMultiMemberRequiredClausesBothAtTheEnd() throws {
+        let ruleString = "minlength: 4; required: upper,lower,digit; required: digit,special,upper;"
         guard case .success(let rules) = PasswordRulesParser.parse(ruleString) else {
             return XCTFail("expected a valid parse")
         }
         let summary = PasswordRulesSummary.describe(rules, domain: "example.com")
         XCTAssertEqual(
             summary,
-            "example.com needs one of an uppercase letter, a lowercase letter or a digit and at least 4 characters."
+            "example.com needs at least 4 characters, one of an uppercase letter, a lowercase letter or a digit and one of a digit, a symbol or an uppercase letter."
         )
     }
 

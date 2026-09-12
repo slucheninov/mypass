@@ -20,11 +20,39 @@ enum PasswordRulesSummary {
     /// required item -- the exact opposite of what it means. Keeping the
     /// permitted set in its own sentence, after the "needs" sentence is
     /// complete, removes that ambiguity entirely.
+    ///
+    /// A `required:` clause naming three or more classes ("one of X, Y or
+    /// Z" -- see `requiredClauseFragment(for:)`) is closed at its START by
+    /// "one of", but nothing closes it at its END the way "either ... or
+    /// ..." closes a two-member clause (a reader's grammar expects
+    /// "either" to introduce exactly two branches, so it self-closes
+    /// regardless of what follows; "one of" carries no such expectation of
+    /// a fixed count). Left in its natural required-clause position,
+    /// followed by more plain fragments, real vendored rules like
+    /// deutsche-bank.de's produced "needs one of a lowercase letter, an
+    /// uppercase letter or a digit and exactly 5 characters" -- where "a
+    /// digit and exactly 5 characters" can be misread as one more
+    /// alternative inside the disjunction. Every `orClause` naming three
+    /// or more classes is therefore collected separately and appended
+    /// after every other "needs" fragment (length, `max-consecutive`, and
+    /// any single- or two-member clause), so a 3+-member clause is always
+    /// followed only by the sentence's own full stop, or by another
+    /// 3+-member clause -- which opens with its own "one of" and so cannot
+    /// be mistaken for a continuation of the one before it either. A
+    /// two-member "either ... or ..." clause needs no such treatment and
+    /// stays in its original required-clause position -- see
+    /// `requiredClauseFragment(for:)`'s own doc comment.
     static func describe(_ rules: PasswordRules, domain: String) -> String {
         var needsFragments: [String] = []
+        var trailingMultiMemberClauses: [String] = []
 
         for orClause in rules.requiredClauses {
-            needsFragments.append(requiredClauseFragment(for: orClause))
+            let fragment = requiredClauseFragment(for: orClause)
+            if orClause.count >= 3 {
+                trailingMultiMemberClauses.append(fragment)
+            } else {
+                needsFragments.append(fragment)
+            }
         }
 
         if let minLength = rules.minLength, let maxLength = rules.maxLength {
@@ -42,6 +70,8 @@ enum PasswordRulesSummary {
         if let maxConsecutive = rules.maxConsecutive {
             needsFragments.append("at most \(maxConsecutive) repeated characters in a row")
         }
+
+        needsFragments.append(contentsOf: trailingMultiMemberClauses)
 
         let permittedNames = permittedNamesJoined(for: rules)
 
