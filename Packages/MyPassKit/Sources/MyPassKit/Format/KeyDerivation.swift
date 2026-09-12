@@ -47,10 +47,11 @@ enum KeyDerivation {
     ///   - `P` = parallelism (lanes)
     ///   - `V` = Argon2 version (0x13 = v19)
     ///
-    /// The `parallelism == 1` and salt-length guards below are about to be
-    /// relaxed in Tasks 3–4: the vendored library has no such limitations
-    /// itself, but this task's scope is swapping the backend with zero
-    /// observable behaviour change, one constraint at a time.
+    /// The salt-length (Task 3) and parallelism (Task 4) constraints
+    /// previously inherited from libsodium's public API have both been
+    /// lifted: the vendored library's own bounds (`ARGON2_MIN_SALT_LENGTH`,
+    /// `ARGON2_MIN_LANES`...`ARGON2_MAX_LANES`) are enforced directly below
+    /// instead.
     ///
     /// `V` is still required to be present and equal to 0x13 so a v0x10
     /// (legacy) file is rejected rather than silently mis-derived; the
@@ -76,7 +77,14 @@ enum KeyDerivation {
         guard salt.count >= 8 else {
             throw KeyDerivationError.invalidParameters
         }
-        guard parallelism == 1 else {
+        // ARGON2_MIN_LANES...ARGON2_MAX_LANES in argon2.h — 1 to 2^24-1.
+        // Like ARGON2_MIN_SALT_LENGTH above, these are object-like macros
+        // built with UINT32_C and do not bridge into Swift; the range
+        // below is that same bound, hardcoded. The KDBX header's `P` field
+        // is a uint32, so without this upper bound a malformed or hostile
+        // header's `P` would be handed to the library unchecked; in
+        // practice, real files use small values such as 2 or 4.
+        guard (1...16_777_215).contains(parallelism) else {
             throw KeyDerivationError.invalidParameters
         }
         guard version == 0x13 else {

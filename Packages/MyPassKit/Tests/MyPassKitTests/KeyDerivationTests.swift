@@ -232,13 +232,16 @@ final class KeyDerivationTests: XCTestCase {
         }
     }
 
-    func testUnsupportedParallelismThrowsInvalidParameters() {
+    /// `ARGON2_MIN_LANES` (1) in argon2.h — P=0 is below it. (P=2, this
+    /// test's old value, is valid as of this task; see
+    /// `testTransformedKeyAcceptsParallelismTwoKnownAnswer`.)
+    func testParallelismOutOfRangeThrowsInvalidParameters() {
         var kdf = VariantDictionary()
         kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
         kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
         kdf.items["M"] = .uint64(19 * 1024 * 1024)
         kdf.items["I"] = .uint64(2)
-        kdf.items["P"] = .uint32(2) // unsupported by libsodium's public crypto_pwhash API
+        kdf.items["P"] = .uint32(0) // below ARGON2_MIN_LANES
         kdf.items["V"] = .uint32(0x13)
 
         XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data(), kdfParameters: kdf)) { error in
@@ -246,6 +249,60 @@ final class KeyDerivationTests: XCTestCase {
                 return XCTFail("expected invalidParameters, got \(error)")
             }
         }
+    }
+
+    /// Known-answer test at P=2 — computed independently via argon2-cffi 25.1.0,
+    /// same secret/salt/I/M/V as `testTransformedKeyMatchesIndependentArgon2idKnownAnswer`:
+    ///
+    /// ```python
+    /// from argon2.low_level import hash_secret_raw, Type
+    /// hash_secret_raw(
+    ///     secret=b"correct horse battery staple", salt=bytes(range(16)),
+    ///     time_cost=2, memory_cost=19 * 1024, parallelism=2,
+    ///     hash_len=32, type=Type.ID, version=19,
+    /// )
+    /// ```
+    func testTransformedKeyAcceptsParallelismTwoKnownAnswer() throws {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data((0..<16).map { UInt8($0) }))
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(2)
+        kdf.items["V"] = .uint32(0x13)
+
+        let composite = Data("correct horse battery staple".utf8)
+        let derived = try KeyDerivation.transformedKey(compositeKey: composite, kdfParameters: kdf)
+
+        let expected = Data([
+            0xd8, 0x7f, 0x42, 0x24, 0x13, 0x02, 0xfe, 0x7d,
+            0x74, 0xbf, 0xac, 0xd8, 0x66, 0xc9, 0x24, 0x57,
+            0xa4, 0x96, 0x99, 0xe8, 0xa5, 0x0d, 0x19, 0xac,
+            0x8b, 0x46, 0x27, 0x3b, 0x2c, 0x58, 0x1a, 0x90,
+        ])
+        XCTAssertEqual(derived, expected)
+    }
+
+    /// Same, at P=4 (`argon2-cffi`, identical parameters otherwise, `parallelism=4`).
+    func testTransformedKeyAcceptsParallelismFourKnownAnswer() throws {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data((0..<16).map { UInt8($0) }))
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(4)
+        kdf.items["V"] = .uint32(0x13)
+
+        let composite = Data("correct horse battery staple".utf8)
+        let derived = try KeyDerivation.transformedKey(compositeKey: composite, kdfParameters: kdf)
+
+        let expected = Data([
+            0xb9, 0x80, 0x9d, 0x33, 0x24, 0x60, 0x01, 0x14,
+            0x00, 0x27, 0x2c, 0xf6, 0x70, 0x66, 0xfc, 0x28,
+            0x00, 0xf1, 0x70, 0xcf, 0x06, 0x6c, 0x02, 0xe2,
+            0x20, 0x20, 0xc1, 0xf3, 0xd1, 0x6f, 0xb5, 0x76,
+        ])
+        XCTAssertEqual(derived, expected)
     }
 
     /// A hostile or malformed KDBX4 header can claim any `M` (memory, in
