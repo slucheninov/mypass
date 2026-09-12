@@ -39,13 +39,33 @@ struct PasswordGeneratorView: View {
         _siteDomain = State(initialValue: initialSiteDomain)
     }
 
+    /// The rule for the current `siteDomain`, independent of whether the
+    /// user has chosen to ignore it. Used only to decide whether the
+    /// "Ignore" control and the rule explanation button are shown at all.
+    ///
+    /// `activeRule` below -- the version that actually governs generation
+    /// and toggle locking -- is nil while ignored, and an earlier version
+    /// of this view gated the "Ignore" row's own visibility on
+    /// `activeRule` instead of this. That meant checking "Ignore" made
+    /// `activeRule` go nil, which hid the very control that would let the
+    /// user check it back off: the box deleted itself the moment it was
+    /// used, with no way back short of dismissing and reopening the sheet
+    /// (which resets all the view's state). Gating visibility on this
+    /// property instead -- which does not depend on `ignoreActiveRule` --
+    /// keeps the control visible, and toggleable both ways, for as long as
+    /// a rule exists for the domain at all.
+    private var ruleForDomain: PasswordRules? {
+        guard !siteDomain.isEmpty else { return nil }
+        return PasswordRulesCatalog.rules(forHost: siteDomain)
+    }
+
     /// Nil when there is no domain yet, the user chose to ignore it, or no
     /// vendored rule applies -- all three fall back to plain toggle-driven
     /// generation, matching `PasswordGenerator.generate(options:rules:)`'s
     /// own `rules: nil` default.
     private var activeRule: PasswordRules? {
-        guard !ignoreActiveRule, !siteDomain.isEmpty else { return nil }
-        return PasswordRulesCatalog.rules(forHost: siteDomain)
+        guard !ignoreActiveRule else { return nil }
+        return ruleForDomain
     }
 
     private var lengthRange: ClosedRange<Double> {
@@ -62,84 +82,45 @@ struct PasswordGeneratorView: View {
         return lowerBound <= upperBound ? lowerBound...upperBound : lowerBound...lowerBound
     }
 
-    /// Classes the active rule's own `required:` clauses name outright.
-    private var requiredClasses: Set<PasswordRules.CharacterClass> {
-        Set(activeRule?.requiredClauses.flatMap { $0 } ?? [])
-    }
-
-    private var disallowedClasses: Set<PasswordRules.CharacterClass> {
-        guard let activeRule else { return [] }
-        let allowed = Set(activeRule.allowedClasses)
-        let asciiPrintableAllowed = allowed.contains(.asciiPrintable)
-        var disallowed: Set<PasswordRules.CharacterClass> = []
-        for characterClass in [PasswordRules.CharacterClass.lower, .upper, .digit, .special] {
-            if !allowed.contains(characterClass) && !asciiPrintableAllowed {
-                disallowed.insert(characterClass)
-            }
-        }
-        return disallowed
-    }
-
-    /// The rule's own explicit `allowed:` set, restricted to the four
-    /// toggle-backed classes this view controls -- nil when the rule
-    /// places no restriction there at all (no explicit `allowed:`, or it
-    /// names `.asciiPrintable`, either of which means "the user's toggles
-    /// decide, the rule has no opinion here"), mirroring
-    /// `PasswordGenerator.effectivePool`'s own `noExplicitAllowList` /
-    /// `asciiPrintableInPlay` handling in MyPassKit.
-    private var restrictedAllowedToggleClasses: Set<PasswordRules.CharacterClass>? {
+    /// The rule-vs-toggle evaluation for the active rule, or nil when
+    /// there is none. All the actual locking/conflict logic lives in
+    /// `PasswordRulesToggleEvaluator` -- a plain, testable type -- rather
+    /// than in private computed properties on this view, specifically so
+    /// it has its own direct test coverage (`PasswordRulesToggleEvaluatorTests`)
+    /// instead of only the inspection a SwiftUI view allows.
+    private var ruleEvaluation: PasswordRulesToggleEvaluator.Evaluation? {
         guard let activeRule else { return nil }
-        guard !activeRule.allowedClasses.isEmpty, !activeRule.allowedClasses.contains(.asciiPrintable) else {
+        let toggles = PasswordRulesToggleEvaluator.Toggles(
+            includeLowercase: includeLowercase,
+            includeUppercase: includeUppercase,
+            includeDigits: includeDigits,
+            includeSymbols: includeSymbols
+        )
+        return PasswordRulesToggleEvaluator.evaluate(rule: activeRule, toggles: toggles)
+    }
+
+    private func isLocked(_ characterClass: PasswordRules.CharacterClass) -> Bool {
+        guard let ruleEvaluation else { return false }
+        return ruleEvaluation.lockedOn.contains(characterClass) || ruleEvaluation.lockedOff.contains(characterClass)
+    }
+
+    /// A warning naming the rule's permitted classes whenever the user's
+    /// current toggle selection shares nothing with them -- the general
+    /// shape of the amundi-ee.com conflict (Task 7's original question)
+    /// that locking a single class doesn't cover: a rule permitting two or
+    /// more specific classes with no `required:` clause at all, where the
+    /// user's current selection still manages to avoid every one of them
+    /// (pixnet.cc's "allowed: lower, upper" is a real vendored example).
+    /// Shown before Generate is pressed, and worded with
+    /// `PasswordRulesSummary.pluralName(for:)` so this warning and the
+    /// popover's own "only permits..." sentence never disagree about what
+    /// to call a class.
+    private var allowedClassesConflictMessage: String? {
+        guard let conflict = ruleEvaluation?.conflictingWithAllowedClasses, !conflict.isEmpty else {
             return nil
         }
-        let toggleClasses: Set<PasswordRules.CharacterClass> = [.lower, .upper, .digit, .special]
-        return toggleClasses.intersection(activeRule.allowedClasses)
-    }
-
-    /// Classes locked ON regardless of the user's own toggle: the rule's
-    /// `required:` clauses (Decision 4 of the spec -- "a site that
-    /// mandates a digit gets one even if the user turned digits off"),
-    /// plus one further case `required:` alone doesn't cover.
-    ///
-    /// Some real vendored rules restrict the character set without
-    /// requiring anything. amundi-ee.com's whole rule is "minlength: 6;
-    /// maxlength: 6; allowed: digit; max-consecutive: 3" -- a six-digit
-    /// PIN. There is no `required:` clause naming digits at all, but
-    /// digits are the ONLY character this rule permits. A user whose own
-    /// saved generator defaults have digits turned off would sail through
-    /// this screen with every toggle looking legitimate, press Generate,
-    /// and get an opaque `PasswordGeneratorError.noCharacterClassSelected`
-    /// -- a real, technically-correct error (the user did say no digits)
-    /// that is still a bad outcome at the exact moment someone is trying
-    /// to create a password for a real site.
-    ///
-    /// The fix applied here: when the rule's `allowed:` set restricted to
-    /// these four toggle-backed classes has EXACTLY ONE member, that
-    /// member is locked on the same way a `required:` class already is --
-    /// visibly, via the same disabled/checked toggle UI, so the conflict
-    /// is visible on the screen itself before Generate is ever pressed,
-    /// rather than surfacing afterwards as an unexplained error. This is
-    /// unconditional on the member's current toggle value (not "only lock
-    /// it if the user currently has it off") specifically to avoid a
-    /// flip-flop: a condition like "lock it only while nothing allowed is
-    /// enabled" would unlock itself the instant `applyActiveRuleToToggles`
-    /// switched the toggle on, letting the user immediately turn it back
-    /// off and recreate the exact same dead end.
-    ///
-    /// Deliberately NOT extended to an `allowed:` set with two or more
-    /// toggle-backed members (e.g. "allowed: digit, special"): there the
-    /// user has a genuine choice of which permitted class to use, and
-    /// forcing one of them on regardless of the user's own choice would
-    /// take that choice away for a shape this conflict report never
-    /// named. A user who turns every option in a multi-member allowed set
-    /// off still gets the existing, already-clear "Select at least one
-    /// character class" error below.
-    private var lockedOnClasses: Set<PasswordRules.CharacterClass> {
-        var locked = requiredClasses
-        if let restrictedAllowedToggleClasses, restrictedAllowedToggleClasses.count == 1 {
-            locked.formUnion(restrictedAllowedToggleClasses)
-        }
-        return locked
+        let names = conflict.map(PasswordRulesSummary.pluralName(for:)).joined(separator: ", ")
+        return "\(siteDomain) only allows \(names). Enable one of them to generate a password."
     }
 
     var body: some View {
@@ -149,7 +130,7 @@ struct PasswordGeneratorView: View {
                     .onChange(of: siteDomain) { _, _ in applyActiveRuleToToggles() }
             }
 
-            if let activeRule {
+            if let ruleForDomain {
                 HStack {
                     Button {
                         showRuleExplanation = true
@@ -157,7 +138,7 @@ struct PasswordGeneratorView: View {
                         Label("\(siteDomain) has password requirements", systemImage: "info.circle")
                     }
                     .popover(isPresented: $showRuleExplanation) {
-                        Text(PasswordRulesSummary.describe(activeRule, domain: siteDomain))
+                        Text(PasswordRulesSummary.describe(ruleForDomain, domain: siteDomain))
                             .padding()
                             .frame(width: 260)
                     }
@@ -168,20 +149,27 @@ struct PasswordGeneratorView: View {
                 .font(.caption)
             }
 
+            if let allowedClassesConflictMessage {
+                Text(allowedClassesConflictMessage)
+                    .foregroundStyle(.orange)
+                    .font(.caption)
+            }
+
             Text("Length: \(Int(length))")
             Slider(value: $length, in: lengthRange, step: 1)
 
             Toggle("Lowercase", isOn: $includeLowercase)
-                .disabled(lockedOnClasses.contains(.lower) || disallowedClasses.contains(.lower))
+                .disabled(isLocked(.lower))
             Toggle("Uppercase", isOn: $includeUppercase)
-                .disabled(lockedOnClasses.contains(.upper) || disallowedClasses.contains(.upper))
+                .disabled(isLocked(.upper))
             Toggle("Digits", isOn: $includeDigits)
-                .disabled(lockedOnClasses.contains(.digit) || disallowedClasses.contains(.digit))
+                .disabled(isLocked(.digit))
             Toggle("Symbols", isOn: $includeSymbols)
-                .disabled(lockedOnClasses.contains(.special) || disallowedClasses.contains(.special))
+                .disabled(isLocked(.special))
 
             Button("Generate", action: generate)
                 .buttonStyle(.borderedProminent)
+                .disabled(allowedClassesConflictMessage != nil)
 
             if let errorMessage {
                 Text(errorMessage)
@@ -209,25 +197,34 @@ struct PasswordGeneratorView: View {
         .onAppear(perform: applyActiveRuleToToggles)
     }
 
-    /// Forces locked-on classes on and disallowed classes off whenever the
-    /// active rule could have changed (site edited, ignore toggled, or on
-    /// first appearance), and clamps the length slider into the rule's
-    /// range -- matching Decision 5's "toggles for classes the rule
-    /// requires are shown locked on, and toggles for classes the rule's
-    /// effective allowed set excludes are shown locked off." An OPTIONAL
-    /// class's toggle stays under the user's control; only locked-on/
-    /// disallowed classes are pinned. See `lockedOnClasses` for why that
-    /// set includes more than just `required:` classes.
+    /// Forces locked-on classes on and locked-off classes off whenever the
+    /// active rule could have changed (site edited, or on first
+    /// appearance), and clamps the length slider into the rule's range --
+    /// matching Decision 5's "toggles for classes the rule requires are
+    /// shown locked on, and toggles for classes the rule's effective
+    /// allowed set excludes are shown locked off." An OPTIONAL class's
+    /// toggle stays under the user's control; only locked-on/locked-off
+    /// classes are pinned. See `PasswordRulesToggleEvaluator.lockedOnClasses(for:)`
+    /// for why that set includes more than just `required:` classes.
+    ///
+    /// Deliberately NOT re-run when `ignoreActiveRule` changes: toggling
+    /// "Ignore" off does not restore whatever toggle values were in effect
+    /// before the rule was first honoured, only the boundary case this
+    /// task's review explicitly left alone -- it never misleads anyone
+    /// about the site's policy, since the toggle UI's disabled state
+    /// itself already reflects the reactivated rule correctly on every
+    /// render, only the values a user changed while ignoring do not snap
+    /// back automatically.
     private func applyActiveRuleToToggles() {
-        guard activeRule != nil else { return }
-        if lockedOnClasses.contains(.lower) { includeLowercase = true }
-        if lockedOnClasses.contains(.upper) { includeUppercase = true }
-        if lockedOnClasses.contains(.digit) { includeDigits = true }
-        if lockedOnClasses.contains(.special) { includeSymbols = true }
-        if disallowedClasses.contains(.lower) { includeLowercase = false }
-        if disallowedClasses.contains(.upper) { includeUppercase = false }
-        if disallowedClasses.contains(.digit) { includeDigits = false }
-        if disallowedClasses.contains(.special) { includeSymbols = false }
+        guard let ruleEvaluation else { return }
+        if ruleEvaluation.lockedOn.contains(.lower) { includeLowercase = true }
+        if ruleEvaluation.lockedOn.contains(.upper) { includeUppercase = true }
+        if ruleEvaluation.lockedOn.contains(.digit) { includeDigits = true }
+        if ruleEvaluation.lockedOn.contains(.special) { includeSymbols = true }
+        if ruleEvaluation.lockedOff.contains(.lower) { includeLowercase = false }
+        if ruleEvaluation.lockedOff.contains(.upper) { includeUppercase = false }
+        if ruleEvaluation.lockedOff.contains(.digit) { includeDigits = false }
+        if ruleEvaluation.lockedOff.contains(.special) { includeSymbols = false }
         length = min(max(length, lengthRange.lowerBound), lengthRange.upperBound)
     }
 
