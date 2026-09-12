@@ -177,13 +177,19 @@ public struct KdbxDatabase: Equatable {
 
     public func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {
         let masterSeed = Self.randomBytes(count: 32)
-        let salt = Self.randomBytes(count: 16)
+        // 32 bytes, matching real KDBX4 files (KeePass/KeePassXC) — see
+        // docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md, Task 7.
+        // Every vault this package opens (existing MyPass vaults included,
+        // since `open` never carries a file's original KDF parameters
+        // forward — see below) re-derives with these parameters on its
+        // next save, with no migration code or user-visible step.
+        let salt = Self.randomBytes(count: 32)
         var kdfParameters = VariantDictionary()
         kdfParameters.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
         kdfParameters.items["S"] = .byteArray(salt)
         kdfParameters.items["M"] = .uint64(64 * 1024 * 1024) // 64 MiB
         kdfParameters.items["I"] = .uint64(3)
-        kdfParameters.items["P"] = .uint32(1)
+        kdfParameters.items["P"] = .uint32(2)
         kdfParameters.items["V"] = .uint32(0x13)
 
         let encryptionIV = Self.randomBytes(count: cipher == .aes256 ? 16 : 12)
