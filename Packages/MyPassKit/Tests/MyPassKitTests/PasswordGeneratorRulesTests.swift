@@ -140,30 +140,66 @@ final class PasswordGeneratorRulesTests: XCTestCase {
     }
 
     func testSecureRandomIndexWideRejectsRatherThanBiasing() throws {
-        // A modulus just above the single-byte boundary, drawn many
-        // times, should distribute close to evenly across all 257
-        // possible values -- the property the rejection-sampling scheme
-        // exists to guarantee. A broken implementation that used
-        // `value % modulus` without rejecting draws at or above the
-        // largest multiple of `modulus` under 65536 would still pass the
-        // in-range check above, but would visibly favor the low end of
-        // 0..<257 over the high end, since 257 does not evenly divide
-        // 65536. The bounds below (0.5x-1.5x of the expected per-value
-        // count) are generous relative to the actual standard deviation
-        // at this sample size, to catch real bias without flaking on
-        // ordinary sampling variance.
-        let modulus = 257
-        var counts = [Int](repeating: 0, count: modulus)
-        let trials = modulus * 300
+        // 257 (used in the sibling range test above) is the WORST
+        // possible modulus for detecting a missing rejection step: the
+        // 65536-value draw range divides as 65536 = 255*257 + 1, so a
+        // naive `value % modulus` without rejection would only
+        // over-count a single remainder by one raw value out of 65536 --
+        // an expected excess of about one draw against a per-bucket
+        // standard deviation around seventeen, invisible at any practical
+        // sample size. That was round 2's mistake in this file.
+        //
+        // 40000 makes the effect large and exact instead of negligible.
+        // The accepted range under correct rejection sampling is
+        // `limit = 65536 - (65536 % 40000) = 65536 - 25536 = 40000`,
+        // i.e. exactly one full cycle of 0..<40000 -- 65536 < 2*40000, so
+        // that is also the largest multiple of 40000 not exceeding
+        // 65536. Under CORRECT rejection sampling, every remainder in
+        // 0..<40000 is produced by exactly one raw draw value (itself),
+        // so the "low" remainders 0..<25536 and the "high" remainders
+        // 25536..<40000 occur at the same rate.
+        //
+        // Under a BROKEN implementation with the rejection step deleted
+        // (`value % modulus` over the full, unrejected 0..<65536 range),
+        // remainder r is produced by raw value r, AND by raw value
+        // r + 40000 whenever that second value is still under 65536 --
+        // true exactly when r < 65536 - 40000 = 25536. So every "low"
+        // remainder (0..<25536) is produced by two raw values, and every
+        // "high" remainder (25536..<40000) by only one: the low group's
+        // rate is EXACTLY double the high group's, a large, deterministic
+        // signal rather than a one-part-in-65536 artifact.
+        //
+        // The test below draws many samples and compares the average
+        // rate per bucket in the low group against the high group. A
+        // correct implementation gives a ratio of 1; the broken one
+        // described above gives a ratio of 2. The bounds (0.8...1.3) are
+        // generous relative to the actual sampling variance at this
+        // trial count (each group's count has a relative standard
+        // deviation under 0.2%, so a correct implementation's ratio sits
+        // within a fraction of a percent of 1.0 in practice) while
+        // leaving no room for the broken implementation's ratio of 2 to
+        // sneak through.
+        let modulus = 40000
+        let lowUpperBoundExclusive = 65536 % modulus // 25536: remainders doubled if rejection is missing
+        let lowBucketCount = lowUpperBoundExclusive
+        let highBucketCount = modulus - lowUpperBoundExclusive // 14464
+        var lowCount = 0
+        var highCount = 0
+        let trials = 200_000
         for _ in 0..<trials {
             let value = try PasswordGenerator.secureRandomIndexWide(modulo: modulus)
-            counts[value] += 1
+            XCTAssertLessThan(value, modulus)
+            if value < lowUpperBoundExclusive {
+                lowCount += 1
+            } else {
+                highCount += 1
+            }
         }
-        let expected = Double(trials) / Double(modulus)
-        for (value, count) in counts.enumerated() {
-            XCTAssertGreaterThan(Double(count), expected * 0.5, "value \(value) drawn only \(count) times, expected around \(expected)")
-            XCTAssertLessThan(Double(count), expected * 1.5, "value \(value) drawn \(count) times, expected around \(expected)")
-        }
+        let lowRate = Double(lowCount) / Double(lowBucketCount)
+        let highRate = Double(highCount) / Double(highBucketCount)
+        let ratio = lowRate / highRate
+        XCTAssertGreaterThan(ratio, 0.8, "low/high rate ratio \(ratio) is too skewed for a correct implementation")
+        XCTAssertLessThan(ratio, 1.3, "low/high rate ratio \(ratio) is consistent with a missing rejection step (expected ~2.0 if broken, ~1.0 if correct)")
     }
 
     func testSecureRandomIndexWideThrowsAboveItsRange() {
