@@ -165,10 +165,14 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
     // MARK: - Self-consistent round trip (this package's own KDF params)
 
     /// Full `save` → `open` round trip using this package's own `save()`
-    /// (16-byte salt, Argon2id, GZip compression) — this exercises the real
-    /// gzip container end-to-end through the whole pipeline (HMAC block
-    /// stream, cipher, gzip, inner header, XML), even though it can't prove
-    /// cross-compatibility with real KeePassXC files (see above).
+    /// (32-byte salt, parallelism 2, Argon2id, GZip compression) — this
+    /// exercises the real gzip container end-to-end through the whole
+    /// pipeline (HMAC block stream, cipher, gzip, inner header, XML).
+    /// Cross-compatibility with real KeePassXC files is already proven
+    /// above, by `testArgon2idGzipFixturesOpenAndRecoverCorrectData` and
+    /// `testArgon2dGzipFixtureOpensAndRecoversCorrectData` against real
+    /// pykeepass-generated fixtures; this test instead pins that this
+    /// package's own writer and reader stay consistent with each other.
     func testWriteThenOpenWithGzipRoundTrips() throws {
         let root = KdbxGroup(uuid: UUID(), name: "Root", iconID: 0, creationTime: Date(), lastModificationTime: Date(), locationChanged: Date(), entries: [], subgroups: [])
         let database = KdbxDatabase(rootGroup: root, deletedObjects: [])

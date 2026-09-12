@@ -61,7 +61,7 @@ The extension has no build step. Load `ChromeExtension/` unpacked and reload it 
 
 ## Architecture essentials
 
-- **Vault engine.** `Packages/MyPassKit` implements KDBX4 from scratch: outer and inner headers, `VariantDictionary`, HMAC block streams, AES-256-CBC and ChaCha20, header authentication, Argon2id via libsodium. Known limitation: libsodium hardcodes a 16-byte Argon2 salt while KDBX4 uses 32, so real Argon2id files need a different KDF binding.
+- **Vault engine.** `Packages/MyPassKit` implements KDBX4 from scratch: outer and inner headers, `VariantDictionary`, HMAC block streams, AES-256-CBC and ChaCha20, header authentication, Argon2id and Argon2d via a vendored `phc-winner-argon2` C target (`CArgon2`), supporting any salt length the format allows and parallelism beyond one. swift-sodium is retained for the ChaCha20 and Salsa20 stream ciphers.
 - **Session state.** `MyPass/State/VaultSession.swift` is an `ObservableObject` holding `enum VaultState { locked, unlocked(KdbxDatabase) }`, with debounced background persistence and a sync merge on save.
 - **Auto-lock and device unlock.** `AutoLockController`, `AutoLockIdleTimeout`, `UnlockWindowPolicy`, `DeviceUnlockPromptCoordinator`, plus `Security/BiometricKeyStore.swift` guarding a Keychain access group behind `LAContext`.
 - **Signing constraint.** `project.yml` pins a stable `DEVELOPMENT_TEAM`. Ad-hoc signing changes the cdhash on every build and silently breaks the biometric key ACL. Do not switch it to ad-hoc.
