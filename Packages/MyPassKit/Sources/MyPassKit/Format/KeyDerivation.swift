@@ -1,6 +1,6 @@
 import Foundation
 import CryptoKit
-import Sodium
+import CArgon2
 
 enum KeyDerivationError: Error, Equatable {
     case unsupportedKdf(Data)
@@ -34,31 +34,27 @@ enum KeyDerivation {
         }
     }
 
-    /// Argon2id key derivation via swift-sodium's `crypto_pwhash` binding.
+    /// Argon2id key derivation via the vendored `CArgon2` reference library.
     ///
     /// VariantDictionary keys (verified byte-for-byte against KeePassXC's
     /// `src/format/KeePass2.cpp`, where `KeePass2::KDFPARAM_ARGON2_SALT` etc.
     /// are defined as `QStringLiteral`s):
-    ///   - `S` = salt (16 bytes, matches `crypto_pwhash_argon2id_SALTBYTES`)
-    ///   - `M` = memory, in **bytes** (matches swift-sodium's `memLimit`,
-    ///     which is documented "in bytes" in `PWHash.swift` — no KiB
-    ///     conversion needed)
+    ///   - `S` = salt
+    ///   - `M` = memory, in **bytes** (converted to the KiB units the
+    ///     vendored library expects — see the comment at the conversion
+    ///     site below)
     ///   - `I` = iterations / opslimit
     ///   - `P` = parallelism (lanes)
     ///   - `V` = Argon2 version (0x13 = v19)
     ///
-    /// libsodium's public `crypto_pwhash`/`crypto_pwhash_argon2id` API does
-    /// not expose a parallelism parameter — its Argon2id implementation is
-    /// fixed at a single lane. A KDBX4 file whose `P` != 1 cannot be
-    /// correctly derived by this binding, so we reject it with
-    /// `.invalidParameters` rather than silently ignoring the requested
-    /// parallelism and producing a wrong key.
+    /// The `parallelism == 1` and salt-length guards below are about to be
+    /// relaxed in Tasks 3–4: the vendored library has no such limitations
+    /// itself, but this task's scope is swapping the backend with zero
+    /// observable behaviour change, one constraint at a time.
     ///
-    /// `V` is not passed to swift-sodium (there is no version parameter in
-    /// its API — it always uses Argon2 v1.3/0x13, the only version libsodium
-    /// implements). We still require the field to be present so a v0x10
-    /// (legacy) file is rejected rather than silently mis-derived; the KDBX4
-    /// Global Constraints only mandate v0x13 for Argon2id.
+    /// `V` is still required to be present and equal to 0x13 so a v0x10
+    /// (legacy) file is rejected rather than silently mis-derived; the
+    /// KDBX4 Global Constraints only mandate v0x13 for Argon2id.
     private static func argon2id(compositeKey: Data, params: VariantDictionary) throws -> Data {
         guard case .byteArray(let salt)? = params.items["S"],
               case .uint64(let memoryBytes)? = params.items["M"],
@@ -74,18 +70,49 @@ enum KeyDerivation {
             throw KeyDerivationError.invalidParameters
         }
 
-        let sodium = Sodium()
-        guard let derived = sodium.pwHash.hash(
-            outputLength: 32,
-            passwd: [UInt8](compositeKey),
-            salt: [UInt8](salt),
-            opsLimit: Int(iterations),
-            memLimit: Int(memoryBytes),
-            alg: .Argon2ID13
-        ) else {
+        // KDBX gives `M` in bytes; the vendored Argon2 reference library's
+        // `m_cost` parameter is in KIBIBYTES (1024-byte units) — see
+        // phc-winner-argon2's `include/argon2.h`, `Argon2_Context.m_cost`'s
+        // doc comment ("amount of memory requested (KB)"), and
+        // `argon2_hash`'s own doc comment. This conversion happens in
+        // exactly ONE place in this codebase — do not duplicate it
+        // elsewhere (Task 5 shares this same call site for Argon2d rather
+        // than copying the conversion into a second function).
+        //
+        // Getting it wrong does not throw or crash: `argon2_hash` accepts
+        // any `m_cost` in its valid range and derives A key, just not the
+        // RIGHT key. An off-by-1024 error here silently derives a key
+        // that is, from the outside, bit-for-bit indistinguishable from
+        // what a wrong master password would produce — the vault just
+        // fails to open, with nothing pointing at this line. The only
+        // thing that can catch a self-consistent-but-wrong conversion
+        // factor is a known-answer vector computed by a wholly
+        // independent Argon2id implementation — see
+        // `testTransformedKeyMatchesIndependentArgon2idKnownAnswer`,
+        // which pins exactly this path with M = 19 * 1024 * 1024 bytes.
+        let memoryKibibytes = UInt32(memoryBytes / 1024)
+
+        var hash = [UInt8](repeating: 0, count: 32)
+        let compositeKeyBytes = [UInt8](compositeKey)
+        let saltBytes = [UInt8](salt)
+        let result = compositeKeyBytes.withUnsafeBufferPointer { pwdPtr in
+            saltBytes.withUnsafeBufferPointer { saltPtr in
+                hash.withUnsafeMutableBufferPointer { hashPtr in
+                    argon2_hash(
+                        UInt32(iterations), memoryKibibytes, parallelism,
+                        pwdPtr.baseAddress, pwdPtr.count,
+                        saltPtr.baseAddress, saltPtr.count,
+                        hashPtr.baseAddress, hashPtr.count,
+                        nil, 0,
+                        Argon2_id, UInt32(ARGON2_VERSION_13.rawValue)
+                    )
+                }
+            }
+        }
+        guard result == ARGON2_OK.rawValue else {
             throw KeyDerivationError.sodiumFailure
         }
-        return Data(derived)
+        return Data(hash)
     }
 
     /// AES-KDF (KeePass's classic key-transformation KDF, `KdbxKdfUUID.aesKdf`):

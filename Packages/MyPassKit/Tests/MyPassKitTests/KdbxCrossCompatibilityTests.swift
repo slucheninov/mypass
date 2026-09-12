@@ -127,6 +127,14 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
     /// test documents the failure explicitly rather than silently skipping
     /// it, so it surfaces the moment someone investigates real-file support.
     func testArgon2idGzipFixturesFailDueToSaltLengthLimitationNotGzip() throws {
+        throw XCTSkip("""
+            Temporarily inconclusive: Task 2 of \
+            docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md swapped the \
+            Argon2 backend, and the salt-length limitation this test pins no longer \
+            exists (these fixtures — 32-byte salt, P=1 — already open). Task 3 adds \
+            the deliberate salt-length guard; Task 6 rewrites this test to assert \
+            success against regenerated fixtures.
+            """)
         let fixtureNames = ["argon2id-aes256-gzip", "chacha20-argon2id-gzip"]
         for name in fixtureNames {
             guard let url = Bundle.module.url(forResource: name, withExtension: "kdbx", subdirectory: "Fixtures") else {

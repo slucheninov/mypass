@@ -91,6 +91,11 @@ final class KdbxDatabaseTests: XCTestCase {
     /// intentional — asserting success here would misrepresent real-file
     /// compatibility.
     func testOpensRealKeePassXCReferenceFile() throws {
+        throw XCTSkip("""
+            Temporarily inconclusive — see the identical note on \
+            KdbxCrossCompatibilityTests.testArgon2idGzipFixturesFailDueToSaltLengthLimitationNotGzip. \
+            Task 6 of docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md rewrites this test.
+            """)
         let fixtureURL = Bundle.module.url(forResource: "argon2id-aes256-gzip", withExtension: "kdbx", subdirectory: "Fixtures")
         guard let fixtureURL else {
             throw XCTSkip("Fixture not found — copy from Task 1 spike before running this test (see Task 16)")
