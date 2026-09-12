@@ -22,6 +22,31 @@ final class PasswordRulesCatalogTests: XCTestCase {
         XCTAssertNil(index.rules(forHost: "attacker.example.co.uk"))
     }
 
+    func testLookupStopsAtAThreeLabelRegistrableSuffix() {
+        // "service.gov.uk" is itself a public suffix (three labels), the
+        // shape real keys like "access.service.gov.uk" actually sit at in
+        // the vendored snapshot. A rule planted at that shared suffix must
+        // never leak onto an unrelated registrant underneath it -- the
+        // easy two-label case above (co.uk) does not exercise this path.
+        let index = PasswordRulesIndex(entries: [
+            "service.gov.uk": PasswordRulesIndex.Entry(passwordRules: "minlength: 20;")
+        ])
+        XCTAssertNil(index.rules(forHost: "attacker.example.service.gov.uk"))
+    }
+
+    func testTrailingDotOnHostIsNormalizedAwayBeforeMatching() {
+        // A browser never hands us a dot-terminated host, but a
+        // user-typed entry URL can. `PublicSuffixList`'s own functions
+        // strip a trailing root dot before doing anything; `rules(forHost:)`
+        // must do the same, or the ceiling it computes (dot-free) can never
+        // compare equal to the still-dotted candidate it walks with, and
+        // every lookup silently reports "no rule", even at the exact host.
+        let index = PasswordRulesIndex(entries: [
+            "example.com": PasswordRulesIndex.Entry(passwordRules: "minlength: 10;")
+        ])
+        XCTAssertEqual(index.rules(forHost: "example.com.")?.minLength, 10)
+    }
+
     func testUnknownHostReturnsNil() {
         let index = PasswordRulesIndex(entries: [
             "example.com": PasswordRulesIndex.Entry(passwordRules: "minlength: 10;")

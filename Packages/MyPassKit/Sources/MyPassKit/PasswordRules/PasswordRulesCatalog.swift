@@ -43,7 +43,18 @@ final class PasswordRulesIndex {
     /// exact host it was looked up with, never a longer subdomain
     /// discovered by walking upward past it.
     func rules(forHost host: String) -> PasswordRules? {
-        let normalizedHost = host.lowercased()
+        // Strip a trailing root dot before anything else, mirroring what
+        // `PublicSuffixList.publicSuffix(of:)` and
+        // `.registrableDomain(of:)` already do internally. Without this, a
+        // dot-terminated host (rare from a browser, reachable from a
+        // user-typed entry URL) never lines up with the dot-free ceiling
+        // those functions compute, so the walk always runs past the
+        // ceiling to the empty string and reports "no rule" even for an
+        // entry that matches the exact host.
+        var normalizedHost = host.lowercased()
+        if normalizedHost.hasSuffix(".") {
+            normalizedHost = String(normalizedHost.dropLast())
+        }
         guard !normalizedHost.isEmpty else { return nil }
 
         let ceiling = PublicSuffixList.registrableDomain(of: normalizedHost) ?? normalizedHost
