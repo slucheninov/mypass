@@ -124,24 +124,26 @@ public enum PasswordGenerator {
         }
     }
 
-    // `PasswordRules.maxRepeating` and `.maxSequential` are parsed and
-    // stored by `PasswordRulesParser` but deliberately NOT enforced here,
-    // alongside `.maxConsecutive` -- this is the doc comment
-    // `PasswordRules.swift` points readers at for that decision. Across
-    // all 436 rules in the vendored 2026-09-12 snapshot, zero entries set
-    // either property (see
-    // docs/superpowers/specs/2026-09-12-site-password-rules-and-uri-matching-design.md,
-    // Decision 4). Writing enforcement code for a constraint no shipped
-    // rule ever exercises would be untested code sitting in the single
-    // most security-relevant path in this app -- the same
-    // "self-rolled, unscrutinized logic" risk this codebase already
-    // refuses to take in `KeyDerivation.swift` (see
-    // docs/superpowers/specs/2026-09-12-kdbx4-argon2-interop-design.md,
-    // Decision 1). If a future snapshot refresh
-    // (`scripts/update-password-rules.sh`) ever vendors a rule using
-    // either property, that is the trigger to add enforcement and its own
-    // known-answer tests here -- not something to build speculatively
-    // ahead of a real rule that needs it.
+    /// `PasswordRules.maxRepeating` and `.maxSequential` are parsed and
+    /// stored by `PasswordRulesParser` but deliberately NOT enforced here,
+    /// unlike `.maxConsecutive` -- `.maxConsecutive` IS enforced, by
+    /// `satisfies` below and by `repairMaxConsecutive`, and 82 of the 436
+    /// rules in the vendored 2026-09-12 snapshot set it. `maxRepeating`
+    /// and `maxSequential` are different: zero of those 436 rules set
+    /// either one (see
+    /// docs/superpowers/specs/2026-09-12-site-password-rules-and-uri-matching-design.md,
+    /// Decision 4). Writing enforcement code for a constraint no shipped
+    /// rule ever exercises would be untested code sitting in the single
+    /// most security-relevant path in this app -- the same
+    /// "self-rolled, unscrutinized logic" risk this codebase already
+    /// refuses to take in `KeyDerivation.swift` (see
+    /// docs/superpowers/specs/2026-09-12-kdbx4-argon2-interop-design.md,
+    /// Decision 1). If a future snapshot refresh
+    /// (`scripts/update-password-rules.sh`) ever vendors a rule using
+    /// either property, that is the trigger to add enforcement and its
+    /// own known-answer tests here -- not something to build
+    /// speculatively ahead of a real rule that needs it. This is the doc
+    /// comment `PasswordRules.swift` points readers at for that decision.
     private static func generateHonoringRules(options: PasswordGeneratorOptions, rules: PasswordRules) throws -> String {
         let minLength = rules.minLength ?? options.length
         let maxLength = rules.maxLength ?? options.length
@@ -420,7 +422,17 @@ public enum PasswordGenerator {
     /// modulus that evenly divides the range -- unlike `UInt8`, which
     /// cannot represent 256, `Int` has no trouble representing 65536, so
     /// the ordinary rejection-sampling formula just works.
-    private static func secureRandomIndexWide(modulo modulus: Int) throws -> Int {
+    ///
+    /// `internal` (no access modifier) rather than `private`, the same
+    /// testability seam used for `repairMaxConsecutive` and
+    /// `deterministicCandidate`, and more important here than either of
+    /// those: this is the only genuinely new randomness primitive in this
+    /// file, nothing `generate` can construct today drives `modulus`
+    /// above 256, and an untested primitive is exactly the risk this
+    /// generator's own design otherwise refuses to take. See
+    /// `PasswordGeneratorRulesTests` for direct coverage of the in-range,
+    /// no-bias, and above-65536 behavior.
+    static func secureRandomIndexWide(modulo modulus: Int) throws -> Int {
         let range = 65536
         guard modulus <= range else {
             // Not reachable by anything this generator can construct
@@ -481,10 +493,14 @@ public enum PasswordGenerator {
     /// used to repair to "a a b b b" -- a fresh run of three b's -- under
     /// the old algorithm. Measured over 200,000 trials at exactly that
     /// input, the old algorithm failed to fully repair the string 58.8%
-    /// of the time on a single call; measured the same way against this
-    /// rewrite, the failure rate is effectively zero (see the fix report
-    /// in docs/superpowers/sdd for the exact figure). This rewrite can
-    /// still fail in the same degenerate case the caller's `satisfies`
+    /// of the time on a single call. This rewrite was checked against
+    /// that same input over 200,000 trials with zero failures, and
+    /// independently against an exhaustive enumeration of every possible
+    /// resample outcome for every input of length one to eight over
+    /// two- and three-character pools at three different
+    /// `maxConsecutive` limits (93,444 reachable states), also zero
+    /// violations. This rewrite can still fail in the same degenerate
+    /// case the caller's `satisfies`
     /// re-check exists for: a pool with no usable alternative character to
     /// resample into (e.g. a one-character pool), where satisfying
     /// max-consecutive for a string longer than `maxConsecutive` is

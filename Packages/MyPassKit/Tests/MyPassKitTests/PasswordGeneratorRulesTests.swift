@@ -123,6 +123,60 @@ final class PasswordGeneratorRulesTests: XCTestCase {
         }
     }
 
+    func testSecureRandomIndexWideStaysInRangeAcrossModuliBoundaries() throws {
+        // `secureRandomIndexWide` is the only genuinely new randomness
+        // primitive in the rules-aware generator, and nothing `generate`
+        // can construct today drives a modulus above 256, so nothing else
+        // exercises it. Cover both boundaries the doc comment reasons
+        // about (257, the first modulus that needs this path, and 65536,
+        // the top of its range) plus a couple of moduli in between.
+        for modulus in [257, 500, 1000, 65535, 65536] {
+            for _ in 0..<500 {
+                let value = try PasswordGenerator.secureRandomIndexWide(modulo: modulus)
+                XCTAssertGreaterThanOrEqual(value, 0)
+                XCTAssertLessThan(value, modulus)
+            }
+        }
+    }
+
+    func testSecureRandomIndexWideRejectsRatherThanBiasing() throws {
+        // A modulus just above the single-byte boundary, drawn many
+        // times, should distribute close to evenly across all 257
+        // possible values -- the property the rejection-sampling scheme
+        // exists to guarantee. A broken implementation that used
+        // `value % modulus` without rejecting draws at or above the
+        // largest multiple of `modulus` under 65536 would still pass the
+        // in-range check above, but would visibly favor the low end of
+        // 0..<257 over the high end, since 257 does not evenly divide
+        // 65536. The bounds below (0.5x-1.5x of the expected per-value
+        // count) are generous relative to the actual standard deviation
+        // at this sample size, to catch real bias without flaking on
+        // ordinary sampling variance.
+        let modulus = 257
+        var counts = [Int](repeating: 0, count: modulus)
+        let trials = modulus * 300
+        for _ in 0..<trials {
+            let value = try PasswordGenerator.secureRandomIndexWide(modulo: modulus)
+            counts[value] += 1
+        }
+        let expected = Double(trials) / Double(modulus)
+        for (value, count) in counts.enumerated() {
+            XCTAssertGreaterThan(Double(count), expected * 0.5, "value \(value) drawn only \(count) times, expected around \(expected)")
+            XCTAssertLessThan(Double(count), expected * 1.5, "value \(value) drawn \(count) times, expected around \(expected)")
+        }
+    }
+
+    func testSecureRandomIndexWideThrowsAboveItsRange() {
+        // A modulus above 65536 has no representation in this function's
+        // two-byte draw range; it must throw a typed error rather than
+        // loop forever or silently truncate.
+        XCTAssertThrowsError(try PasswordGenerator.secureRandomIndexWide(modulo: 65537)) { error in
+            guard case PasswordGeneratorError.unsatisfiableRules = error else {
+                return XCTFail("expected unsatisfiableRules, got \(error)")
+            }
+        }
+    }
+
     func testUnsatisfiableRulesThrowsForAnImpossibleCombination() {
         // maxlength: 1 with two distinct required clauses can never be
         // satisfied -- there is only one character to place, and it can
