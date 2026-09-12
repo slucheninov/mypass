@@ -37,7 +37,7 @@ Tasks 8–14 cover `URIMatchMode` and the bridge/extension surfaces — Decision
 ## Task 1 — Vendor the Apple password rules data
 
 **Interfaces:**
-- Produces: `Packages/MyPassKit/Sources/MyPassKit/Resources/password-rules.json` (bundled resource, loaded via `Bundle.module`), `Packages/MyPassKit/Sources/MyPassKit/Resources/PASSWORD_RULES_PROVENANCE.md` (documentation, excluded from the build), an updated `Packages/MyPassKit/Package.swift` (new `resources:`/`exclude:` entries on the `MyPassKit` target), `scripts/update-password-rules.sh`.
+- Produces: `Packages/MyPassKit/Sources/MyPassKit/Resources/password-rules.json` (bundled resource, loaded through the new `PasswordRulesResource` accessor), `Packages/MyPassKit/Sources/MyPassKit/PasswordRules/PasswordRulesResource.swift` (internal accessor type that Tasks 3 and 5 consume), `Packages/MyPassKit/Sources/MyPassKit/Resources/PASSWORD_RULES_PROVENANCE.md` (documentation, excluded from the build), an updated `Packages/MyPassKit/Package.swift` (new `resources:`/`exclude:` entries on the `MyPassKit` target), `scripts/update-password-rules.sh`.
 - Consumes: nothing in this codebase yet. Network access exists only inside the manual update script, never in app or test code.
 
 Verified directly while writing this plan (`git clone --depth 1 https://github.com/apple/password-manager-resources.git` into a scratch directory): at commit `6073487115b722596d3e1826d1b71b524b73bac5`, `quirks/password-rules.json` is a single pretty-printed JSON object, `{ "<domain>": { "password-rules": "<rule string>" }, ... }`, 436 top-level keys, 63,935 bytes, zero entries currently setting `exact-domain-match-only`. Upstream's `LICENSE.md` is short-form MIT: `Copyright 2020 - 2026 Apple Inc.` followed by the standard MIT permission/warranty paragraphs — no separate NOTICE file, no dual-licence text (unlike `CArgon2`'s CC0/Apache choice; this vendored file has exactly one licence to reproduce).
@@ -54,13 +54,12 @@ final class PasswordRulesResourceTests: XCTestCase {
     /// Sanity check that the vendored resource is actually bundled and
     /// readable, before anything in Task 2 or Task 3 depends on it.
     func testBundledPasswordRulesResourceLoadsAndParses() throws {
-        let url = try XCTUnwrap(Bundle.module.url(forResource: "password-rules", withExtension: "json"))
-        let data = try Data(contentsOf: url)
+        let data = PasswordRulesResource.rawJSON
         let parsed = try JSONSerialization.jsonObject(with: data)
         let object = try XCTUnwrap(parsed as? [String: Any])
 
         // Deliberately NOT hardcoded to 436: `scripts/update-password-rules.sh`
-        // (this task, Step 7) is expected to change this count on every
+        // (this task, Step 8) is expected to change this count on every
         // refresh as upstream adds or removes quirks. 100 is a floor that
         // only ever fails if the vendored file were replaced with
         // something close to empty by mistake -- the real count at
@@ -73,7 +72,7 @@ final class PasswordRulesResourceTests: XCTestCase {
 - [ ] **Step 2: Run and confirm failure**
 
 Run: `cd Packages/MyPassKit && swift test --filter PasswordRulesResourceTests`
-Expected: FAIL — `XCTUnwrap` throws on the `Bundle.module.url(...)` call because the resource does not exist yet.
+Expected: FAIL — the test file fails to build because `PasswordRulesResource` does not exist yet (it is introduced below, in Step 6, before the resource is wired to green).
 
 - [ ] **Step 3: Fetch the pinned upstream snapshot**
 
@@ -95,7 +94,7 @@ cp /tmp/password-manager-resources/quirks/password-rules.json \
    Packages/MyPassKit/Sources/MyPassKit/Resources/password-rules.json
 ```
 
-The vendored JSON is committed exactly as fetched, with no reformatting — Apple's own file is already pretty-printed with a stable 4-space indent and alphabetically-ish ordered keys, so re-serializing it through any JSON writer here would only add diff noise the next time `scripts/update-password-rules.sh` (Step 7) runs and a `git diff` needs to stay readable against what upstream actually changed.
+The vendored JSON is committed exactly as fetched, with no reformatting — Apple's own file is already pretty-printed with a stable 4-space indent and alphabetically-ish ordered keys, so re-serializing it through any JSON writer here would only add diff noise the next time `scripts/update-password-rules.sh` (Step 8) runs and a `git diff` needs to stay readable against what upstream actually changed.
 
 ```bash
 cat > Packages/MyPassKit/Sources/MyPassKit/Resources/PASSWORD_RULES_PROVENANCE.md <<'EOF'
@@ -155,22 +154,55 @@ Change it to:
                 .product(name: "Sodium", package: "swift-sodium"),
                 .product(name: "Clibsodium", package: "swift-sodium")
             ],
+            exclude: ["Resources/PASSWORD_RULES_PROVENANCE.md"],
             resources: [
                 .copy("Resources/public_suffix_list.dat"),
                 .copy("Resources/password-rules.json")
-            ],
-            exclude: ["Resources/PASSWORD_RULES_PROVENANCE.md"]
+            ]
         ),
 ```
 
-`exclude:` for the provenance file matches `CArgon2`'s own target, which excludes its `VENDORING.md` for the identical reason: it is documentation, not a resource the app loads at runtime, and SwiftPM otherwise complains about an unhandled file sitting inside a target's source directory.
+`exclude:` comes before `resources:` here because that is the order `Target.target(...)`'s signature requires, as the existing `CArgon2` target in the real manifest already shows. `exclude:` for the provenance file matches `CArgon2`'s own target, which excludes its `VENDORING.md` for the identical reason: it is documentation, not a resource the app loads at runtime, and SwiftPM otherwise complains about an unhandled file sitting inside a target's source directory.
 
-- [ ] **Step 6: Run and confirm pass**
+- [ ] **Step 6: Create the resource accessor**
+
+Create `Packages/MyPassKit/Sources/MyPassKit/PasswordRules/PasswordRulesResource.swift`:
+
+```swift
+import Foundation
+
+/// Owns the one and only lookup of the vendored `password-rules.json` inside the
+/// package bundle.
+///
+/// This exists as a named type rather than a bare `Bundle.module` call at each use
+/// site for a concrete reason: `Bundle.module` is generated per target, so the same
+/// expression written inside `MyPassKitTests` resolves to the TEST target's own
+/// resource bundle (it declares `resources: [.copy("Fixtures")]`), not this one.
+/// Tests reach the real data through `@testable import MyPassKit` and this type.
+enum PasswordRulesResource {
+    /// Raw bytes of the vendored rules file, read once.
+    ///
+    /// A missing or unreadable resource is a packaging bug, not a recoverable runtime
+    /// condition, so this traps rather than degrading to an empty rule set — the same
+    /// call this codebase already makes in `PublicSuffixList`, and for the same reason:
+    /// silently behaving as "this site has no password rules" would hide exactly the
+    /// failure the feature exists to prevent.
+    static let rawJSON: Data = {
+        guard let url = Bundle.module.url(forResource: "password-rules", withExtension: "json"),
+              let data = try? Data(contentsOf: url) else {
+            fatalError("PasswordRulesResource: missing or unreadable password-rules.json resource")
+        }
+        return data
+    }()
+}
+```
+
+- [ ] **Step 7: Run and confirm pass**
 
 Run: `cd Packages/MyPassKit && swift test --filter PasswordRulesResourceTests`
 Expected: PASS.
 
-- [ ] **Step 7: Write the refresh script**
+- [ ] **Step 8: Write the refresh script**
 
 Create `scripts/update-password-rules.sh`:
 
@@ -260,18 +292,19 @@ cat "$WORK_DIR/repo/$UPSTREAM_LICENSE_FILE" >> "$PROVENANCE_TARGET"
 echo "Updated $DATA_TARGET ($ENTRY_COUNT entries) and $PROVENANCE_TARGET at commit $COMMIT_SHA."
 ```
 
-- [ ] **Step 8: Make the script executable**
+- [ ] **Step 9: Make the script executable**
 
 ```bash
 chmod +x scripts/update-password-rules.sh
 ```
 
-- [ ] **Step 9: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add Packages/MyPassKit/Package.swift \
         Packages/MyPassKit/Sources/MyPassKit/Resources/password-rules.json \
         Packages/MyPassKit/Sources/MyPassKit/Resources/PASSWORD_RULES_PROVENANCE.md \
+        Packages/MyPassKit/Sources/MyPassKit/PasswordRules/PasswordRulesResource.swift \
         Packages/MyPassKit/Tests/MyPassKitTests/PasswordRulesResourceTests.swift \
         scripts/update-password-rules.sh
 git commit -m "feat(app): vendor Apple's password-rules.json quirks data"
@@ -878,7 +911,7 @@ git commit -m "feat(app): parse Apple's Password Rules grammar"
 
 **Interfaces:**
 - Produces: `Packages/MyPassKit/Sources/MyPassKit/PasswordRules/PasswordRulesCatalog.swift`, containing the public `PasswordRulesCatalog.rules(forHost:)` and an internal `PasswordRulesIndex` type the tests construct directly.
-- Consumes: `PasswordRulesParser.parse` (Task 2), `PublicSuffixList.registrableDomain(of:)` (existing), the bundled `password-rules.json` resource (Task 1).
+- Consumes: `PasswordRulesParser.parse` (Task 2), `PublicSuffixList.registrableDomain(of:)` (existing), `PasswordRulesResource.rawJSON` (Task 1).
 
 `PasswordRulesIndex` is a small, dependency-free `internal` type separated out from `PasswordRulesCatalog` specifically so `PasswordRulesCatalogTests` can construct one directly, via `@testable import`, with a tiny synthetic fixture — the public contract is only `PasswordRulesCatalog.rules(forHost:) -> PasswordRules?`, with no injection point, so testing the registrable-domain-walk boundary precisely (a case that essentially never arises in the real 436-entry snapshot, since no real key sits above any real registrable domain) needs a fixture built by hand rather than a lucky find in real data.
 
@@ -1075,10 +1108,9 @@ public enum PasswordRulesCatalog {
         // site, indistinguishable from "this site simply has no known
         // rule" -- exactly the failure mode a missing/corrupt bundled
         // resource should never be allowed to hide as normal behavior.
-        guard let url = Bundle.module.url(forResource: "password-rules", withExtension: "json"),
-              let data = try? Data(contentsOf: url) else {
-            fatalError("PasswordRulesCatalog: missing or unreadable password-rules.json resource")
-        }
+        // (The lookup itself already traps this way inside
+        // `PasswordRulesResource`, below.)
+        let data = PasswordRulesResource.rawJSON
         guard let decoded = try? JSONDecoder().decode([String: RawJSONEntry].self, from: data) else {
             fatalError("PasswordRulesCatalog: password-rules.json failed to decode as [String: RawJSONEntry]")
         }
@@ -1095,6 +1127,8 @@ public enum PasswordRulesCatalog {
     }
 }
 ```
+
+The catalog deliberately does not repeat the `Bundle.module` lookup here — `PasswordRulesResource` (Task 1) already owns it, so this code only reads `PasswordRulesResource.rawJSON`.
 
 - [ ] **Step 4: Run and confirm pass**
 
@@ -1561,7 +1595,7 @@ git commit -m "feat(app): honour site password rules in the generator"
 
 **Interfaces:**
 - Produces: `Packages/MyPassKit/Tests/MyPassKitTests/PasswordRulesConformanceTests.swift`.
-- Consumes: `PasswordRulesParser` (Task 2), `PasswordGenerator.generate(options:rules:)` (Task 4), the bundled `password-rules.json` resource (Task 1).
+- Consumes: `PasswordRulesParser` (Task 2), `PasswordGenerator.generate(options:rules:)` (Task 4), `PasswordRulesResource.rawJSON` (Task 1).
 
 This is the one test in this plan that proves the parser and the generator agree with each other **and** with real-world data, rather than only with each other's assumptions about what a rule string looks like — it reads the raw JSON directly (not through `PasswordRulesCatalog`, which would hide a parse failure as "no rule" — exactly the leniency this test must NOT have, since a parse failure here means Task 2's parser has a real gap against real data) and drives `PasswordGenerator` for every one of the 436 vendored domains.
 
@@ -1584,8 +1618,7 @@ final class PasswordRulesConformanceTests: XCTestCase {
     )
 
     func testEveryVendoredRuleGeneratesConformingPasswords() throws {
-        let url = try XCTUnwrap(Bundle.module.url(forResource: "password-rules", withExtension: "json"))
-        let data = try Data(contentsOf: url)
+        let data = PasswordRulesResource.rawJSON
         let raw = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [String: [String: String]])
 
         // 3 attempts per domain, not 1: a single lucky draw could pass by
