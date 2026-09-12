@@ -68,10 +68,16 @@ final class ExtensionBridgeService {
     }
 
     /// Entries carrying a passkey for `rpId`, with Recycle Bin residents excluded at the
-    /// same choke point every other bridge request uses.
+    /// same choke point every other bridge request uses. This lookup is by relying-party
+    /// id, not by URL, so it never runs through `ExtensionEntryMatcher` — which means a
+    /// never-mode entry's exclusion has to be enforced here explicitly, or an entry the
+    /// user told "do not offer this to the browser" would still surface its passkey to
+    /// both the create and the get flow (both of which call this function, directly or
+    /// indirectly through `passkeyCreateCandidates(forOriginUrl:rpId:in:)`).
     private func passkeyEntries(forRelyingParty rpId: String, in database: KdbxDatabase) -> [KdbxEntry] {
         EntrySearch.allEntries(in: database.rootGroup)
             .filter { $0.passkeyRelyingParty == rpId }
+            .filter { $0.uriMatchMode != .never }
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
     }
 

@@ -375,6 +375,40 @@ final class ExtensionEntryMatcherTests: XCTestCase {
         XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com/app").isEmpty)
     }
 
+    func testStartsWithModeDoesNotMatchALookalikeDomainThatStringPrefixesTheOrigin() {
+        // The stored origin "https://example.com" is a literal string prefix of the
+        // lookalike origin "https://example.com.attacker.com" — matching on the
+        // concatenated origin+path+query as one blob would let an attacker-controlled
+        // domain receive a credential the user pointed only at the real one. The
+        // origin must match exactly before the prefix rule is ever applied.
+        var entry = makeEntry(url: "https://example.com")
+        entry.uriMatchMode = .startsWith
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com.attacker.com/anything").isEmpty,
+            "a lookalike domain must never match a stored prefix on a different origin"
+        )
+    }
+
+    func testStartsWithModeDoesNotMatchADifferentPort() {
+        var entry = makeEntry(url: "https://example.com:8443/app")
+        entry.uriMatchMode = .startsWith
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com:9443/app").isEmpty)
+    }
+
+    func testStartsWithModeStillMatchesAMultiTenantPathUnderTheSameHost() {
+        // The accepted use case this scoping preserves: a prefix covering a
+        // multi-tenant path under one host still matches, exactly as before.
+        var entry = makeEntry(url: "https://example.com/tenant")
+        entry.uriMatchMode = .startsWith
+        let group = makeGroup(entries: [entry])
+        XCTAssertEqual(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://example.com/tenant/dashboard").map(\.uuid),
+            [entry.uuid]
+        )
+    }
+
     // MARK: - URIMatchMode: never
 
     func testNeverModeEntryNeverMatchesAnyURL() {

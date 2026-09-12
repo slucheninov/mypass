@@ -90,8 +90,11 @@ enum ExtensionEntryMatcher {
     /// scheme's own default, and leaves path and query exactly as given —
     /// including case, since a case-sensitive API path (`/API/v2/Login` vs
     /// `/api/v2/login`) is a real, common shape. Used by both starts-with and
-    /// exact matching (Decision 9).
-    private static func normalizedURL(from urlString: String) -> String? {
+    /// exact matching (Decision 9). Split into `origin` (scheme, host, non-
+    /// default port) and `rest` (path plus `?query`) so starts-with matching
+    /// can require the origin to match exactly and confine its prefix
+    /// comparison to `rest` alone — see `matches(entry:forURL:)` below.
+    private static func normalizedOriginAndRest(from urlString: String) -> (origin: String, rest: String)? {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         var url = URL(string: trimmed)
@@ -103,15 +106,22 @@ enum ExtensionEntryMatcher {
               let host = resolved.host?.lowercased(), !host.isEmpty else {
             return nil
         }
-        var result = "\(scheme)://\(host)"
+        var origin = "\(scheme)://\(host)"
         if let port = resolved.port, defaultPortsByScheme[scheme] != port {
-            result += ":\(port)"
+            origin += ":\(port)"
         }
-        result += resolved.path
+        var rest = resolved.path
         if let query = resolved.query {
-            result += "?\(query)"
+            rest += "?\(query)"
         }
-        return result
+        return (origin, rest)
+    }
+
+    /// The full normalised string, `origin` and `rest` concatenated. Used by
+    /// exact matching, which compares the whole thing.
+    private static func normalizedURL(from urlString: String) -> String? {
+        guard let parts = normalizedOriginAndRest(from: urlString) else { return nil }
+        return parts.origin + parts.rest
     }
 
     /// Never-mode exclusion is enforced HERE, before a `credentialList` (or its
@@ -137,10 +147,28 @@ enum ExtensionEntryMatcher {
             guard let targetNormalized = normalizedURL(from: urlString) else { return false }
             return entry.urls.contains { normalizedURL(from: $0) == targetNormalized }
         case .startsWith:
-            guard let targetNormalized = normalizedURL(from: urlString) else { return false }
+            // The prefix rule is deliberately scoped to path-and-query only, never to
+            // the origin. Two costs were on the table and only one was ever accepted:
+            //
+            // - Path-suffix overmatch (accepted, Decision 9): a stored prefix ending
+            //   mid-path, e.g. ".../app", also matches a longer segment with the same
+            //   start, e.g. ".../app-legacy". That is a scoping choice about one site's
+            //   own path layout, made by the user who saved the entry for that site.
+            // - Cross-origin overmatch (NOT accepted, and prevented here): comparing
+            //   the full normalised string as one blob would let a stored
+            //   "https://example.com" (empty path) match "https://example.com.attacker.com"
+            //   purely because the origin's characters happen to be a string prefix of
+            //   the lookalike's origin. That is not a scoping choice the user made about
+            //   their own site — it is a way for an unrelated, attacker-controlled
+            //   domain to receive a credential the user pointed at the real one. So the
+            //   origin (scheme, host, non-default port) must match exactly before the
+            //   prefix rule is ever applied, and only `rest` (path + query) is compared
+            //   with `hasPrefix`.
+            guard let target = normalizedOriginAndRest(from: urlString) else { return false }
             return entry.urls.contains { entryURL in
-                guard let entryNormalized = normalizedURL(from: entryURL) else { return false }
-                return targetNormalized.hasPrefix(entryNormalized)
+                guard let entryParts = normalizedOriginAndRest(from: entryURL) else { return false }
+                guard entryParts.origin == target.origin else { return false }
+                return target.rest.hasPrefix(entryParts.rest)
             }
         }
     }

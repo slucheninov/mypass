@@ -989,6 +989,31 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(error?.name, "NotAllowedError")
     }
 
+    /// Same rationale as `testPasskeyCreateExcludesNeverModeEntryFromRpIdMatchedCandidates`,
+    /// exercised on the get/assertion path: `passkeyEntries(forRelyingParty:in:)` is the sole
+    /// source of `passkeyGet`'s candidate list, so a never-mode entry holding a passkey for
+    /// the requested rpId must not be assembled into it either.
+    func testPasskeyGetExcludesNeverModeEntryFromRpIdMatchedCandidates() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id)
+        session.mutate { db in
+            guard let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) else { return }
+            db.rootGroup.entries[index].uriMatchMode = .never
+        }
+        let response = service.handle(.passkeyGet(
+            token: "t", requestId: 27, requestDetailsJson: getFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyGetComplete(_, let responseJson, let error) = response else {
+            return XCTFail("expected complete, got \(response)")
+        }
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(
+            error?.name, "NotAllowedError",
+            "a never-mode entry must never be assembled into the passkey-get candidate list the bridge sends across the wire"
+        )
+    }
+
     func testPasskeyCreateIgnoresRecycleBinEntriesWhenListingMatches() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         attachPasskey(to: id)
@@ -999,6 +1024,32 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         ))
         guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
         XCTAssertTrue(matches.isEmpty)
+    }
+
+    /// `passkeyEntries(forRelyingParty:in:)` looks entries up by rpId, not by URL, so it
+    /// never runs through `ExtensionEntryMatcher` and never-mode exclusion is not implied
+    /// by anything else on the request path. Mirrors the shape of
+    /// `testPasskeyCreateUnionsRpIdPasskeyEntriesWithDomainMatchesWithoutDuplicates`'s
+    /// `passkeyOnly` fixture (no saved URL, so it can only ever surface through the rpId
+    /// lookup) but sets `uriMatchMode` to `.never` instead of leaving it at the default,
+    /// proving the exclusion at the actual bridge boundary that assembles the candidate
+    /// list sent to the extension for a passkey-create prompt.
+    func testPasskeyCreateExcludesNeverModeEntryFromRpIdMatchedCandidates() {
+        let passkeyOnly = addFixtureEntry(title: "Old Passkey Entry", username: "carol", password: "s3cret", url: "")
+        attachPasskey(to: passkeyOnly, rpId: "localhost")
+        session.mutate { db in
+            guard let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == passkeyOnly }) else { return }
+            db.rootGroup.entries[index].uriMatchMode = .never
+        }
+        let response = service.handle(.passkeyCreate(
+            token: "t", requestId: 26, requestDetailsJson: createFixtureRequestJSON(rpId: "localhost", origin: "http://localhost:8765"),
+            originUrl: "http://localhost:8765", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreatePending(_, _, _, let matches) = response else { return XCTFail("expected pending, got \(response)") }
+        XCTAssertTrue(
+            matches.isEmpty,
+            "a never-mode entry must never be assembled into the passkey-create candidate list the bridge sends across the wire"
+        )
     }
 
     /// Gate 6 regression: two plain Login entries already exist for the page host but
