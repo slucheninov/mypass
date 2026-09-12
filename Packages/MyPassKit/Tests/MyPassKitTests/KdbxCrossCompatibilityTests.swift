@@ -1,25 +1,33 @@
 import XCTest
 @testable import MyPassKit
 
-/// Cross-compatibility with real KeePassXC files (Task 16).
+/// Cross-compatibility with real KeePassXC/pykeepass files.
 ///
-/// Files and passwords come from
-/// `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`
-/// (generated via `pykeepass` in Task 1, Step 1 of the spike; two GZip files
-/// were regenerated with `P=1` in Task 16, because with `P=2` — pykeepass's default —
-/// they could not be opened at all by the current Argon2id binding,
-/// see below).
+/// The password and the general `pykeepass`-based generation approach come
+/// from `docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`
+/// (Task 1, Step 1 of the spike). The GZip fixtures (`argon2id-aes256-gzip`,
+/// `chacha20-argon2id-gzip`) and the Argon2d fixture (`argon2d-aes256-gzip`)
+/// were regenerated in Task 6 of
+/// `docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md` with
+/// pykeepass's own realistic defaults — a 32-byte Argon2 salt and
+/// parallelism 2 — rather than any reduced-parameter workaround, and they
+/// open end to end through `KdbxDatabase.open` (see
+/// `testArgon2idGzipFixturesOpenAndRecoverCorrectData` and
+/// `testArgon2dGzipFixtureOpensAndRecoversCorrectData` below).
 final class KdbxCrossCompatibilityTests: XCTestCase {
     private static let referencePassword = "TestMasterPass123"
 
-    // MARK: - Gzip framing correctness (the actual Task 16 deliverable)
+    // MARK: - Gzip framing correctness
     //
-    // Real fixture files can't currently reach the gzip code path end-to-end
-    // through `KdbxDatabase.open` (see the KDF salt-length limitation
-    // documented below and on `KdbxDatabase`'s type-level comment), so gzip
-    // correctness is verified directly here, byte-for-byte, against the
-    // system `gzip`/`gunzip` binaries — the same standard this task's brief
-    // asks for ("verify your output is decompressible by the system
+    // Real fixture files already reach the gzip code path end-to-end through
+    // `KdbxDatabase.open` (see `testArgon2idGzipFixturesOpenAndRecoverCorrectData`
+    // below, which asserts on their recovered contents). The direct,
+    // byte-for-byte checks here against the system `gzip`/`gunzip` binaries
+    // are kept alongside that because they verify something an end-to-end
+    // open cannot: that our framing is the real gzip container (magic bytes,
+    // CRC32/ISIZE trailer) and not merely something our own `gzip`/`gunzip`
+    // agree with each other about — the standard this task's original brief
+    // asked for ("verify your output is decompressible by the system
     // gunzip/zcat command").
 
     /// `gzip(_:)` must start with the real gzip magic bytes (`1F 8B`), not
