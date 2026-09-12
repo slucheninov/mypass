@@ -163,19 +163,40 @@ public enum PasswordRulesParser {
     ) -> Result<[PasswordRules.CharacterClass], PasswordRulesParseError> {
         var classes: [PasswordRules.CharacterClass] = []
 
-        func skipHorizontalWhitespace() {
-            while index < chars.count, chars[index] == " " || chars[index] == "\t" {
+        // Whitespace here uses the same general `isWhitespace` test as the
+        // top-level `skipWhitespace` in `parse(_:)`, not a space/tab-only
+        // check -- an earlier version of this function only skipped space
+        // and tab, which meant a newline after a comma inside a class list
+        // (e.g. "required: upper,\nlower;") would spuriously fail with
+        // `malformedValue` instead of parsing. No real vendored rule
+        // contains a newline, so that bug was latent rather than live, but
+        // there is no reason for this scanner to be pickier about
+        // whitespace than the one it is nested inside.
+        func skipWhitespace() {
+            while index < chars.count, chars[index].isWhitespace {
                 index += 1
             }
         }
 
-        skipHorizontalWhitespace()
+        skipWhitespace()
         while index < chars.count, chars[index] != ";" {
             if chars[index] == "[" {
                 switch parseCustomCharacterClass(chars, from: &index) {
                 case .success(let members):
                     // An empty custom class ("[]") contributes nothing,
                     // matching the reference parser's "[], [b]" -> ["[b]"].
+                    // This is fine for a literal "[]" in real data, but it
+                    // interacts silently with the ASCII-printable stripping
+                    // in `parseCustomCharacterClass`: a future snapshot
+                    // containing e.g. "required: upper,[\u{a7}];" (a
+                    // non-ASCII-printable member and nothing else) would
+                    // have every member of the class stripped, leaving it
+                    // empty, and so this `required:` clause would silently
+                    // become just `[.upper]` with no trace that a second,
+                    // now-empty alternative was ever written. Matches
+                    // Apple's reference behavior; flagged so a future
+                    // reader does not mistake the dropped clause for a
+                    // parser bug.
                     if !members.isEmpty {
                         classes.append(.custom(Set(members)))
                     }
@@ -195,11 +216,11 @@ public enum PasswordRulesParser {
                 classes.append(characterClass)
             }
 
-            skipHorizontalWhitespace()
+            skipWhitespace()
             guard index < chars.count else { break }
             if chars[index] == "," {
                 index += 1
-                skipHorizontalWhitespace()
+                skipWhitespace()
             } else if chars[index] == ";" {
                 break
             } else {

@@ -25,7 +25,16 @@ final class PasswordRulesParserTests: XCTestCase {
     // MARK: Custom bracketed classes, including embedded '[' as a literal
     // member and an OR clause mixing named classes with a custom class.
     //
-    // Real rule from the vendored 2026-09-12 snapshot, aeon.co.jp.
+    // The real aeon.co.jp rule in the vendored 2026-09-12 snapshot ends its
+    // custom class with a doubled "]]" (a literal ']' member, then the real
+    // closing bracket) -- exactly like admiral.com below. This fixture is
+    // that same rule with the trailing ']' removed on purpose, so it
+    // exercises the OTHER, more common termination shape instead: a class
+    // that ends on the FIRST ']', with nothing doubled. That is the
+    // majority form among the vendored rules that use a custom class (230
+    // of 275), and admiral.com does not cover it, so this fixture proves
+    // single-bracket termination while admiral.com proves the doubled form
+    // -- together they cover both ways a custom class can legally close.
 
     func testCustomBracketedClassMixedWithNamedClassesInOneClause() throws {
         let raw = "minlength: 8; maxlength: 8; max-consecutive: 3; required: digit; required: upper,lower,[#$+./:=?@[^_|~];"
@@ -54,15 +63,25 @@ final class PasswordRulesParserTests: XCTestCase {
         guard case .custom(let members)? = rules.requiredClauses.last?.first else {
             return XCTFail("expected the second required clause to be a single custom class")
         }
-        // The class contains both a literal '[' (an ordinary member, not a
-        // nested class) and a literal ']' (from the doubled "]]" ending),
-        // plus the leading '-' (literal only because it is first) and the
-        // ';' in the middle (an ordinary ASCII-printable member, not a
-        // premature end of the required: statement).
-        XCTAssertTrue(members.contains("["))
-        XCTAssertTrue(members.contains("]"))
-        XCTAssertTrue(members.contains("-"))
-        XCTAssertTrue(members.contains(";"))
+        // Exact-set equality, not spot-check `contains` calls: `,` sits
+        // right next to `;` in this class and is the OR-separator's exact
+        // sibling trap -- a parser that silently dropped it (or dropped
+        // '%', '/', '\', or any other member) would still pass a
+        // `contains` check on just '[', ']', '-' and ';', and Task 5's
+        // conformance gate would then generate a password against the
+        // wrong effective rule without ever failing a test. Derived
+        // directly from the real vendored string above: everything between
+        // the opening '[' and the doubled "]]" is a literal member, in
+        // order '-', ' ', '!', '"', '#', '$', '&', '\'', '(', ')', '*',
+        // '+', ',', '.', ':', ';', '<', '=', '>', '?', '@', '[', '^', '_',
+        // '`', '{', '|', '}', '~', plus the first ']' of the doubled
+        // ending -- 30 members total.
+        let expectedMembers: Set<Character> = [
+            "-", " ", "!", "\"", "#", "$", "&", "'", "(", ")", "*", "+", ",", ".", ":",
+            ";", "<", "=", ">", "?", "@", "[", "^", "_", "`", "{", "|", "}", "~", "]",
+        ]
+        XCTAssertEqual(members.count, 30)
+        XCTAssertEqual(members, expectedMembers)
         // allowed: lower, upper -- parsed AFTER the bracket closed, proving
         // the scanner correctly resumed top-level parsing past the class
         // rather than getting lost inside it.
