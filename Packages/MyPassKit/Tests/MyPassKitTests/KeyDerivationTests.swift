@@ -107,6 +107,54 @@ final class KeyDerivationTests: XCTestCase {
         XCTAssertEqual(derived, expected)
     }
 
+    /// Known-answer test for Argon2d — computed independently via argon2-cffi
+    /// 25.1.0, IDENTICAL secret/salt/I/M/P/V to
+    /// `testTransformedKeyMatchesIndependentArgon2idKnownAnswer`, only the type
+    /// differs (`Type.D` instead of `Type.ID`):
+    ///
+    /// ```python
+    /// from argon2.low_level import hash_secret_raw, Type
+    /// hash_secret_raw(
+    ///     secret=b"correct horse battery staple", salt=bytes(range(16)),
+    ///     time_cost=2, memory_cost=19 * 1024, parallelism=1,
+    ///     hash_len=32, type=Type.D, version=19,
+    /// )
+    /// ```
+    ///
+    /// This doubles as the UUID-to-type mapping test: with every other
+    /// parameter held identical to the Argon2id KAT above, only `$UUID`
+    /// differs here (`KdbxKdfUUID.argon2d` vs `.argon2id`), and the two
+    /// expected outputs are completely different — an `Argon2_id`/`Argon2_d`
+    /// mix-up in the dispatch would still derive *a* 32-byte key here, just
+    /// the wrong one, which is exactly what this test would catch that a
+    /// "does it throw" test could not.
+    func testTransformedKeyMatchesIndependentArgon2dKnownAnswer() throws {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2d)
+        kdf.items["S"] = .byteArray(Data((0..<16).map { UInt8($0) }))
+        kdf.items["M"] = .uint64(19 * 1024 * 1024)
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+
+        let composite = Data("correct horse battery staple".utf8)
+        let derived = try KeyDerivation.transformedKey(compositeKey: composite, kdfParameters: kdf)
+
+        let expected = Data([
+            0x4c, 0x26, 0x81, 0xb4, 0x2c, 0x5b, 0x81, 0x96,
+            0x22, 0xa8, 0x88, 0x71, 0x5e, 0xaf, 0x8f, 0xb1,
+            0x45, 0x73, 0x21, 0x10, 0x18, 0x3c, 0x09, 0x51,
+            0x72, 0x4b, 0xa2, 0x59, 0x5a, 0x9a, 0x1f, 0xde,
+        ])
+        XCTAssertEqual(derived, expected)
+        XCTAssertNotEqual(derived, Data([ // the Argon2id KAT's output, for the same inputs
+            0x81, 0x82, 0x59, 0xb6, 0x31, 0x00, 0x26, 0xa8,
+            0xe0, 0xdb, 0xac, 0x5d, 0x2e, 0x69, 0x27, 0xab,
+            0xcf, 0xdb, 0x07, 0xb3, 0x22, 0x58, 0xfa, 0xc4,
+            0xf6, 0x1b, 0x18, 0xb8, 0x0f, 0x92, 0x90, 0x85,
+        ]))
+    }
+
     // MARK: - AES-KDF
 
     /// Known-answer test for the AES-KDF `transformedKey` path, computed

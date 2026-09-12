@@ -13,11 +13,10 @@ enum KeyDerivationError: Error, Equatable {
 /// (Task 3), plus the final `masterKey`/`hmacKeyBase` values consumed by
 /// header authentication (Task 5) and the HMAC block stream (Task 7).
 ///
-/// Argon2id (`KdbxKdfUUID.argon2id`) and AES-KDF (`KdbxKdfUUID.aesKdf`) are
-/// supported for reading. KDBX4 files using Argon2d are still rejected with
-/// `.unsupportedKdf` rather than silently mis-deriving a key. Write support
-/// (`KdbxDatabase.save`) remains Argon2id-only per the plan's Global
-/// Constraints — AES-KDF here is read-only.
+/// Argon2id (`KdbxKdfUUID.argon2id`), Argon2d (`KdbxKdfUUID.argon2d`) and
+/// AES-KDF (`KdbxKdfUUID.aesKdf`) are all supported for reading. Write
+/// support (`KdbxDatabase.save`) remains Argon2id-only per the plan's Global
+/// Constraints — AES-KDF and Argon2d here are read-only.
 enum KeyDerivation {
     /// Reads `$UUID` from `kdfParameters` and dispatches to the matching KDF.
     static func transformedKey(compositeKey: Data, kdfParameters: VariantDictionary) throws -> Data {
@@ -27,6 +26,8 @@ enum KeyDerivation {
         switch uuid {
         case KdbxKdfUUID.argon2id:
             return try argon2id(compositeKey: compositeKey, params: kdfParameters)
+        case KdbxKdfUUID.argon2d:
+            return try argon2d(compositeKey: compositeKey, params: kdfParameters)
         case KdbxKdfUUID.aesKdf, KdbxKdfUUID.aesKdfLegacyKdbx3:
             return try aesKdf(compositeKey: compositeKey, params: kdfParameters)
         default:
@@ -34,7 +35,23 @@ enum KeyDerivation {
         }
     }
 
-    /// Argon2id key derivation via the vendored `CArgon2` reference library.
+    private static func argon2id(compositeKey: Data, params: VariantDictionary) throws -> Data {
+        try argon2Derive(type: Argon2_id, compositeKey: compositeKey, params: params)
+    }
+
+    private static func argon2d(compositeKey: Data, params: VariantDictionary) throws -> Data {
+        try argon2Derive(type: Argon2_d, compositeKey: compositeKey, params: params)
+    }
+
+    /// Shared Argon2 key derivation via the vendored `CArgon2` reference
+    /// library, for both KDBX4 Argon2 variants this package supports:
+    /// Argon2id (`KdbxKdfUUID.argon2id`) and Argon2d (`KdbxKdfUUID.argon2d`).
+    /// Deliberately excludes Argon2i (`Argon2_i` in the vendored library's
+    /// `Argon2_type` enum) — KDBX4 never uses it, and passing it here by
+    /// mistake would not fail, it would silently derive a different, wrong
+    /// key. See `testTransformedKeyMatchesIndependentArgon2dKnownAnswer` for
+    /// the test that exists specifically to catch a mixed-up `type`
+    /// argument at this call site.
     ///
     /// VariantDictionary keys (verified byte-for-byte against KeePassXC's
     /// `src/format/KeePass2.cpp`, where `KeePass2::KDFPARAM_ARGON2_SALT` etc.
@@ -55,8 +72,9 @@ enum KeyDerivation {
     ///
     /// `V` is still required to be present and equal to 0x13 so a v0x10
     /// (legacy) file is rejected rather than silently mis-derived; the
-    /// KDBX4 Global Constraints only mandate v0x13 for Argon2id.
-    private static func argon2id(compositeKey: Data, params: VariantDictionary) throws -> Data {
+    /// KDBX4 Global Constraints only mandate v0x13 for Argon2id (and, by
+    /// extension, Argon2d — both variants of the same reference algorithm).
+    private static func argon2Derive(type: Argon2_type, compositeKey: Data, params: VariantDictionary) throws -> Data {
         guard case .byteArray(let salt)? = params.items["S"],
               case .uint64(let memoryBytes)? = params.items["M"],
               case .uint64(let iterations)? = params.items["I"],
@@ -97,8 +115,8 @@ enum KeyDerivation {
         // doc comment ("amount of memory requested (KB)"), and
         // `argon2_hash`'s own doc comment. This conversion happens in
         // exactly ONE place in this codebase — do not duplicate it
-        // elsewhere (Task 5 shares this same call site for Argon2d rather
-        // than copying the conversion into a second function).
+        // elsewhere (this shared function is that one place, used by both
+        // the Argon2id and Argon2d wrappers above).
         //
         // Getting it wrong does not throw or crash: `argon2_hash` accepts
         // any `m_cost` in its valid range and derives A key, just not the
@@ -141,7 +159,7 @@ enum KeyDerivation {
                         saltPtr.baseAddress, saltPtr.count,
                         hashPtr.baseAddress, hashPtr.count,
                         nil, 0,
-                        Argon2_id, UInt32(ARGON2_VERSION_13.rawValue)
+                        type, UInt32(ARGON2_VERSION_13.rawValue)
                     )
                 }
             }
