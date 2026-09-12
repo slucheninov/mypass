@@ -54,10 +54,6 @@ struct OpenExistingVaultSheet: View {
         .frame(width: 380)
     }
 
-    // Known limitation (see plan Global Constraints): only .kdbx files
-    // created by MyPass itself (16-byte Argon2id salt) are guaranteed to
-    // open. Third-party KeePassXC files with a 32-byte salt fail here with a
-    // message that names this limitation rather than a bare "wrong password".
     private func attemptOpen() {
         guard !password.isEmpty else { return }
         do {
@@ -66,7 +62,7 @@ struct OpenExistingVaultSheet: View {
             onSuccess(database, password)
             dismiss()
         } catch {
-            errorMessage = "Incorrect password, or this file isn't a MyPass-created .kdbx vault. MyPass currently only supports opening .kdbx files created by MyPass itself; third-party KeePassXC files with a 32-byte Argon2id salt are not yet supported."
+            errorMessage = "Incorrect password, or this file isn't a valid .kdbx vault MyPass can open."
         }
     }
 }

@@ -464,4 +464,27 @@ final class KeyDerivationTests: XCTestCase {
         XCTAssertEqual(hmacBase.count, 64)
         XCTAssertNotEqual(masterKey, hmacBase.prefix(32))
     }
+
+    /// `KeyDerivationError` must carry the library's own error code and message
+    /// rather than an opaque case, so a bad-salt-length rejection is
+    /// distinguishable from, say, an out-of-memory failure. Forces a real
+    /// library-level failure (a memory cost of 0, below ARGON2_MIN_MEMORY) to
+    /// exercise the actual mapping rather than asserting on a case name alone.
+    func testArgon2FailureCarriesLibraryErrorCode() {
+        var kdf = VariantDictionary()
+        kdf.items["$UUID"] = .byteArray(KdbxKdfUUID.argon2id)
+        kdf.items["S"] = .byteArray(Data(repeating: 0x02, count: 16))
+        kdf.items["M"] = .uint64(0) // below ARGON2_MIN_MEMORY — the library itself rejects this
+        kdf.items["I"] = .uint64(2)
+        kdf.items["P"] = .uint32(1)
+        kdf.items["V"] = .uint32(0x13)
+
+        XCTAssertThrowsError(try KeyDerivation.transformedKey(compositeKey: Data("x".utf8), kdfParameters: kdf)) { error in
+            guard case KeyDerivationError.argon2Failure(let code, let message) = error else {
+                return XCTFail("expected argon2Failure, got \(error)")
+            }
+            XCTAssertNotEqual(code, 0) // ARGON2_OK
+            XCTAssertFalse(message.isEmpty)
+        }
+    }
 }

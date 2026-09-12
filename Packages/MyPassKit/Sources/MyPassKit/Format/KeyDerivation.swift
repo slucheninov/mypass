@@ -5,7 +5,16 @@ import CArgon2
 enum KeyDerivationError: Error, Equatable {
     case unsupportedKdf(Data)
     case invalidParameters
-    case sodiumFailure
+    /// A non-zero return from the vendored Argon2 reference library's
+    /// `argon2_hash`, carrying its `Argon2_ErrorCodes` value (as `Int32`)
+    /// and the library's own message via `argon2_error_message` — so a
+    /// caller can tell a bad-salt-length rejection
+    /// (`ARGON2_SALT_TOO_SHORT`, -6) apart from an out-of-memory failure
+    /// (`ARGON2_MEMORY_ALLOCATION_ERROR`, -22) apart from any other
+    /// rejection, rather than seeing one undifferentiated failure value
+    /// for all of them. Replaces `.sodiumFailure`, stale since Task 2
+    /// moved the KDF backend off swift-sodium.
+    case argon2Failure(code: Int32, message: String)
 }
 
 /// Derives the KDBX4 `transformedKey` from a composite key and the
@@ -165,7 +174,8 @@ enum KeyDerivation {
             }
         }
         guard result == ARGON2_OK.rawValue else {
-            throw KeyDerivationError.sodiumFailure
+            let message = String(cString: argon2_error_message(result))
+            throw KeyDerivationError.argon2Failure(code: result, message: message)
         }
         return Data(hash)
     }
