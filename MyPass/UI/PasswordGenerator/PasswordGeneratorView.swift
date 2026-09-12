@@ -112,14 +112,15 @@ struct PasswordGeneratorView: View {
     /// user's current selection still manages to avoid every one of them
     /// (pixnet.cc's "allowed: lower, upper" is a real vendored example).
     /// Shown before Generate is pressed, and worded with
-    /// `PasswordRulesSummary.pluralName(for:)` so this warning and the
-    /// popover's own "only permits..." sentence never disagree about what
-    /// to call a class.
+    /// `PasswordRulesSummary.pluralName(for:)` and `.joinedWithAnd(_:)` so
+    /// this warning and the popover's own "Only ... are permitted."
+    /// sentence never disagree about what to call a class or how to list
+    /// more than one of them.
     private var allowedClassesConflictMessage: String? {
         guard let conflict = ruleEvaluation?.conflictingWithAllowedClasses, !conflict.isEmpty else {
             return nil
         }
-        let names = conflict.map(PasswordRulesSummary.pluralName(for:)).joined(separator: ", ")
+        let names = PasswordRulesSummary.joinedWithAnd(conflict.map(PasswordRulesSummary.pluralName(for:)))
         return "\(siteDomain) only allows \(names). Enable one of them to generate a password."
     }
 
