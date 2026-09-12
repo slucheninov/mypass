@@ -145,17 +145,37 @@ public enum PasswordGenerator {
     /// speculatively ahead of a real rule that needs it. This is the doc
     /// comment `PasswordRules.swift` points readers at for that decision.
     private static func generateHonoringRules(options: PasswordGeneratorOptions, rules: PasswordRules) throws -> String {
-        let minLength = rules.minLength ?? options.length
-        let maxLength = rules.maxLength ?? options.length
         // Defensive only -- no rule in the vendored 2026-09-12 snapshot has
         // minlength > maxlength (verified while writing this plan), but a
         // future refresh (scripts/update-password-rules.sh) could vendor
         // one, and an inverted range must never silently produce a
-        // negative-length request below.
-        guard minLength <= maxLength else {
+        // negative-length request below. This compares the RULE's own two
+        // bounds against each other, and only fires when the rule states
+        // BOTH of them -- an earlier version defaulted an absent bound to
+        // `options.length` before this comparison, which meant a rule
+        // stating only `maxlength` (e.g. bhphotovideo.com's entire rule is
+        // `maxlength: 15`) compared the caller's REQUESTED length against
+        // the site's maximum instead of the rule's own bounds against each
+        // other, and threw `unsatisfiableRules` for a twenty-character
+        // request against that fifteen-character maximum -- a rule that is
+        // trivially satisfiable by clamping down to fifteen, exactly the
+        // shape Decision 4 uses as its worked example of correct behavior.
+        if let ruleMin = rules.minLength, let ruleMax = rules.maxLength, ruleMin > ruleMax {
             throw PasswordGeneratorError.unsatisfiableRules
         }
-        let length = Swift.min(Swift.max(options.length, minLength), maxLength)
+        // Clamp the requested length against whichever bounds the rule
+        // actually states, independently: raise it to the rule's minimum
+        // if there is one, then lower it to the rule's maximum if there is
+        // one. A bound the rule doesn't state applies no constraint at
+        // all, rather than silently substituting the caller's own request
+        // as a stand-in bound (the bug fixed above).
+        var length = options.length
+        if let ruleMin = rules.minLength {
+            length = Swift.max(length, ruleMin)
+        }
+        if let ruleMax = rules.maxLength {
+            length = Swift.min(length, ruleMax)
+        }
         // Defensive and explicit rather than relying on the
         // `length >= rules.requiredClauses.count` guard below to rule out
         // a negative length as an accidental side effect (an `Array`'s

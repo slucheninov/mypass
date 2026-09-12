@@ -18,6 +18,79 @@ final class PasswordGeneratorRulesTests: XCTestCase {
         XCTAssertEqual(password.count, 10)
     }
 
+    func testLengthIsClampedToAMaximumWhenTheRuleStatesNoMinimum() throws {
+        // The exact regression Task 5's conformance run found: a rule
+        // stating only `maxlength` (e.g. bhphotovideo.com's entire rule is
+        // literally "maxlength: 15") used to default the absent minimum
+        // to the CALLER's requested length before comparing bounds, which
+        // compared the request against the site's maximum instead of the
+        // rule's own bounds against each other, and threw
+        // `unsatisfiableRules` for a request longer than the maximum --
+        // a rule that is trivially satisfiable by clamping down. This is
+        // Decision 4's own worked example of correct behavior: a
+        // twenty-character request against a maximum of twelve produces
+        // a twelve-character password.
+        let rules = PasswordRules(maxLength: 12)
+        let options = PasswordGeneratorOptions(length: 20, includeLowercase: true, includeUppercase: true, includeDigits: true, includeSymbols: true)
+        let password = try PasswordGenerator.generate(options: options, rules: rules)
+        XCTAssertEqual(password.count, 12)
+    }
+
+    func testLengthIsRaisedToAMinimumWhenTheRuleStatesNoMaximum() throws {
+        // The mirror image of the maximum-only case above: a rule stating
+        // only `minlength` used to default the absent maximum to the
+        // caller's requested length, which happened not to misfire for
+        // this direction (raising a short request can never exceed a
+        // maximum that isn't there), but the fix applies both bounds
+        // independently, so this is covered directly rather than by
+        // inference from the maximum-only case.
+        let rules = PasswordRules(minLength: 10)
+        let options = PasswordGeneratorOptions(length: 4, includeLowercase: true, includeUppercase: true, includeDigits: true, includeSymbols: true)
+        let password = try PasswordGenerator.generate(options: options, rules: rules)
+        XCTAssertEqual(password.count, 10)
+    }
+
+    func testGenuinelyInvertedLengthRangeThrows() {
+        // A rule that states BOTH bounds, with the minimum actually
+        // exceeding the maximum, must still be treated as unsatisfiable --
+        // the fix narrows the inversion check to fire only when both
+        // bounds are stated, it must not stop firing when they truly are
+        // inverted.
+        let rules = PasswordRules(minLength: 12, maxLength: 10)
+        let options = PasswordGeneratorOptions(length: 11, includeLowercase: true, includeUppercase: true, includeDigits: true, includeSymbols: true)
+        XCTAssertThrowsError(try PasswordGenerator.generate(options: options, rules: rules)) { error in
+            guard case PasswordGeneratorError.unsatisfiableRules = error else {
+                return XCTFail("expected unsatisfiableRules, got \(error)")
+            }
+        }
+    }
+
+    func testVivoComBrShapedRuleIsSatisfied() throws {
+        // vivo.com.br's real vendored rule is literally
+        // "maxlength: 6; max-consecutive: 3; allowed: digit" -- six
+        // digits, no more than three of the same in a row, drawn from a
+        // ten-character pool. It exercises the length clamp (maximum
+        // only, no minimum -- the exact shape of all seven domains Task
+        // 5's conformance run flagged), the restricted pool, and the
+        // consecutive limit together, so it is the best single regression
+        // case among them.
+        let rules = PasswordRules(allowedClasses: [.digit], maxLength: 6, maxConsecutive: 3)
+        let options = PasswordGeneratorOptions(length: 16, includeLowercase: true, includeUppercase: true, includeDigits: true, includeSymbols: true)
+        for _ in 0..<200 {
+            let password = try PasswordGenerator.generate(options: options, rules: rules)
+            XCTAssertEqual(password.count, 6)
+            let characters = Array(password)
+            var run = 1
+            for character in characters {
+                XCTAssertTrue(character.isNumber, "unexpected non-digit character '\(character)' in \(password)")
+            }
+            for i in 1..<characters.count {
+                run = characters[i] == characters[i - 1] ? run + 1 : 1
+                XCTAssertLessThanOrEqual(run, 3, "run of \(run) at index \(i) in \(password)")
+            }
+        }
+    }
+
     func testRequiredClassOverridesADisabledToggle() throws {
         let rules = PasswordRules(requiredClauses: [[.digit]], allowedClasses: [.digit, .lower])
         let options = PasswordGeneratorOptions(length: 16, includeLowercase: true, includeUppercase: false, includeDigits: false, includeSymbols: false)
@@ -120,6 +193,33 @@ final class PasswordGeneratorRulesTests: XCTestCase {
                 run = characters[i] == characters[i - 1] ? run + 1 : 1
                 XCTAssertLessThanOrEqual(run, 2)
             }
+        }
+    }
+
+    func testDeterministicFallbackSatisfiesEachRequiredClauseDirectly() throws {
+        // The sibling test above passes an empty clause list, so it never
+        // exercised the anchor-placement half of `deterministicCandidate`
+        // -- the part that actually guarantees a required clause is met.
+        // Round 2 review flagged this gap; the call at the time was to
+        // leave it because Task 5's conformance run against 436 real
+        // rules would exercise required clauses in volume. Task 5 later
+        // reported it could not confirm the fallback path fired at all
+        // during that run, so that reasoning bought nothing -- this is
+        // the direct test that should have been here from the start.
+        let digitPool: [Character] = Array("0123456789")
+        let upperPool: [Character] = Array("ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        let clauseCharacterSets: [[Character]] = [digitPool, upperPool]
+        let fullPool = Array(Set(digitPool + upperPool))
+        for _ in 0..<200 {
+            let characters = try PasswordGenerator.deterministicCandidate(
+                length: 12,
+                clauseCharacterSets: clauseCharacterSets,
+                pool: fullPool,
+                maxConsecutive: nil
+            )
+            XCTAssertEqual(characters.count, 12)
+            XCTAssertTrue(characters.contains { digitPool.contains($0) }, "missing the digit-clause anchor in \(String(characters))")
+            XCTAssertTrue(characters.contains { upperPool.contains($0) }, "missing the uppercase-clause anchor in \(String(characters))")
         }
     }
 
