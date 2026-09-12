@@ -22,12 +22,13 @@ final class PasswordRulesConformanceTests: XCTestCase {
         // 3 attempts miss it with probability 0.98^3 ~= 94.12%, i.e. it
         // is CAUGHT only ~5.88% of the time -- worse than a coin flip.
         // Raising to 40 attempts (0.98^40 ~= 44.57% miss rate, so ~55.43%
-        // caught against that same 2% defect) roughly triples the
-        // detection rate against a defect this small, though it is still
-        // no guarantee -- a defect that rare would need a great many more
-        // attempts than fit in a test suite people are expected to run
-        // habitually, so this is a deliberate, documented trade of
-        // runtime against confidence, not a claim of exhaustive coverage.
+        // caught against that same 2% defect) is roughly a 9.4x
+        // improvement in detection odds against a defect this small
+        // (~5.88% -> ~55.43%), though it is still no guarantee -- a
+        // defect that rare would need a great many more attempts than
+        // fit in a test suite people are expected to run habitually, so
+        // this is a deliberate, documented trade of runtime against
+        // confidence, not a claim of exhaustive coverage.
         // 40 x 436 domains = 17,440 generations, each a handful of
         // in-memory character draws with no I/O and no expensive
         // key-derivation work (unlike, say, an Argon2 known-answer
@@ -138,13 +139,18 @@ final class PasswordRulesConformanceTests: XCTestCase {
         //   vendored rules exercise -- but getting it backwards here would
         //   reject most of the catalog, not none of it.
         // - A class a rule REQUIRES is also implicitly ALLOWED even when
-        //   `allowed:` does not separately name it -- real example from
-        //   the vendored data, benjerry.com: `required: upper; required:
-        //   digit; required: special; allowed: lower;`. Skipping this
-        //   union would flag the very characters the rule mandates as
-        //   violations; that mistake would only ever surface on a rule
-        //   shaped exactly like this one, so it is easy to get wrong and
-        //   have it go unnoticed.
+        //   `allowed:` does not separately name it. This union exists for
+        //   the correctness of THIS CHECK as standalone logic, not
+        //   because any of the 436 vendored rules needs it: the parser
+        //   already folds every required class into `allowedClasses`
+        //   before this test ever sees the rule (see the comment on
+        //   `testAllowedClassCheckTreatsARequiredClassAsImplicitlyAllowed`
+        //   below), so removing this union would not flag benjerry.com or
+        //   anything else in the real dataset -- confirmed by actually
+        //   removing it and re-running the full 436-domain sweep, zero
+        //   failures. That is exactly why the synthetic test below exists:
+        //   it is the only coverage this union has, since no real rule can
+        //   ever exercise it.
         if !rules.allowedClasses.isEmpty {
             let effectiveAllowed = Set(rules.allowedClasses).union(rules.requiredClauses.flatMap { $0 })
             for character in characters {
