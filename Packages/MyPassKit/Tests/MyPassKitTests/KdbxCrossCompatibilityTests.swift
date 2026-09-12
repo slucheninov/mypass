@@ -113,46 +113,45 @@ final class KdbxCrossCompatibilityTests: XCTestCase {
         XCTAssertEqual(entry.fields.first(where: { $0.key == "Password" })?.value, "hunter2")
     }
 
-    /// Real KeePassXC/pykeepass-generated Argon2id+GZip fixtures (the
-    /// combinations this task's brief calls "critical" for exercising the
-    /// gzip fix) currently fail — not because of gzip, but because
-    /// `KeyDerivation`'s Argon2id backend (swift-sodium's `crypto_pwhash`)
-    /// hardcodes a 16-byte salt, while real KDBX4 files use a 32-byte salt
-    /// (confirmed against both the pykeepass-generated fixtures and the
-    /// linked libsodium 1.0.22 headers: `crypto_pwhash_argon2id_SALTBYTES
-    /// == 16`). This is a pre-existing gap (from Task 6, and from the plan's
-    /// own reference `save()` snippet, which also uses a 16-byte salt) —
-    /// fixing it requires swapping the Argon2id backend for one that accepts
-    /// a 32-byte salt, which is out of scope for a gzip-framing fix. This
-    /// test documents the failure explicitly rather than silently skipping
-    /// it, so it surfaces the moment someone investigates real-file support.
-    func testArgon2idGzipFixturesFailDueToSaltLengthLimitationNotGzip() throws {
-        throw XCTSkip("""
-            Temporarily inconclusive: Task 2 of \
-            docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md swapped the \
-            Argon2 backend, and the salt-length limitation this test pins no longer \
-            exists (these fixtures — 32-byte salt, P=1 — already open). Task 3 adds \
-            the deliberate salt-length guard; Task 6 rewrites this test to assert \
-            success against regenerated fixtures.
-            """)
+    /// Real KeePassXC/pykeepass-generated Argon2id+GZip fixtures, regenerated
+    /// in Task 6 of docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md
+    /// with pykeepass's own realistic parameters (M=64 MiB, I=14, P=2, 32-byte
+    /// salt) instead of the earlier P=1 workaround. Renamed from
+    /// `testArgon2idGzipFixturesFailDueToSaltLengthLimitationNotGzip` now that
+    /// the salt-length limitation it used to pin no longer exists (Task 3).
+    func testArgon2idGzipFixturesOpenAndRecoverCorrectData() throws {
         let fixtureNames = ["argon2id-aes256-gzip", "chacha20-argon2id-gzip"]
         for name in fixtureNames {
             guard let url = Bundle.module.url(forResource: name, withExtension: "kdbx", subdirectory: "Fixtures") else {
                 throw XCTSkip("Fixture \(name).kdbx is missing")
             }
             let data = try Data(contentsOf: url)
-            XCTAssertThrowsError(try KdbxDatabase.open(data: data, password: Self.referencePassword), "expected \(name) to fail on KDF, not gzip") { error in
-                guard case KdbxDatabaseError.unsupportedFeature(let message) = error else {
-                    return XCTFail("expected .unsupportedFeature (Argon2id salt-length gap), got \(error) for \(name)")
-                }
-                // Pin the *specific* wrapped cause (swift-sodium's
-                // `crypto_pwhash` rejecting the 32-byte salt as invalid,
-                // surfaced as `.sodiumFailure`), not just the outer case —
-                // see the comment on the AES-KDF test above for why this
-                // matters.
-                XCTAssertTrue(message.contains("sodiumFailure"), "expected .sodiumFailure (salt-length rejection) as the underlying cause, got: \(message) for \(name)")
-            }
+            let database = try KdbxDatabase.open(data: data, password: Self.referencePassword)
+            XCTAssertEqual(database.rootGroup.entries.count, 1, "for \(name)")
+            let entry = try XCTUnwrap(database.rootGroup.entries.first, "for \(name)")
+            XCTAssertEqual(entry.fields.first(where: { $0.key == "Title" })?.value, "Test Entry", "for \(name)")
+            XCTAssertEqual(entry.fields.first(where: { $0.key == "UserName" })?.value, "testuser", "for \(name)")
+            XCTAssertEqual(entry.fields.first(where: { $0.key == "Password" })?.value, "hunter2", "for \(name)")
         }
+    }
+
+    /// New in this task: a real pykeepass-generated Argon2d fixture (produced
+    /// with zero KDF overrides — pykeepass's own un-overridden default is
+    /// Argon2d, matching KeePass's historical default before KeePassXC
+    /// switched to Argon2id — see this task's writeup). Proves the Argon2d
+    /// branch added in Task 5 works end to end against a real file, not just
+    /// a known-answer vector.
+    func testArgon2dGzipFixtureOpensAndRecoversCorrectData() throws {
+        guard let url = Bundle.module.url(forResource: "argon2d-aes256-gzip", withExtension: "kdbx", subdirectory: "Fixtures") else {
+            throw XCTSkip("Fixture argon2d-aes256-gzip.kdbx is missing")
+        }
+        let data = try Data(contentsOf: url)
+        let database = try KdbxDatabase.open(data: data, password: Self.referencePassword)
+        XCTAssertEqual(database.rootGroup.entries.count, 1)
+        let entry = try XCTUnwrap(database.rootGroup.entries.first)
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "Title" })?.value, "Test Entry")
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "UserName" })?.value, "testuser")
+        XCTAssertEqual(entry.fields.first(where: { $0.key == "Password" })?.value, "hunter2")
     }
 
     // MARK: - Self-consistent round trip (this package's own KDF params)
