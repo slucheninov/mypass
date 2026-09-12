@@ -23,12 +23,14 @@ public struct PasswordRules: Equatable {
     public var minLength: Int?
     public var maxLength: Int?
     public var maxConsecutive: Int?
-    /// Parsed and stored, never enforced by `PasswordGenerator` -- see
-    /// that type's doc comment on why (Task 4 of
-    /// docs/superpowers/plans/2026-09-12-site-password-rules-and-uri-matching.md).
+    /// Parsed and stored, never enforced by `PasswordGenerator` -- a
+    /// deliberate, documented limitation, not an oversight: see the doc
+    /// comment on `PasswordGenerator.generateHonoringRules` (Task 4) for
+    /// the rationale, and Decision 4 of
+    /// docs/superpowers/specs/2026-09-12-site-password-rules-and-uri-matching-design.md.
     public var maxRepeating: Int?
     /// Parsed and stored, never enforced by `PasswordGenerator` -- see
-    /// that type's doc comment on why.
+    /// `maxRepeating` above for why.
     public var maxSequential: Int?
 
     init(
