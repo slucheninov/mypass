@@ -618,6 +618,35 @@ Record spike outcomes and any deviation from the plans here, with a date.
 | 2026-08-24 | Post-gate housekeeping | `scripts/run.sh` now stops a running MyPass before `open`, because `open` was activating the stale process and making fixes look like no-ops; it escalates TERM to KILL after five seconds and fails loudly rather than launching over a survivor. The passkey get flow in the popup was brought to parity with create — it names the target entry and shows the passkey badge in both the picker and the ordinary credential list. Two regression tests were repaired at the same time: the popup resync tests hand-rolled the init composition instead of exercising `initPasskeyPopupUI`, and `testSetPasskeyProxyEnabledPersistsAndReturnsEnabled` had been de-fanged by a `true` default in `setUpWithError`. |
 | 2026-09-11 | C4 origin gate closed | The app now validates the origin of a passkey ceremony instead of trusting what the extension sent. `PasskeyCeremony.validateOrigin(_:requestDetailsJson:rpId:)` runs two independent checks, called from both `.passkeyCreate` and `.passkeyGet` immediately after the payload parses and before any candidate matching. First, the wire `originUrl` must equal the payload's own `extensions.remoteDesktopClientOverride.origin`, and an absent override is a refusal — the same fail-closed rule `background.js` already applies on its own side. On its own this check is weak, because a fully compromised extension controls both fields and would simply rewrite them together; its real value is that it removes the cheap lie and stops the two copies of the origin from drifting apart unnoticed. Second, and this is the actual gate, `rpId` must be the origin's host or a parent of it no higher than the registrable domain, which is the WebAuthn RP ID invariant. Without it the app would sign an assertion binding an attacker-chosen origin to an attacker-chosen relying party, and the Public Suffix List is what stops `rpId` climbing to something like `co.uk`. Both refusals surface as `SecurityError` through the existing `*Complete(error:)` channel. Worth recording: the pre-existing test fixtures carried no `remoteDesktopClientOverride` block at all, so the first check failed closed on every passkey test until the fixture builders were taught to emit one — the check was not relaxed to accommodate them. |
 
+## Stage 9 — Site-aware password rules and per-entry URI match modes
+
+Two related, fully offline capabilities: MyPass generates passwords that a site's own
+Password Rules will actually accept, in both the app's generator and the browser
+extension; and a vault entry can declare how its URL is matched against a page, via one
+of five explicit `URIMatchMode` values, replacing the single hardcoded
+registrable-domain rule. Spec:
+[`2026-09-12-site-password-rules-and-uri-matching-design`](../superpowers/specs/2026-09-12-site-password-rules-and-uri-matching-design.md),
+plan: [`2026-09-12-site-password-rules-and-uri-matching`](../superpowers/plans/2026-09-12-site-password-rules-and-uri-matching.md).
+
+- [ ] **Task 1** — Vendor Apple's `password-rules.json` snapshot into `Packages/MyPassKit`, with its provenance file and `scripts/update-password-rules.sh`
+- [ ] **Task 2** — `PasswordRulesParser` for the Password Rules grammar, with fixtures derived from Apple's own reference parser tests
+- [ ] **Task 3** — `PasswordRulesCatalog`, a host-keyed rule lookup that walks up to (but never above) the registrable domain
+- [ ] **Task 4** — `PasswordGenerator.generate(options:rules:)` honours required/allowed character classes, length clamping, `max-consecutive` repair, and a typed `.unsatisfiableRules` failure
+- [ ] **Task 5** — `PasswordGeneratorView` surfaces the active rule in plain English, with a control to override it
+- [ ] **Task 6** — `PasswordGeneratorDefaults` persists the user's generator toggles, shared by the app's own Generate button and the bridge handler
+- [ ] **Task 7** — Property test against every rule in the vendored snapshot: every generated password satisfies its own rule
+- [ ] **Task 8** — `URIMatchMode` and its hidden `MyPass.URIMatchMode` field on `KdbxEntry`, defaulting to `.registrableDomain` with no migration needed
+- [ ] **Task 9** — `ExtensionEntryMatcher` matches per-entry against all five `URIMatchMode` values, with `never` excluded before any credential list is assembled
+- [ ] **Task 10** — A match-mode picker beside the URL field in the entry edit form, with per-mode help text
+- [ ] **Task 11** — The 16th bridge request/response pair, `generatePassword`/`generatedPassword`, wired through every exhaustive switch in `ExtensionBridgeKit`, `ExtensionBridgeService`, and `LoopbackServer`
+- [ ] **Task 12** — `content.js` classifies password fields as `isNewPassword` via `autocomplete=new-password` or the confirm-password shape
+- [ ] **Task 13** — "Generate password" actions in the inline panel and the popup, gated on `event.isTrusted` and on the page actually having a new-password field
+
+**⛳ Gate 9** — `./scripts/test.sh` green, run unpiped and its actual output read (see
+"Known trap when running the suite" below — piping to `tail` reports the pipe's exit
+code, not the script's). Boxes above are ticked only once this run is confirmed green,
+per this repository's rule that a roadmap box means "implemented AND its tests pass."
+
 ## Known trap when running the suite
 
 **Fixed 2026-08-23** — the suite now skips itself when the fixture is missing; the text below is kept for history.
