@@ -23,6 +23,7 @@ struct EntryEditView: View {
     @State private var isPasswordRevealed = false
     @State private var showWebsitesSheet = false
     @State private var isFavorite: Bool
+    @State private var uriMatchMode: URIMatchMode
     @State private var showReplaceTotpAlert = false
     @State private var removeExistingTotp = false
     /// Deferred like `removeExistingTotp`: pressing Remove marks the passkey for deletion
@@ -61,6 +62,7 @@ struct EntryEditView: View {
         _extraFields = State(initialValue: (existingEntry?.additionalFields ?? [])
             .map { (key: $0.key, value: $0.value) })
         _isFavorite = State(initialValue: existingEntry?.isFavorite ?? false)
+        _uriMatchMode = State(initialValue: existingEntry?.uriMatchMode ?? .registrableDomain)
     }
 
     var body: some View {
@@ -118,6 +120,17 @@ struct EntryEditView: View {
                             Button("Edit Websites…") { showWebsitesSheet = true }
                         }
                     }
+                    Divider().overlay(Color.primary.opacity(0.08))
+
+                    Picker("Match", selection: $uriMatchMode) {
+                        ForEach(URIMatchMode.allCases, id: \.self) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    Text(uriMatchMode.helpText)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     Divider().overlay(Color.primary.opacity(0.08))
 
                     TextField("Notes", text: $notes, axis: .vertical)
@@ -278,6 +291,7 @@ struct EntryEditView: View {
         entry.url = url
         entry.notes = notes
         entry.isFavorite = isFavorite
+        entry.uriMatchMode = uriMatchMode
         entry.lastModificationTime = now
         entry.lastAccessTime = now
         if removeExistingTotp && otpauthInput.isEmpty {
@@ -318,5 +332,53 @@ struct EntryEditFieldsCard<Content: View>: View {
         )
         .shadow(color: .black.opacity(0.04), radius: 8, y: 2)
         .frame(maxWidth: UIShellMetrics.cardMaxWidth)
+    }
+}
+
+/// Display name and help text for the match-mode picker above. Kept local to this
+/// file rather than on `MyPassKit.URIMatchMode` itself, since `MyPassKit` is the
+/// cross-platform vault engine and has no business holding SwiftUI-facing copy.
+///
+/// Deliberately not `private`: this repo has no SwiftUI view-inspection harness (see
+/// `EntryEditSaveLogic`, `PasswordRulesSummary` for the same reasoning applied
+/// elsewhere in this codebase), so the only way to put real XCTest assertions on this
+/// picker's exact English -- rather than just a compile check -- is to leave these
+/// two properties visible to `@testable import MyPass` from `MyPassTests`. `private`
+/// at file scope would still compile fine inside this file but would make them
+/// invisible to the test target, which is the one thing this comment exists to avoid.
+extension URIMatchMode {
+    var displayName: String {
+        switch self {
+        case .registrableDomain: return "Registrable domain (recommended)"
+        case .host: return "Exact host"
+        case .startsWith: return "Starts with"
+        case .exact: return "Exact address"
+        case .never: return "Never (hide from extension)"
+        }
+    }
+
+    /// Every case's wording is verified against actual behaviour, not the spec's
+    /// original prose: `.never` matches `ExtensionEntryMatcher.matches(entry:forURL:)`
+    /// (browser-extension-only exclusion, entry stays fully usable in the app), and
+    /// `.startsWith` matches the comment above its branch in that same file (Task 9) --
+    /// prefix matching is scoped to path-and-query within an exactly-matching origin,
+    /// which deliberately still lets a prefix ending mid-path also match a longer path
+    /// sharing that start.
+    var helpText: String {
+        switch self {
+        case .registrableDomain:
+            return "Matches example.com and any subdomain, such as login.example.com."
+        case .host:
+            return "Matches only this exact hostname and port. A different subdomain will not match."
+        case .startsWith:
+            return "Matches any page whose address begins with this one. Note: this can also match " +
+                "unrelated pages that share the same prefix, such as example.com/app also matching " +
+                "example.com/app-legacy."
+        case .exact:
+            return "Matches only this exact page address, including its path and query."
+        case .never:
+            return "Hides this entry from the browser extension only — it stays fully visible and " +
+                "usable inside MyPass."
+        }
     }
 }
