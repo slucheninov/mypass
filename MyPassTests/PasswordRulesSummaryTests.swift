@@ -131,11 +131,35 @@ final class PasswordRulesSummaryTests: XCTestCase {
     }
 
     func testDescribesAPermittedSetAsItsOwnSentenceAlongsideRequiredClauses() throws {
-        // Real rule from the vendored 2026-09-12 snapshot, aetna.com --
-        // requires an uppercase letter and a digit, and additionally
-        // restricts `allowed:` to exclude symbols entirely (beyond the
-        // bespoke `[-_&#@]` custom class, which this summary deliberately
-        // does not spell out -- see `PasswordRulesSummary.name(for:)`).
+        // Real rule from the vendored 2026-09-12 snapshot, bochk.com --
+        // requires lower, upper and a digit, and restricts `allowed:` to
+        // exclude symbols. Its own `[#$%&()*+,.:;<=>?@_]` custom class is
+        // dropped here so this test stays about the sentence's SHAPE (a
+        // permitted-set clause following a complete "needs" sentence);
+        // what a custom class does to the permitted set has its own test
+        // below.
+        let ruleString = "minlength: 8; maxlength: 12; max-consecutive: 3; required: lower; required: upper; required: digit; allowed: lower, upper, digit;"
+        guard case .success(let rules) = PasswordRulesParser.parse(ruleString) else {
+            return XCTFail("expected a valid parse")
+        }
+        let summary = PasswordRulesSummary.describe(rules, domain: "bochk.com")
+        XCTAssertEqual(
+            summary,
+            "bochk.com needs a lowercase letter, an uppercase letter, a digit, 8 to 12 characters and at most 3 repeated characters in a row. Only lowercase letters, uppercase letters and digits are permitted."
+        )
+    }
+
+    func testDoesNotClaimSymbolsAreForbiddenWhenACustomClassPermitsSome() throws {
+        // Real rule from the vendored 2026-09-12 snapshot, aetna.com. Its
+        // `allowed:` list never names `special`, but its bespoke `[-_&#@]`
+        // custom class plainly permits five symbols -- and `PasswordGenerator`
+        // has always been willing to use them. This sentence used to read
+        // "Only lowercase letters, uppercase letters and digits are
+        // permitted," which the generated password then contradicted. There
+        // is now no permitted-set sentence at all, because all four kinds of
+        // character are permitted in some form. The summary deliberately
+        // still does not spell out a custom class's literal members -- see
+        // `PasswordRulesSummary.name(for:)`.
         let ruleString = "minlength: 8; maxlength: 20; max-consecutive: 2; required: upper; required: digit; allowed: lower, [-_&#@];"
         guard case .success(let rules) = PasswordRulesParser.parse(ruleString) else {
             return XCTFail("expected a valid parse")
@@ -143,7 +167,7 @@ final class PasswordRulesSummaryTests: XCTestCase {
         let summary = PasswordRulesSummary.describe(rules, domain: "aetna.com")
         XCTAssertEqual(
             summary,
-            "aetna.com needs an uppercase letter, a digit, 8 to 20 characters and at most 2 repeated characters in a row. Only lowercase letters, uppercase letters and digits are permitted."
+            "aetna.com needs an uppercase letter, a digit, 8 to 20 characters and at most 2 repeated characters in a row."
         )
     }
 

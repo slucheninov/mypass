@@ -298,10 +298,34 @@ public enum PasswordGenerator {
         // has no opinion here," so the user's own toggles decide, exactly
         // as if there were no rule.
         let noExplicitAllowList = rules.allowedClasses.isEmpty
-        for (characterClass, toggleOn, baseline) in toggleBacked {
+        // Classes forced in regardless of the user's toggle. This used to be
+        // `requiredClassesFlat` alone, which disagreed with the generator UI:
+        // the UI also locks ON the single class a restrictive `allowed:`
+        // leaves (amundi-ee.com's `allowed: digit`), so the app succeeded
+        // with digits toggled off while the extension bridge -- which reads
+        // the persisted toggles with no UI to force anything -- threw
+        // `noCharacterClassSelected` on the identical rule. See
+        // `forcedOnToggleClasses(for:)`, now the single answer both read.
+        let forcedOn = forcedOnToggleClasses(for: rules)
+        // "Is this class in play at all," used below to decide which members
+        // of an `allowed:`-only custom class the user has actually asked for.
+        var toggleInPlay: [PasswordRules.CharacterClass: Bool] = [:]
+        for (characterClass, toggleOn, _) in toggleBacked {
+            toggleInPlay[characterClass] = toggleOn || forcedOn.contains(characterClass)
+        }
+        for (characterClass, _, baseline) in toggleBacked {
             let ruleAllows = noExplicitAllowList || rules.allowedClasses.contains(characterClass) || asciiPrintableInPlay
             let ruleRequires = requiredClassesFlat.contains(characterClass)
-            guard ruleRequires || (ruleAllows && toggleOn) else { continue }
+            // `ruleAllows` still gates the baseline pool even for a forced-on
+            // class, and that is load-bearing rather than redundant:
+            // `forcedOn` can name `.special` because a custom class
+            // contributes a symbol character, and such a rule permits that
+            // custom class's own members ONLY -- never MyPass's whole
+            // 25-character symbol pool. `ruleRequires` keeps its own
+            // unconditional branch because a literal `required:` clause has
+            // always folded its class into `allowedClasses` too, so the two
+            // can never contradict each other there.
+            guard ruleRequires || (ruleAllows && toggleInPlay[characterClass] == true) else { continue }
             membership[characterClass, default: []].formUnion(baseline)
             allCharacters.formUnion(baseline)
         }
@@ -310,15 +334,32 @@ public enum PasswordGenerator {
         // independent of MyPass's own four baseline pools (Decision 4) --
         // Apple's `special` class and this app's `symbols` pool are not the
         // same set, and a site's bespoke required symbol may fall outside
-        // it. Applies whether the custom class came from `allowed:` or
-        // `required:`.
-        for characterClass in rules.allowedClasses where isCustomClass(characterClass) {
+        // it.
+        //
+        // A REQUIRED custom class bypasses the toggles entirely, exactly as
+        // Decision 4 grants: the site mandates one of those characters, so
+        // the password gets one whatever the user prefers.
+        //
+        // An `allowed:`-only custom class is NOT the same thing, and used to
+        // be treated as if it were. The rule merely *permits* those
+        // characters, so whether MyPass draws from them is the user's choice
+        // -- expressed, as for every other character, through the toggle
+        // backing each member's own class (`toggleBackedClass(of:)`). Before
+        // this, classmates.com's `allowed: lower, upper, digit, [!@#$%^&*]`
+        // put those eight symbols in every generated password while the
+        // generator UI showed Symbols locked off and the popover said only
+        // letters and digits were permitted.
+        let requiredCustomClasses = requiredClassesFlat.filter(isCustomClass)
+        for characterClass in rules.allowedClasses
+        where isCustomClass(characterClass) && !requiredCustomClasses.contains(characterClass) {
             if case .custom(let members) = characterClass {
-                membership[characterClass, default: []].formUnion(members)
-                allCharacters.formUnion(members)
+                let requested = members.filter { toggleInPlay[toggleBackedClass(of: $0)] == true }
+                guard !requested.isEmpty else { continue }
+                membership[characterClass, default: []].formUnion(requested)
+                allCharacters.formUnion(requested)
             }
         }
-        for characterClass in requiredClassesFlat where isCustomClass(characterClass) {
+        for characterClass in requiredCustomClasses {
             if case .custom(let members) = characterClass {
                 membership[characterClass, default: []].formUnion(members)
                 allCharacters.formUnion(members)

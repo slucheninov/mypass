@@ -29,7 +29,7 @@ final class PasswordRulesToggleEvaluatorTests: XCTestCase {
         guard case .success(let rule) = PasswordRulesParser.parse(ruleString) else {
             return XCTFail("expected a valid parse")
         }
-        let locked = PasswordRulesToggleEvaluator.lockedOnClasses(for: rule)
+        let locked = PasswordGenerator.forcedOnToggleClasses(for: rule)
         XCTAssertEqual(locked, [.digit, .special, .upper, .lower])
     }
 
@@ -46,7 +46,7 @@ final class PasswordRulesToggleEvaluatorTests: XCTestCase {
         // "lock it only while off" would unlock itself the instant this
         // forced the toggle true, letting the user immediately turn it
         // back off and recreate the same dead end.
-        XCTAssertEqual(PasswordRulesToggleEvaluator.lockedOnClasses(for: rule), [.digit])
+        XCTAssertEqual(PasswordGenerator.forcedOnToggleClasses(for: rule), [.digit])
         let evaluationWithDigitsOff = PasswordRulesToggleEvaluator.evaluate(rule: rule, toggles: toggles(digits: false))
         XCTAssertEqual(evaluationWithDigitsOff.lockedOn, [.digit])
         let evaluationWithDigitsOn = PasswordRulesToggleEvaluator.evaluate(rule: rule, toggles: toggles(digits: true))
@@ -54,16 +54,36 @@ final class PasswordRulesToggleEvaluatorTests: XCTestCase {
     }
 
     func testLocksOffClassesTheAllowedSetExcludes() throws {
+        // Real rule from the vendored 2026-09-12 snapshot, pixnet.cc --
+        // permits exactly two named classes and names no custom class at
+        // all, so both digits and symbols must be locked off.
+        let ruleString = "minlength: 4; maxlength: 16; allowed: lower, upper;"
+        guard case .success(let rule) = PasswordRulesParser.parse(ruleString) else {
+            return XCTFail("expected a valid parse")
+        }
+        XCTAssertEqual(PasswordGenerator.excludedToggleClasses(for: rule), [.digit, .special])
+    }
+
+    func testDoesNotLockSymbolsOffWhenACustomClassPermitsSome() throws {
         // Real rule from the vendored 2026-09-12 snapshot, aetna.com --
-        // allows lower/upper/digit (upper and digit via `required:`,
-        // folded into `allowedClasses`; lower via `allowed:`) plus a
-        // bespoke custom class, but never names `special` anywhere, so
-        // symbols must be locked off.
+        // allows lower/upper/digit (upper and digit via `required:`, folded
+        // into `allowedClasses`; lower via `allowed:`) plus the bespoke
+        // custom class `[-_&#@]`. It never names `special`, and this
+        // evaluator's predecessor therefore locked Symbols off and let
+        // `PasswordRulesSummary` tell the user only letters and digits were
+        // permitted -- while `PasswordGenerator` put those five characters
+        // into every generated password regardless. The custom class is now
+        // read for what it plainly says: this site permits some symbols, so
+        // the toggle stays the user's to make.
         let ruleString = "minlength: 8; maxlength: 20; max-consecutive: 2; required: upper; required: digit; allowed: lower, [-_&#@];"
         guard case .success(let rule) = PasswordRulesParser.parse(ruleString) else {
             return XCTFail("expected a valid parse")
         }
-        XCTAssertEqual(PasswordRulesToggleEvaluator.lockedOffClasses(for: rule), [.special])
+        XCTAssertEqual(PasswordGenerator.excludedToggleClasses(for: rule), [])
+        XCTAssertEqual(
+            PasswordRulesToggleEvaluator.restrictedAllowedToggleClasses(for: rule),
+            [.lower, .upper, .digit, .special]
+        )
     }
 
     func testFlagsAConflictWhenEnabledTogglesShareNothingWithATwoClassAllowedSet() throws {
@@ -119,7 +139,7 @@ final class PasswordRulesToggleEvaluatorTests: XCTestCase {
         }
         rule.allowedClasses = []
         XCTAssertNil(PasswordRulesToggleEvaluator.restrictedAllowedToggleClasses(for: rule))
-        XCTAssertEqual(PasswordRulesToggleEvaluator.lockedOffClasses(for: rule), [])
-        XCTAssertEqual(PasswordRulesToggleEvaluator.lockedOnClasses(for: rule), [])
+        XCTAssertEqual(PasswordGenerator.excludedToggleClasses(for: rule), [])
+        XCTAssertEqual(PasswordGenerator.forcedOnToggleClasses(for: rule), [])
     }
 }

@@ -1,14 +1,26 @@
 import MyPassKit
 
-/// Pure, testable rule-vs-toggle logic extracted from `PasswordGeneratorView`
-/// for the same reason `PasswordRulesSummary` was extracted from it earlier
-/// in the same task: SwiftUI view state and computed properties on a `View`
-/// cannot be exercised directly by XCTest. This is exactly the logic a
-/// Task 7 review turned on -- locked-on classes, locked-off classes, and
-/// the allowed/enabled overlap check below -- so it now has its own direct
-/// tests (`PasswordRulesToggleEvaluatorTests`) for the boundary cases the
-/// review named, rather than only the inspection a private view property
-/// allowed.
+/// Presents, for `PasswordGeneratorView` and `PasswordRulesSummary`, the
+/// answer `PasswordGenerator` gives to "what does this rule permit, given
+/// these toggles?" -- it no longer decides that question itself.
+///
+/// It used to. Locked-on classes, locked-off classes and the permitted-set
+/// check all lived here as this layer's own logic, while
+/// `PasswordGenerator.effectivePool` answered the same question again for
+/// generation. A whole-branch review found the two disagreeing in both
+/// directions -- see the doc comment on `PasswordGenerator`'s
+/// `permittedToggleClasses(for:)` in MyPassKit for the two concrete rules
+/// (amundi-ee.com and classmates.com) that exposed it. The engine is now the
+/// single authority; what remains here is the presentation-only part: naming
+/// the classes in a stable display order, and the "your current selection
+/// shares nothing with what this site permits" warning, which is a UI concern
+/// with no equivalent inside the engine.
+///
+/// This type stays a plain, testable enum rather than a set of private
+/// computed properties on the view, for the same reason `PasswordRulesSummary`
+/// does: SwiftUI view state cannot be exercised directly by XCTest, and
+/// `PasswordRulesToggleEvaluatorTests` covers the boundary cases a review
+/// named.
 enum PasswordRulesToggleEvaluator {
     /// The generator's four user-facing character-class toggles, named to
     /// match `PasswordGeneratorOptions`'s own field names (rather than
@@ -22,133 +34,68 @@ enum PasswordRulesToggleEvaluator {
     }
 
     struct Evaluation: Equatable {
-        /// Classes the view locks ON regardless of the toggle: the rule's
-        /// own `required:` clauses, plus the one further case `required:`
-        /// alone doesn't cover -- see `lockedOnClasses(for:)`'s doc
-        /// comment.
+        /// Classes the view locks ON regardless of the toggle, exactly as
+        /// `PasswordGenerator.forcedOnToggleClasses(for:)` defines them --
+        /// the rule's own `required:` clauses plus the sole-permitted-class
+        /// case that `required:` alone does not cover.
         let lockedOn: Set<PasswordRules.CharacterClass>
-        /// Classes the view locks OFF: the four toggle-backed classes the
-        /// rule's effective allowed set excludes entirely.
+        /// Classes the view locks OFF: the toggle-backed classes the rule
+        /// excludes entirely, per
+        /// `PasswordGenerator.excludedToggleClasses(for:)`.
         let lockedOff: Set<PasswordRules.CharacterClass>
-        /// Non-empty exactly when the rule restricts `allowed:` to two or
-        /// more (but not all four) toggle-backed classes, no `required:`
-        /// clause already forces one of them on, and NONE of the caller's
-        /// current `toggles` overlap that permitted set -- i.e.
-        /// generation is guaranteed to fail with
+        /// Non-empty exactly when the rule restricts the character set to
+        /// two or more (but not all four) toggle-backed classes, no locked-on
+        /// class already forces one of them on, and NONE of the caller's
+        /// current `toggles` overlap that permitted set -- i.e. generation is
+        /// guaranteed to fail with
         /// `PasswordGeneratorError.noCharacterClassSelected` given the
         /// current selection. Named in this type's own display order (see
         /// `toggleClassOrder`) so a caller can render the list directly.
-        /// See `lockedOnClasses(for:)` for why a permitted set of exactly
-        /// ONE class is instead handled by locking rather than by this
-        /// conflict list: that case leaves the user no real choice to
-        /// take away, this one does, and forcing a class on regardless of
-        /// the user's own preference would take that choice away for a
-        /// case where the user has an actual choice among two or more
-        /// permitted classes.
+        ///
+        /// A permitted set of exactly ONE class is handled by locking that
+        /// class on instead: it leaves the user no real choice to take away,
+        /// whereas forcing a class on when two or more are permitted would
+        /// take away a choice the user genuinely has. A permitted set of all
+        /// four is not a restriction at all -- there is nothing to warn
+        /// about, and "site X only allows lowercase letters, uppercase
+        /// letters, digits and symbols" would be a nonsense sentence -- so
+        /// that case is excluded too, the same threshold
+        /// `PasswordRulesSummary` applies to its own permitted-set sentence.
         let conflictingWithAllowedClasses: [PasswordRules.CharacterClass]
     }
 
-    /// Toggle-backed classes this evaluator reasons about, and their
-    /// display order wherever a caller renders a list of them. `internal`
-    /// (no access modifier) rather than `private` so `PasswordRulesSummary`
-    /// shares this exact list instead of declaring its own copy of it --
-    /// two independently maintained copies of "which four classes exist,
-    /// and in what order" is exactly the kind of drift that let the
-    /// popover and the toggle-locking UI disagree about a rule's permitted
-    /// set before this evaluator existed as their single shared source of
-    /// truth.
-    static let toggleClassOrder: [PasswordRules.CharacterClass] = [.lower, .upper, .digit, .special]
+    /// Display order wherever a caller renders a list of the toggle-backed
+    /// classes. Delegates to the engine's own list rather than declaring a
+    /// second copy of "which four classes exist, and in what order."
+    static var toggleClassOrder: [PasswordRules.CharacterClass] { PasswordGenerator.toggleBackedClasses }
 
     static func evaluate(rule: PasswordRules, toggles: Toggles) -> Evaluation {
-        let lockedOn = lockedOnClasses(for: rule)
-        let lockedOff = lockedOffClasses(for: rule)
+        let lockedOn = PasswordGenerator.forcedOnToggleClasses(for: rule)
+        let lockedOff = PasswordGenerator.excludedToggleClasses(for: rule)
 
         var conflict: [PasswordRules.CharacterClass] = []
-        if let restricted = restrictedAllowedToggleClasses(for: rule), restricted.count >= 2 {
+        if let permitted = restrictedAllowedToggleClasses(for: rule),
+           permitted.count >= 2,
+           permitted.count < toggleClassOrder.count,
+           lockedOn.isDisjoint(with: permitted) {
             let enabled = enabledClasses(in: toggles)
-            if restricted.isDisjoint(with: enabled) {
-                conflict = toggleClassOrder.filter { restricted.contains($0) }
+            if permitted.isDisjoint(with: enabled) {
+                conflict = toggleClassOrder.filter { permitted.contains($0) }
             }
         }
 
         return Evaluation(lockedOn: lockedOn, lockedOff: lockedOff, conflictingWithAllowedClasses: conflict)
     }
 
-    /// The rule's own `allowed:` set, restricted to the four toggle-backed
-    /// classes -- nil when the rule places no restriction there at all.
-    /// `internal` (no access modifier) rather than `private`, specifically
-    /// so `PasswordRulesSummary` can reuse this exact logic to decide
-    /// whether its own permitted-set sentence applies, rather than
-    /// re-deriving the same "what does `allowed:` actually restrict"
-    /// question a second, potentially divergent way.
-    ///
-    /// Two cases both mean "no restriction, the user's toggles decide,"
-    /// mirroring `PasswordGenerator.effectivePool`'s own
-    /// `noExplicitAllowList` / `asciiPrintableInPlay` handling in
-    /// MyPassKit: an EMPTY `allowedClasses` (no explicit `allowed:`
-    /// property was present when the rule was parsed), and a set that
-    /// explicitly names `.asciiPrintable` (Apple's grammar for "any of
-    /// these four is fine"). `PasswordRulesParser` never actually produces
-    /// the empty case today -- a rule with no `allowed:` property defaults
-    /// to `[.asciiPrintable]` -- but relying on that as an unstated
-    /// invariant here, rather than checking for it explicitly, was exactly
-    /// the latent divergence between this view's logic and the engine a
-    /// Task 7 review caught: this function keeps behaving correctly even
-    /// if a rule value with a genuinely empty list ever reaches it.
+    /// The toggle-backed classes the rule permits -- nil when the rule places
+    /// no restriction there at all. A thin alias for
+    /// `PasswordGenerator.permittedToggleClasses(for:)`, kept so this UI
+    /// layer's two callers (`PasswordGeneratorView`'s conflict warning and
+    /// `PasswordRulesSummary`'s permitted-set sentence) read the vocabulary
+    /// of the surface they belong to; the answer itself comes from the
+    /// engine.
     static func restrictedAllowedToggleClasses(for rule: PasswordRules) -> Set<PasswordRules.CharacterClass>? {
-        guard !rule.allowedClasses.isEmpty, !rule.allowedClasses.contains(.asciiPrintable) else {
-            return nil
-        }
-        return Set(toggleClassOrder).intersection(rule.allowedClasses)
-    }
-
-    /// Classes locked ON regardless of the user's own toggle: the rule's
-    /// `required:` clauses (Decision 4 of the spec -- "a site that
-    /// mandates a digit gets one even if the user turned digits off"),
-    /// plus one further case `required:` alone doesn't cover.
-    ///
-    /// Some real vendored rules restrict the character set without
-    /// requiring anything. amundi-ee.com's whole rule is "minlength: 6;
-    /// maxlength: 6; allowed: digit; max-consecutive: 3" -- a six-digit
-    /// PIN. There is no `required:` clause naming digits at all, but
-    /// digits are the ONLY character this rule permits, so a user whose
-    /// own saved defaults have digits turned off would otherwise sail
-    /// through the generator screen with every toggle looking legitimate
-    /// and only discover the conflict as an opaque
-    /// `PasswordGeneratorError.noCharacterClassSelected` after pressing
-    /// Generate.
-    ///
-    /// The fix: when the rule's `allowed:` set restricted to the four
-    /// toggle-backed classes has EXACTLY ONE member, that member is locked
-    /// on the same way a `required:` class already is. This is
-    /// unconditional on the class's current toggle value (not "only lock
-    /// it while it is currently off") specifically to avoid a flip-flop: a
-    /// condition like "lock it only while nothing allowed is enabled"
-    /// would unlock itself the instant this forced the toggle true,
-    /// letting the user immediately turn it back off and recreate the
-    /// exact same dead end.
-    ///
-    /// Deliberately NOT extended to a permitted set of two or more
-    /// classes: there the user has a genuine choice among the permitted
-    /// classes, and forcing one of them on regardless of the user's own
-    /// preference would take that choice away. `evaluate(rule:toggles:)`'s
-    /// `conflictingWithAllowedClasses` instead surfaces that broader case
-    /// as a visible warning, without picking a class for the user.
-    static func lockedOnClasses(for rule: PasswordRules) -> Set<PasswordRules.CharacterClass> {
-        var locked = Set(rule.requiredClauses.flatMap { $0 })
-        if let restricted = restrictedAllowedToggleClasses(for: rule), restricted.count == 1 {
-            locked.formUnion(restricted)
-        }
-        return locked
-    }
-
-    /// The four toggle-backed classes the rule's effective allowed set
-    /// excludes entirely -- empty when the rule places no restriction
-    /// there (see `restrictedAllowedToggleClasses(for:)`, including the
-    /// explicit empty-list handling documented there).
-    static func lockedOffClasses(for rule: PasswordRules) -> Set<PasswordRules.CharacterClass> {
-        guard let restricted = restrictedAllowedToggleClasses(for: rule) else { return [] }
-        return Set(toggleClassOrder).subtracting(restricted)
+        PasswordGenerator.permittedToggleClasses(for: rule)
     }
 
     private static func enabledClasses(in toggles: Toggles) -> Set<PasswordRules.CharacterClass> {
