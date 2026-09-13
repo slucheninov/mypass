@@ -35,6 +35,7 @@
     totpBanner: 'topOnly',
     totpScan: 'topOnly',
     totpCandidateQuery: 'topOnly',
+    newPasswordFieldQuery: 'topOnly',
   };
 
   function isFeatureEnabledInFrame(feature, isTopFrame) {
@@ -527,6 +528,15 @@
     return detectTotpCandidateWithPriority(root);
   }
 
+  // What the content script answers a popup's `{ type: 'queryNewPasswordField' }`
+  // request with — whether this document currently has a field the popup could offer
+  // to fill with a generated password. Exported (like buildTotpCandidateQueryResponse
+  // above) so the classification is testable without a DOM.
+  function buildNewPasswordFieldQueryResponse(root) {
+    const hasNewPasswordField = findFillableFields(root).some((field) => field.kind === 'password' && field.isNewPassword);
+    return { hasNewPasswordField };
+  }
+
   // `priority` is the detected candidate's own priority (1=link, 2=text, 3=QR, 4=manual key),
   // threaded in from the caller's detection result. On
   // dismiss we store that ACTUAL priority — not a hardcoded weakest value — so that
@@ -977,6 +987,18 @@
     return { root, rows, unlockButton, ringCircles };
   }
 
+  // The inline panel's "Generate password" action — a plain row, not one of
+  // buildPanelContent's credential rows, since it has no entry behind it. Appended
+  // by togglePanel only for a field kind === 'password' with isNewPassword === true.
+  function buildGeneratePasswordRow(doc, onClick) {
+    const row = doc.createElement('button');
+    row.setAttribute('type', 'button');
+    row.setAttribute('class', 'row generate-password-row');
+    row.textContent = 'Generate password';
+    row.addEventListener('click', onClick);
+    return row;
+  }
+
   // Set by the browser-only wiring below, once icons/observers/panel actually exist to tear
   // down. Stays a no-op under node and in the sliver of time before that wiring runs — there
   // is nothing to release yet in either case.
@@ -1108,7 +1130,7 @@
       window.requestAnimationFrame(syncIconPositions);
     }
 
-    function attachIconTo(input, kind) {
+    function attachIconTo(input, kind, isNewPassword) {
       if (attachedIcons.has(input)) return;
       // Same reason as observeTotpCandidates: a bodyless document (SVG/XML in an iframe)
       // has nowhere to mount the host. Such a document cannot contain an <input> either,
@@ -1117,7 +1139,7 @@
       if (!document.body) return;
       const { host, button } = buildIconHost(document);
       button.addEventListener('click', (event) => {
-        handleIconActivate(event, () => togglePanel(input, kind));
+        handleIconActivate(event, () => togglePanel(input, kind, isNewPassword));
       });
       // Position synchronously before the first paint so the icon never flashes at the
       // body origin and then jumps into place on the next rAF.
@@ -1134,7 +1156,7 @@
     function attachIcons() {
       pruneDetachedIcons();
       for (const field of findFillableFields(document)) {
-        attachIconTo(field.input, field.kind);
+        attachIconTo(field.input, field.kind, field.isNewPassword);
       }
     }
 
@@ -1180,7 +1202,7 @@
     }
     handleExtensionContextLost = teardownExtensionContext;
 
-    function togglePanel(input, kind) {
+    function togglePanel(input, kind, isNewPassword) {
       const wasOpenForThisInput = !!(openPanel && openPanel.input === input);
       closePanel();
       if (wasOpenForThisInput) return;
@@ -1212,6 +1234,17 @@
             }
           },
         });
+        if (kind === 'password' && isNewPassword) {
+          const generateRow = buildGeneratePasswordRow(document, trustedClickHandler(() => {
+            sendRuntimeMessage({ type: 'generatePassword', domain: location.hostname }, (genResponse) => {
+              if (genResponse && genResponse.type === 'generatedPassword' && genResponse.password) {
+                setNativeValue(input, genResponse.password);
+              }
+              closePanel();
+            });
+          }));
+          content.root.appendChild(generateRow);
+        }
         shadow.appendChild(content.root);
         const rect = input.getBoundingClientRect();
         host.style.setProperty('position', 'absolute', 'important');
@@ -1257,6 +1290,11 @@
         // on whichever frame is actually allowed to answer.
         if (!runsHere('totpCandidateQuery')) return;
         sendResponse(buildTotpCandidateQueryResponse(document));
+        return;
+      }
+      if (message.type === 'queryNewPasswordField') {
+        if (!runsHere('newPasswordFieldQuery')) return;
+        sendResponse(buildNewPasswordFieldQueryResponse(document));
         return;
       }
       if (message.type === 'applyFill') {
@@ -1360,7 +1398,7 @@
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
       classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
       isTrustedActivation, handleIconActivate, handleEntrySelect, trustedClickHandler,
-      buildTotpCandidateQueryResponse, showTotpSaveBanner, showSaveBanner,
+      buildTotpCandidateQueryResponse, buildNewPasswordFieldQueryResponse, buildGeneratePasswordRow, showTotpSaveBanner, showSaveBanner,
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,

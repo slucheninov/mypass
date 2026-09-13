@@ -384,6 +384,8 @@ let routeTotpCandidate = null;
 let restorePendingTotpCandidate = null;
 let handleAddTotpClick = null;
 let requestPageTotpCandidate = null;
+let requestPageNewPasswordField = null;
+let handleGeneratePasswordClick = null;
 let rehydratePendingPasskeyCeremony = null;
 let renderPasskeyCeremonyPanel = null;
 let renderPasskeyPicker = null;
@@ -492,6 +494,11 @@ if (typeof document !== 'undefined') {
   // PANEL_SECTIONS/showPanel always setting `.hidden = true` before selectively revealing):
   // the section must only appear once a real 2FA candidate is in context.
   addTotpSection.hidden = true;
+
+  const generatePasswordSection = document.getElementById('generate-password-section');
+  const generatePasswordBtn = document.getElementById('generate-password-btn');
+  const generatePasswordErrorEl = document.getElementById('generate-password-error');
+  generatePasswordSection.hidden = true;
 
   // Set by queryCredentials for every credential lookup (initial load, retries, and
   // post-pairing/post-unlock re-checks) so the Add-2FA button can reuse the active tab's
@@ -1153,6 +1160,58 @@ if (typeof document !== 'undefined') {
     });
   };
 
+  // Mirrors requestPageTotpCandidate: asks the active tab's content script whether this
+  // page currently has a new-password field, and shows/hides the Generate section
+  // accordingly. Restricted to "there is a field to fill" for a concrete reason (Decision
+  // 7 of the design spec): without a target field, the only place to put a freshly
+  // generated secret would be the system clipboard, and the extension has no bridge call
+  // equivalent to the app's own ClipboardAutoClear — so this popup action must never
+  // create that secret-in-clipboard state in the first place.
+  requestPageNewPasswordField = function (tabId) {
+    if (typeof tabId !== 'number' || typeof chrome.tabs.sendMessage !== 'function') return;
+    chrome.tabs.sendMessage(tabId, { type: 'queryNewPasswordField' }, (resp) => {
+      const lastError = chrome.runtime.lastError;
+      if (lastError || !resp || !resp.hasNewPasswordField) return;
+      generatePasswordSection.hidden = false;
+    });
+  };
+
+  // Generates a password via the bridge and fills it straight into the active tab's
+  // new-password field — scoped to frameId 0 for the same reason sendApplyFill in
+  // background.js already is: the popup only ever acts on the active tab's top-level
+  // document (opening the popup is itself the gesture that grants activeTab there).
+  handleGeneratePasswordClick = function (activeTabUrl) {
+    generatePasswordErrorEl.hidden = true;
+    let domain;
+    try {
+      domain = new URL(activeTabUrl).hostname;
+    } catch (e) {
+      generatePasswordErrorEl.textContent = "Couldn't determine this page's domain";
+      generatePasswordErrorEl.hidden = false;
+      return;
+    }
+    chrome.runtime.sendMessage({ type: 'generatePassword', domain }, (response) => {
+      if (!response || response.type !== 'generatedPassword' || !response.password) {
+        generatePasswordErrorEl.textContent = describeSaveProposalOutcome(response);
+        generatePasswordErrorEl.hidden = false;
+        return;
+      }
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        const activeTab = tabs[0];
+        if (!activeTab || activeTab.id === undefined) return;
+        chrome.tabs.sendMessage(
+          activeTab.id,
+          { type: 'applyFill', username: null, password: response.password, totp: null, url: activeTabUrl },
+          { frameId: 0 },
+          () => { void chrome.runtime.lastError; }
+        );
+        window.close();
+      });
+    });
+  };
+
+  generatePasswordBtn.onclick = () => handleGeneratePasswordClick(currentTabUrl);
+
   // A pending ceremony is checked first and, when present, owns the popup outright: the
   // popup was opened *by* that ceremony, and the user is being asked to make a security
   // decision. Running the ordinary credential lookup alongside it would let whichever
@@ -1177,6 +1236,7 @@ if (typeof document !== 'undefined') {
         }
         queryCredentials(activeTab.url);
         requestPageTotpCandidate(activeTab.id);
+        requestPageNewPasswordField(activeTab.id);
       });
     });
   };
@@ -1224,6 +1284,8 @@ if (typeof module !== 'undefined') {
     restorePendingTotpCandidate,
     handleAddTotpClick,
     requestPageTotpCandidate,
+    requestPageNewPasswordField,
+    handleGeneratePasswordClick,
     PENDING_PASSKEY_KEY,
     passkeyCeremonySummary,
     passkeyTargetSummary,

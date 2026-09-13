@@ -3,7 +3,8 @@ const PAIRING_STORAGE_KEY = "pairingSecret";
 const knownTypes = [
   "getCredentials", "fillCredential", "getTotp", "proposeSaveLogin", "proposeSaveTotp",
   "startPairing", "completePairing", "requestUnlock",
-  "getPasskeyProxyStatus", "setPasskeyProxyEnabled", "passkeyCreateConfirm", "passkeyGetApprove"
+  "getPasskeyProxyStatus", "setPasskeyProxyEnabled", "passkeyCreateConfirm", "passkeyGetApprove",
+  "generatePassword"
 ];
 
 const PASSKEY_WATCHDOG_MS = 120000;
