@@ -216,7 +216,12 @@ struct EntryEditView: View {
             FavoriteToggleToolbarItem(isFavorite: $isFavorite)
         }
         .sheet(isPresented: $showPasswordGenerator) {
-            PasswordGeneratorView(initialSiteDomain: ExtensionEntryMatcher.registrableDomain(from: url) ?? "") { generated in
+            // The FULL host, not a registrable domain: PasswordRulesCatalog
+            // walks upward from the host to the registrable-domain ceiling
+            // itself, so reducing first discarded every rule keyed below that
+            // ceiling. The extension passes `location.hostname` unreduced and
+            // therefore found rules this sheet did not.
+            PasswordGeneratorView(initialSiteDomain: ExtensionEntryMatcher.host(from: url) ?? "") { generated in
                 password = generated
                 showPasswordGenerator = false
             }

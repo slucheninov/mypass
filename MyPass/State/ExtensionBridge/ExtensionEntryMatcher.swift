@@ -66,11 +66,19 @@ enum ExtensionEntryMatcher {
         return PublicSuffixList.registrableDomain(of: resolvedHost) ?? resolvedHost
     }
 
-    /// Whole-host string comparison, including port, case-insensitive — no PSL
-    /// reduction at all. IP literals have nothing to reduce to, so this mode's
-    /// behaviour for an IP-literal entry coincides with `registrableDomain`'s
-    /// (Decision 9).
-    private static func hostAndPort(from urlString: String) -> String? {
+    /// The URL's bare host, lowercased, with no port and no PSL reduction at
+    /// all — the shape `PasswordRulesCatalog.rules(forHost:)` expects, since
+    /// that catalog does its own upward walk from the full host to the
+    /// registrable-domain ceiling. Reducing a host before handing it over
+    /// throws away every catalog key below that ceiling
+    /// (`account.samsung.com`, `key.harvard.edu`, `id.nfpa.org` and
+    /// `app.digio.in` all carry rules their apex domains do not), which is
+    /// exactly what `EntryEditView`'s generator sheet used to do.
+    ///
+    /// Accepts a bare host or a scheme-less string too ("example.com",
+    /// "example.com/login"), the same tolerance `registrableDomain(from:)`
+    /// above already extends to a user-typed entry URL.
+    static func host(from urlString: String) -> String? {
         let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return nil }
         var url = URL(string: trimmed)
@@ -78,6 +86,20 @@ enum ExtensionEntryMatcher {
             url = URL(string: "https://" + trimmed)
         }
         guard let host = url?.host?.lowercased(), !host.isEmpty else { return nil }
+        return host
+    }
+
+    /// Whole-host string comparison, including port, case-insensitive — no PSL
+    /// reduction at all. IP literals have nothing to reduce to, so this mode's
+    /// behaviour for an IP-literal entry coincides with `registrableDomain`'s
+    /// (Decision 9).
+    private static func hostAndPort(from urlString: String) -> String? {
+        guard let host = host(from: urlString) else { return nil }
+        let trimmed = urlString.trimmingCharacters(in: .whitespacesAndNewlines)
+        var url = URL(string: trimmed)
+        if url?.host == nil {
+            url = URL(string: "https://" + trimmed)
+        }
         guard let port = url?.port else { return host }
         return "\(host):\(port)"
     }
