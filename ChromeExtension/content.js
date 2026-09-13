@@ -173,6 +173,20 @@
     return !disabled && !readOnly;
   }
 
+  // A password field's autocomplete attribute is a decisive signal when present — the
+  // same trust level scoreOtpLikeness already gives autocomplete=one-time-code. When it
+  // is absent, fall back to the confirm-password shape: a signup form's "new password"
+  // and "confirm password" fields are the only common case with two or more password
+  // fields visible at once. A single, unhinted password field is treated as a login
+  // field, not a new-password field — offering "Generate password" there would replace
+  // a credential the user is trying to type in order to sign in, not create.
+  function isNewPasswordCandidate(input, allPasswordInputs) {
+    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
+    if (autocomplete === 'new-password') return true;
+    if (autocomplete === 'current-password') return false;
+    return allPasswordInputs.length >= 2;
+  }
+
   // Returns every field the inline icon may attach to. Deliberately looser than the old
   // findLoginForm: a password field no longer has to sit inside a <form>, and a username
   // field is emitted even when no password field exists, so identifier-first login screens
@@ -183,7 +197,7 @@
 
     const passwords = Array.from(scope.querySelectorAll('input[type="password"]')).filter(isFieldVisible);
     for (const password of passwords) {
-      fields.push({ input: password, kind: 'password' });
+      fields.push({ input: password, kind: 'password', isNewPassword: isNewPasswordCandidate(password, passwords) });
     }
 
     const formScope = (passwords[0] && passwords[0].closest && passwords[0].closest('form')) || scope;
@@ -1324,7 +1338,7 @@
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
-      isFieldVisible, findFillableFields, findLoginForm, resolveFillTargets,
+      isFieldVisible, findFillableFields, findLoginForm, resolveFillTargets, isNewPasswordCandidate,
       isFillTargetUsable,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
