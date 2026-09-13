@@ -632,9 +632,9 @@ plan: [`2026-09-12-site-password-rules-and-uri-matching`](../superpowers/plans/2
 - [x] **Task 2** — `PasswordRulesParser` for the Password Rules grammar, with fixtures derived from Apple's own reference parser tests
 - [x] **Task 3** — `PasswordRulesCatalog`, a host-keyed rule lookup that walks up to (but never above) the registrable domain
 - [x] **Task 4** — `PasswordGenerator.generate(options:rules:)` honours required/allowed character classes, length clamping, `max-consecutive` repair, and a typed `.unsatisfiableRules` failure
-- [x] **Task 5** — `PasswordGeneratorView` surfaces the active rule in plain English, with a control to override it
+- [x] **Task 5** — Property test against every rule in the vendored snapshot: every generated password satisfies its own rule
 - [x] **Task 6** — `PasswordGeneratorDefaults` persists the user's generator toggles, shared by the app's own Generate button and the bridge handler
-- [x] **Task 7** — Property test against every rule in the vendored snapshot: every generated password satisfies its own rule
+- [x] **Task 7** — `PasswordGeneratorView` surfaces the active rule in plain English, with a control to override it
 - [x] **Task 8** — `URIMatchMode` and its hidden `MyPass.URIMatchMode` field on `KdbxEntry`, defaulting to `.registrableDomain` with no migration needed
 - [x] **Task 9** — `ExtensionEntryMatcher` matches per-entry against all five `URIMatchMode` values, with `never` excluded before any credential list is assembled
 - [x] **Task 10** — A match-mode picker beside the URL field in the entry edit form, with per-mode help text
