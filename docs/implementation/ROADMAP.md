@@ -628,24 +628,22 @@ registrable-domain rule. Spec:
 [`2026-09-12-site-password-rules-and-uri-matching-design`](../superpowers/specs/2026-09-12-site-password-rules-and-uri-matching-design.md),
 plan: [`2026-09-12-site-password-rules-and-uri-matching`](../superpowers/plans/2026-09-12-site-password-rules-and-uri-matching.md).
 
-- [ ] **Task 1** — Vendor Apple's `password-rules.json` snapshot into `Packages/MyPassKit`, with its provenance file and `scripts/update-password-rules.sh`
-- [ ] **Task 2** — `PasswordRulesParser` for the Password Rules grammar, with fixtures derived from Apple's own reference parser tests
-- [ ] **Task 3** — `PasswordRulesCatalog`, a host-keyed rule lookup that walks up to (but never above) the registrable domain
-- [ ] **Task 4** — `PasswordGenerator.generate(options:rules:)` honours required/allowed character classes, length clamping, `max-consecutive` repair, and a typed `.unsatisfiableRules` failure
-- [ ] **Task 5** — `PasswordGeneratorView` surfaces the active rule in plain English, with a control to override it
-- [ ] **Task 6** — `PasswordGeneratorDefaults` persists the user's generator toggles, shared by the app's own Generate button and the bridge handler
-- [ ] **Task 7** — Property test against every rule in the vendored snapshot: every generated password satisfies its own rule
-- [ ] **Task 8** — `URIMatchMode` and its hidden `MyPass.URIMatchMode` field on `KdbxEntry`, defaulting to `.registrableDomain` with no migration needed
-- [ ] **Task 9** — `ExtensionEntryMatcher` matches per-entry against all five `URIMatchMode` values, with `never` excluded before any credential list is assembled
-- [ ] **Task 10** — A match-mode picker beside the URL field in the entry edit form, with per-mode help text
-- [ ] **Task 11** — The 16th bridge request/response pair, `generatePassword`/`generatedPassword`, wired through every exhaustive switch in `ExtensionBridgeKit`, `ExtensionBridgeService`, and `LoopbackServer`
-- [ ] **Task 12** — `content.js` classifies password fields as `isNewPassword` via `autocomplete=new-password` or the confirm-password shape
-- [ ] **Task 13** — "Generate password" actions in the inline panel and the popup, gated on `event.isTrusted` and on the page actually having a new-password field
+- [x] **Task 1** — Vendor Apple's `password-rules.json` snapshot into `Packages/MyPassKit`, with its provenance file and `scripts/update-password-rules.sh`
+- [x] **Task 2** — `PasswordRulesParser` for the Password Rules grammar, with fixtures derived from Apple's own reference parser tests
+- [x] **Task 3** — `PasswordRulesCatalog`, a host-keyed rule lookup that walks up to (but never above) the registrable domain
+- [x] **Task 4** — `PasswordGenerator.generate(options:rules:)` honours required/allowed character classes, length clamping, `max-consecutive` repair, and a typed `.unsatisfiableRules` failure
+- [x] **Task 5** — `PasswordGeneratorView` surfaces the active rule in plain English, with a control to override it
+- [x] **Task 6** — `PasswordGeneratorDefaults` persists the user's generator toggles, shared by the app's own Generate button and the bridge handler
+- [x] **Task 7** — Property test against every rule in the vendored snapshot: every generated password satisfies its own rule
+- [x] **Task 8** — `URIMatchMode` and its hidden `MyPass.URIMatchMode` field on `KdbxEntry`, defaulting to `.registrableDomain` with no migration needed
+- [x] **Task 9** — `ExtensionEntryMatcher` matches per-entry against all five `URIMatchMode` values, with `never` excluded before any credential list is assembled
+- [x] **Task 10** — A match-mode picker beside the URL field in the entry edit form, with per-mode help text
+- [x] **Task 11** — The 16th bridge request/response pair, `generatePassword`/`generatedPassword`, wired through every exhaustive switch in `ExtensionBridgeKit`, `ExtensionBridgeService`, and `LoopbackServer`
+- [x] **Task 12** — `content.js` classifies password fields as `isNewPassword` via `autocomplete=new-password` or the confirm-password shape
+- [x] **Task 13** — "Generate password" actions in the inline panel and the popup, gated on `event.isTrusted` and on the page actually having a new-password field
 
-**⛳ Gate 9** — `./scripts/test.sh` green, run unpiped and its actual output read (see
-"Known trap when running the suite" below — piping to `tail` reports the pipe's exit
-code, not the script's). Boxes above are ticked only once this run is confirmed green,
-per this repository's rule that a roadmap box means "implemented AND its tests pass."
+**⛳ Gate 9 — PASSED.** `./scripts/test.sh` green unpiped (`EXIT=0`,
+`** TEST SUCCEEDED **`, 0 Swift-package failures, all 17 node scripts OK).
 
 ## Known trap when running the suite
 
