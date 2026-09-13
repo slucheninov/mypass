@@ -1176,10 +1176,16 @@ if (typeof document !== 'undefined') {
     });
   };
 
-  // Generates a password via the bridge and fills it straight into the active tab's
-  // new-password field — scoped to frameId 0 for the same reason sendApplyFill in
-  // background.js already is: the popup only ever acts on the active tab's top-level
-  // document (opening the popup is itself the gesture that grants activeTab there).
+  // Generates a password via the bridge. The actual fill into the active tab is NOT done
+  // here: background.js's handleRuntimeMessage relays a successful generatedPassword
+  // response through the exact same relayFillToActiveTab/sendApplyFill path
+  // fillCredential already uses (query-the-active-tab, hostname pre-check, scope-to-
+  // frameId-0 all included) — this function used to hand-roll that same sequence itself,
+  // which is how it ended up as a second, less careful copy missing the hostname check.
+  // `url` travels alongside `domain` in the request purely so that relay has a page URL
+  // to compare against the active tab's URL; the app only ever reads `domain` from this
+  // message (PasswordRulesCatalog.rules(forHost:)), so the extra field is inert on the
+  // wire.
   handleGeneratePasswordClick = function (activeTabUrl) {
     generatePasswordErrorEl.hidden = true;
     let domain;
@@ -1190,23 +1196,13 @@ if (typeof document !== 'undefined') {
       generatePasswordErrorEl.hidden = false;
       return;
     }
-    chrome.runtime.sendMessage({ type: 'generatePassword', domain }, (response) => {
+    chrome.runtime.sendMessage({ type: 'generatePassword', domain, url: activeTabUrl }, (response) => {
       if (!response || response.type !== 'generatedPassword' || !response.password) {
         generatePasswordErrorEl.textContent = describeSaveProposalOutcome(response);
         generatePasswordErrorEl.hidden = false;
         return;
       }
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const activeTab = tabs[0];
-        if (!activeTab || activeTab.id === undefined) return;
-        chrome.tabs.sendMessage(
-          activeTab.id,
-          { type: 'applyFill', username: null, password: response.password, totp: null, url: activeTabUrl },
-          { frameId: 0 },
-          () => { void chrome.runtime.lastError; }
-        );
-        window.close();
-      });
+      window.close();
     });
   };
 

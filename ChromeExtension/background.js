@@ -535,6 +535,17 @@ function handleRuntimeMessage(message, sender, sendResponse) {
       sendResponse(stripCredentialSecrets(response));
       return;
     }
+    // The popup has no DOM access to the page at all, so a generated password reaching
+    // it has nowhere to go except this same relay fillCredential already uses — hostname
+    // pre-check included. Gated on !sender.tab (a content script's sender always carries
+    // sender.tab; the popup's never does, exactly the signal resolveSenderFillTarget
+    // already keys on) so a content-script-originated generatePassword is never ALSO
+    // relayed here: that script already wrote the password straight into the field the
+    // user clicked (content.js's own setNativeValue fill), and relaying it a second time
+    // would be exactly the "second way to write a value into a page" Task 13 ruled out.
+    if (message.type === "generatePassword" && response && response.type === "generatedPassword" && !sender.tab) {
+      relayFillToActiveTab(response, message.url, sender);
+    }
     sendResponse(response);
   });
 

@@ -999,6 +999,46 @@
     return row;
   }
 
+  // Decides what the generate-password row's click handler does with the bridge's
+  // response — pure, so the branch a user actually sees is unit-testable without a DOM.
+  // A successful generatedPassword response fills; every other shape surfaces a message
+  // instead of silently closing the panel. Task 11 deliberately split "your own generator
+  // has no character types enabled" from "this site's requirements could not be
+  // satisfied" into two different `error` messages, specifically so each points the user
+  // at the right place to fix it — collapsing them back into one generic string here would
+  // undo that, so an `error` response's own `message` is always used verbatim. Falls back
+  // to PANEL_MESSAGES.unavailable only when there is no usable response at all (extension
+  // context lost, native host unreachable with no message attached).
+  function classifyGeneratePasswordResponse(response) {
+    if (response && response.type === 'generatedPassword' && response.password) {
+      return { action: 'fill', password: response.password };
+    }
+    if (response && response.type === 'locked') {
+      return { action: 'showMessage', message: PANEL_MESSAGES.locked };
+    }
+    if (response && response.type === 'pairingRequired') {
+      return { action: 'showMessage', message: PANEL_MESSAGES.pairingRequired };
+    }
+    if (response && response.type === 'error' && response.message) {
+      return { action: 'showMessage', message: response.message };
+    }
+    return { action: 'showMessage', message: PANEL_MESSAGES.unavailable };
+  }
+
+  // Renders a generatePassword failure using the panel's own vocabulary — the same
+  // `.message` element buildPanelContent already renders for locked/pairingRequired/
+  // unavailable panels — rather than inventing a second presentation for this one action.
+  // Replaces any message already shown so retrying (e.g. after unlocking) doesn't stack
+  // duplicates.
+  function showGeneratePasswordMessage(doc, root, text) {
+    const existing = root.querySelector('.generate-password-message');
+    if (existing) existing.remove();
+    const message = doc.createElement('div');
+    message.setAttribute('class', 'message generate-password-message');
+    message.textContent = text;
+    root.appendChild(message);
+  }
+
   // Set by the browser-only wiring below, once icons/observers/panel actually exist to tear
   // down. Stays a no-op under node and in the sliver of time before that wiring runs — there
   // is nothing to release yet in either case.
@@ -1237,10 +1277,21 @@
         if (kind === 'password' && isNewPassword) {
           const generateRow = buildGeneratePasswordRow(document, trustedClickHandler(() => {
             sendRuntimeMessage({ type: 'generatePassword', domain: location.hostname }, (genResponse) => {
-              if (genResponse && genResponse.type === 'generatedPassword' && genResponse.password) {
-                setNativeValue(input, genResponse.password);
+              // Superseded by a later open, or cancelled by a close, while the request
+              // was in flight — same staleness guard the credential fetch above uses, so
+              // a delayed response never mutates a panel that is no longer the open one.
+              if (requestId !== panelRequestId) return;
+              const outcome = classifyGeneratePasswordResponse(genResponse);
+              if (outcome.action === 'fill') {
+                setNativeValue(input, outcome.password);
+                closePanel();
+                return;
               }
-              closePanel();
+              // A locked vault, a missing pairing, or a typed error (including the two
+              // Task 11 split apart) must reach the user here — this is the surface they
+              // just clicked on — rather than the panel silently closing with nothing to
+              // show for it.
+              showGeneratePasswordMessage(document, content.root, outcome.message);
             });
           }));
           content.root.appendChild(generateRow);
@@ -1398,7 +1449,8 @@
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
       classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
       isTrustedActivation, handleIconActivate, handleEntrySelect, trustedClickHandler,
-      buildTotpCandidateQueryResponse, buildNewPasswordFieldQueryResponse, buildGeneratePasswordRow, showTotpSaveBanner, showSaveBanner,
+      buildTotpCandidateQueryResponse, buildNewPasswordFieldQueryResponse, buildGeneratePasswordRow,
+      classifyGeneratePasswordResponse, showGeneratePasswordMessage, showTotpSaveBanner, showSaveBanner,
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
