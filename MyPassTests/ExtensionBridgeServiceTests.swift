@@ -1348,6 +1348,73 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             XCTAssertLessThanOrEqual(password.count, maxLength)
         }
     }
+
+    /// `ssa.gov`'s vendored rule (`required: lower; required: upper; required: digit;
+    /// required: [~!@#$%^&*];`) states no `minlength`/`maxlength` of its own, so the
+    /// generator's requested length passes through unclamped — four required clauses
+    /// can never fit in a 2-character password, which is exactly the shape of an
+    /// unsatisfiable SITE rule (as opposed to the user's own toggles leaving nothing
+    /// to draw from, covered separately below). `PasswordGeneratorDefaults.load()` in
+    /// the handler always reads `UserDefaults.standard` (it is not injectable the way
+    /// `PasswordRulesCatalog`/`PasswordGenerator` are), so this seeds and restores that
+    /// key directly, mirroring `OpenExistingVaultTests.testRetargetClearsSecondarySyncCheckpoints`.
+    func testGeneratePasswordReturnsSiteSpecificErrorWhenTheSitesRuleCannotBeSatisfied() throws {
+        let domain = "ssa.gov"
+        let rules = try XCTUnwrap(
+            PasswordRulesCatalog.rules(forHost: domain),
+            "ssa.gov is expected to carry a rule in the vendored password-rules.json snapshot from Task 1"
+        )
+        XCTAssertGreaterThan(
+            rules.requiredClauses.count, 2,
+            "this test relies on ssa.gov requiring more character classes than the 2-character length below can hold"
+        )
+        let priorLength = UserDefaults.standard.object(forKey: PasswordGeneratorDefaults.lengthKey)
+        addTeardownBlock {
+            if let priorLength {
+                UserDefaults.standard.set(priorLength, forKey: PasswordGeneratorDefaults.lengthKey)
+            } else {
+                UserDefaults.standard.removeObject(forKey: PasswordGeneratorDefaults.lengthKey)
+            }
+        }
+        UserDefaults.standard.set(2, forKey: PasswordGeneratorDefaults.lengthKey)
+
+        let response = service.handle(.generatePassword(token: "t", domain: domain, pairing: authorizedPairingSecret))
+
+        XCTAssertEqual(response, .error("This site's password requirements could not be satisfied"))
+    }
+
+    /// The other of the two `PasswordGeneratorError` causes the handler distinguishes:
+    /// here the user's own generator toggles (Settings > Password Generator) leave no
+    /// character class enabled at all, unrelated to any site's rule — `example.com`
+    /// carries no rule of its own, isolating this from `.unsatisfiableRules` above.
+    func testGeneratePasswordReturnsSettingsSpecificErrorWhenNoCharacterClassIsEnabled() {
+        let keys = [
+            PasswordGeneratorDefaults.includeLowercaseKey,
+            PasswordGeneratorDefaults.includeUppercaseKey,
+            PasswordGeneratorDefaults.includeDigitsKey,
+            PasswordGeneratorDefaults.includeSymbolsKey,
+        ]
+        let priorValues = keys.map { UserDefaults.standard.object(forKey: $0) }
+        addTeardownBlock {
+            for (key, priorValue) in zip(keys, priorValues) {
+                if let priorValue {
+                    UserDefaults.standard.set(priorValue, forKey: key)
+                } else {
+                    UserDefaults.standard.removeObject(forKey: key)
+                }
+            }
+        }
+        for key in keys {
+            UserDefaults.standard.set(false, forKey: key)
+        }
+
+        let response = service.handle(.generatePassword(token: "t", domain: "example.com", pairing: authorizedPairingSecret))
+
+        XCTAssertEqual(
+            response,
+            .error("Your password generator has no character types enabled. Turn on at least one in Settings and try again.")
+        )
+    }
 }
 
 final class SpyAutoLockActivityRecorder: AutoLockActivityRecording {

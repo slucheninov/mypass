@@ -570,10 +570,21 @@ final class ExtensionBridgeService {
             do {
                 let password = try PasswordGenerator.generate(options: options, rules: rules)
                 return .generatedPassword(password: password)
+            } catch PasswordGeneratorError.noCharacterClassSelected {
+                // Distinct from `.unsatisfiableRules` below: this fires when the
+                // user's OWN generator toggles (Settings > Password Generator) leave
+                // no character class to draw from at all, independent of whatever
+                // domain was passed in — the site's rule is never even reached. A
+                // message that told the user "this site's requirements could not be
+                // satisfied" here would send them looking for a problem with the
+                // website when the fix is in their own generator settings.
+                return .error("Your password generator has no character types enabled. Turn on at least one in Settings and try again.")
             } catch {
-                // .unsatisfiableRules (and any other PasswordGeneratorError) surfaces
-                // through the existing generic `.error(String)` response case — there
-                // is no dedicated failure case for this request, matching how
+                // `.unsatisfiableRules` (a site rule no configuration can satisfy —
+                // e.g. more required character classes than the configured length
+                // allows room for) and any other `PasswordGeneratorError` surface
+                // through the existing generic `.error(String)` response case —
+                // there is no dedicated failure case for this request, matching how
                 // .completePairing already reports its own failure via `.error("invalid_code")`.
                 return .error("This site's password requirements could not be satisfied")
             }
