@@ -112,11 +112,28 @@ enum PasswordRulesSummary {
     /// though `PasswordGeneratorView` visibly locks every other toggle off
     /// for that same rule -- the plain-English summary and the toggle UI
     /// it sits next to told two different stories about the site's
-    /// policy. Deliberately scoped to the same four toggle-backed classes
-    /// `PasswordRulesToggleEvaluator` reasons about: a bespoke custom
-    /// `allowed:` class (e.g. aetna.com's `[-_&#@]`) is not folded into
-    /// this list, for the same reason `name(for:)` never spells out a
-    /// custom class's literal members -- see that function's doc comment.
+    /// policy. Scoped to the same four toggle-backed classes
+    /// `PasswordRulesToggleEvaluator` reasons about -- but a bespoke custom
+    /// `allowed:` class IS folded into that scope, by the kind of character
+    /// its own members are (`PasswordGenerator.toggleBackedClass(of:)`),
+    /// rather than being ignored as it was at first. aetna.com's
+    /// `[-_&#@]` therefore counts as permitting symbols, so all four kinds
+    /// of character are permitted for that rule and this function returns
+    /// nil: the summary no longer ends with "Only lowercase letters,
+    /// uppercase letters and digits are permitted." for a site that plainly
+    /// allows five symbols and whose every generated password has always
+    /// been free to contain one. That sentence was not a harmless
+    /// simplification, it was false, and it sat next to a Symbols toggle
+    /// the UI locked off on the same wrong basis. Folding the class in by
+    /// character kind is also what keeps this list identical to what
+    /// `PasswordGenerator` will actually draw from, which is the whole
+    /// point of delegating the question rather than answering it here.
+    ///
+    /// What stays true is the narrower promise: this function never spells
+    /// out a custom class's literal MEMBERS, only the kinds of character it
+    /// contains -- for the same reason `name(for:)` doesn't, see that
+    /// function's doc comment. So aetna.com's summary names no permitted
+    /// set at all rather than naming `-`, `_`, `&`, `#` and `@`.
     private static func permittedNamesJoined(for rules: PasswordRules) -> String? {
         guard let permitted = PasswordRulesToggleEvaluator.restrictedAllowedToggleClasses(for: rules),
               !permitted.isEmpty, permitted.count < PasswordRulesToggleEvaluator.toggleClassOrder.count
