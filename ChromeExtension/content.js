@@ -175,16 +175,31 @@
 
   // A password field's autocomplete attribute is a decisive signal when present — the
   // same trust level scoreOtpLikeness already gives autocomplete=one-time-code. When it
-  // is absent, fall back to the confirm-password shape: a signup form's "new password"
-  // and "confirm password" fields are the only common case with two or more password
-  // fields visible at once. A single, unhinted password field is treated as a login
-  // field, not a new-password field — offering "Generate password" there would replace
-  // a credential the user is trying to type in order to sign in, not create.
+  // is absent, fall back to field count and position:
+  //   - exactly two unhinted password fields is the signup shape ("new password" +
+  //     "confirm password"): both count as new-password.
+  //   - three or more unhinted password fields is treated as a change-password form
+  //     ("current password", "new password", "confirm new password"): everything
+  //     except the first counts as new-password, because the first field in that
+  //     layout is overwhelmingly the box holding the user's existing password.
+  //     Marking it new-password would offer to generate over the exact field this
+  //     classification exists to protect.
+  //   - a single unhinted password field is a login field, not new-password.
+  // This gives up correct classification for the rare page that stacks three or more
+  // password fields without following either the signup or change-password
+  // convention (for example two confirm fields after a first field that is not the
+  // current password). That is an acceptable loss: failing there only withholds the
+  // "Generate password" button on an unusual layout, whereas failing the other way —
+  // as the plain "two or more" rule this replaces did — offers to overwrite a real
+  // credential in the ordinary change-password case, which is the outcome this
+  // classification exists to prevent.
   function isNewPasswordCandidate(input, allPasswordInputs) {
     const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
     if (autocomplete === 'new-password') return true;
     if (autocomplete === 'current-password') return false;
-    return allPasswordInputs.length >= 2;
+    if (allPasswordInputs.length === 2) return true;
+    if (allPasswordInputs.length >= 3) return allPasswordInputs.indexOf(input) > 0;
+    return false;
   }
 
   // Returns every field the inline icon may attach to. Deliberately looser than the old
