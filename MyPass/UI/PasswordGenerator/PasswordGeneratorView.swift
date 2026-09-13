@@ -3,13 +3,18 @@ import AppKit
 import MyPassKit
 
 struct PasswordGeneratorView: View {
-    /// The domain to look up a Password Rules entry for. Passed by the
-    /// caller when the generator is opened from an entry's edit screen,
-    /// already reduced to a registrable domain via
-    /// `ExtensionEntryMatcher.registrableDomain(from:)` -- see
-    /// `EntryEditView.swift`'s call site (Step 7 below). Left empty when
+    /// The host to look up a Password Rules entry for. Passed by the caller
+    /// when the generator is opened from an entry's edit screen -- the
+    /// entry URL's FULL host, deliberately not reduced to a registrable
+    /// domain first. `PasswordRulesCatalog.rules(forHost:)` already walks
+    /// upward from the host to the registrable-domain ceiling itself, so
+    /// pre-reducing the input threw away every key below that ceiling:
+    /// `account.samsung.com`, `key.harvard.edu`, `id.nfpa.org` and
+    /// `app.digio.in` all carry rules that their apex domains do not, and
+    /// the app found none of them while the extension -- which passes
+    /// `location.hostname` unreduced -- found them all. Left empty when
     /// opened standalone, in which case the view's own free-text site
-    /// field is the only source of a domain.
+    /// field is the only source of a host.
     var initialSiteDomain: String = ""
     var onGenerate: (String) -> Void = { _ in }
 
@@ -99,6 +104,36 @@ struct PasswordGeneratorView: View {
         return PasswordRulesToggleEvaluator.evaluate(rule: activeRule, toggles: toggles)
     }
 
+    /// The user's own stored preference, exactly as the four `@State`
+    /// toggles and the length slider hold it. This -- never
+    /// `effectiveOptions` below -- is what `generate()` persists.
+    private var userOptions: PasswordGeneratorOptions {
+        PasswordGeneratorOptions(
+            length: Int(length),
+            includeLowercase: includeLowercase,
+            includeUppercase: includeUppercase,
+            includeDigits: includeDigits,
+            includeSymbols: includeSymbols
+        )
+    }
+
+    /// `userOptions` with the active rule's forcing applied: what generation
+    /// will actually use, and what the controls therefore display.
+    ///
+    /// An earlier version of this view achieved the same display by writing
+    /// the rule's decisions straight into the `@State` toggles from
+    /// `onAppear`/`onChange`. That is what made one site's restriction leak
+    /// into the user's global defaults through `generate()`'s save (see
+    /// `PasswordGeneratorSession`), and it also meant un-checking "Ignore"
+    /// could not restore the values the user had before the rule was first
+    /// honoured -- they had already been overwritten. Deriving the displayed
+    /// state instead of storing it fixes both: the user's own preference is
+    /// never touched, so toggling "Ignore" in either direction is now exact.
+    private var effectiveOptions: PasswordGeneratorOptions {
+        guard let activeRule else { return userOptions }
+        return PasswordGenerator.effectiveOptions(for: userOptions, rules: activeRule)
+    }
+
     private func isLocked(_ characterClass: PasswordRules.CharacterClass) -> Bool {
         guard let ruleEvaluation else { return false }
         return ruleEvaluation.lockedOn.contains(characterClass) || ruleEvaluation.lockedOff.contains(characterClass)
@@ -124,11 +159,34 @@ struct PasswordGeneratorView: View {
         return "\(siteDomain) only allows \(names). Enable one of them to generate a password."
     }
 
+    /// The slider's value, clamped into the active rule's range for display
+    /// without ever writing that clamp back into `length`. The getter is what
+    /// keeps `Slider` from having anything to correct: it only ever sees an
+    /// in-range value, so it has no reason to push one back. A drag DOES
+    /// write through, because a length the user chose by hand is their own
+    /// preference and belongs in the saved defaults like any other.
+    private var lengthBinding: Binding<Double> {
+        Binding(
+            get: { min(max(length, lengthRange.lowerBound), lengthRange.upperBound) },
+            set: { length = $0 }
+        )
+    }
+
+    /// A toggle's displayed value: the user's own, overridden by the rule's
+    /// forcing. The setter writes only to the user's `@State`, and a locked
+    /// toggle is `.disabled`, so the rule's own decision can never be
+    /// mistaken for something the user chose.
+    private func toggleBinding(userValue: Binding<Bool>, effectiveValue: Bool) -> Binding<Bool> {
+        Binding(
+            get: { effectiveValue },
+            set: { userValue.wrappedValue = $0 }
+        )
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             if initialSiteDomain.isEmpty {
                 TextField("Site (optional)", text: $siteDomain)
-                    .onChange(of: siteDomain) { _, _ in applyActiveRuleToToggles() }
             }
 
             if let ruleForDomain {
@@ -156,16 +214,16 @@ struct PasswordGeneratorView: View {
                     .font(.caption)
             }
 
-            Text("Length: \(Int(length))")
-            Slider(value: $length, in: lengthRange, step: 1)
+            Text("Length: \(Int(lengthBinding.wrappedValue))")
+            Slider(value: lengthBinding, in: lengthRange, step: 1)
 
-            Toggle("Lowercase", isOn: $includeLowercase)
+            Toggle("Lowercase", isOn: toggleBinding(userValue: $includeLowercase, effectiveValue: effectiveOptions.includeLowercase))
                 .disabled(isLocked(.lower))
-            Toggle("Uppercase", isOn: $includeUppercase)
+            Toggle("Uppercase", isOn: toggleBinding(userValue: $includeUppercase, effectiveValue: effectiveOptions.includeUppercase))
                 .disabled(isLocked(.upper))
-            Toggle("Digits", isOn: $includeDigits)
+            Toggle("Digits", isOn: toggleBinding(userValue: $includeDigits, effectiveValue: effectiveOptions.includeDigits))
                 .disabled(isLocked(.digit))
-            Toggle("Symbols", isOn: $includeSymbols)
+            Toggle("Symbols", isOn: toggleBinding(userValue: $includeSymbols, effectiveValue: effectiveOptions.includeSymbols))
                 .disabled(isLocked(.special))
 
             Button("Generate", action: generate)
@@ -195,51 +253,18 @@ struct PasswordGeneratorView: View {
         }
         .padding()
         .frame(width: 320)
-        .onAppear(perform: applyActiveRuleToToggles)
     }
 
-    /// Forces locked-on classes on and locked-off classes off whenever the
-    /// active rule could have changed (site edited, or on first
-    /// appearance), and clamps the length slider into the rule's range --
-    /// matching Decision 5's "toggles for classes the rule requires are
-    /// shown locked on, and toggles for classes the rule's effective
-    /// allowed set excludes are shown locked off." An OPTIONAL class's
-    /// toggle stays under the user's control; only locked-on/locked-off
-    /// classes are pinned. See `PasswordRulesToggleEvaluator.lockedOnClasses(for:)`
-    /// for why that set includes more than just `required:` classes.
-    ///
-    /// Deliberately NOT re-run when `ignoreActiveRule` changes: toggling
-    /// "Ignore" off does not restore whatever toggle values were in effect
-    /// before the rule was first honoured, only the boundary case this
-    /// task's review explicitly left alone -- it never misleads anyone
-    /// about the site's policy, since the toggle UI's disabled state
-    /// itself already reflects the reactivated rule correctly on every
-    /// render, only the values a user changed while ignoring do not snap
-    /// back automatically.
-    private func applyActiveRuleToToggles() {
-        guard let ruleEvaluation else { return }
-        if ruleEvaluation.lockedOn.contains(.lower) { includeLowercase = true }
-        if ruleEvaluation.lockedOn.contains(.upper) { includeUppercase = true }
-        if ruleEvaluation.lockedOn.contains(.digit) { includeDigits = true }
-        if ruleEvaluation.lockedOn.contains(.special) { includeSymbols = true }
-        if ruleEvaluation.lockedOff.contains(.lower) { includeLowercase = false }
-        if ruleEvaluation.lockedOff.contains(.upper) { includeUppercase = false }
-        if ruleEvaluation.lockedOff.contains(.digit) { includeDigits = false }
-        if ruleEvaluation.lockedOff.contains(.special) { includeSymbols = false }
-        length = min(max(length, lengthRange.lowerBound), lengthRange.upperBound)
-    }
-
+    /// Persists the user's own preference and generates honouring the active
+    /// rule -- two separate things, kept separate by
+    /// `PasswordGeneratorSession.generate(userOptions:rule:defaults:)`. See
+    /// that type's doc comment for the defect this shape exists to prevent:
+    /// persisting rule-derived values here made one site's character-set
+    /// restriction the user's permanent global default, for the app AND for
+    /// every password the extension later requested.
     private func generate() {
-        let options = PasswordGeneratorOptions(
-            length: Int(length),
-            includeLowercase: includeLowercase,
-            includeUppercase: includeUppercase,
-            includeDigits: includeDigits,
-            includeSymbols: includeSymbols
-        )
-        PasswordGeneratorDefaults.save(options)
         do {
-            generatedPassword = try PasswordGenerator.generate(options: options, rules: activeRule)
+            generatedPassword = try PasswordGeneratorSession.generate(userOptions: userOptions, rule: activeRule)
             errorMessage = nil
         } catch PasswordGeneratorError.noCharacterClassSelected {
             errorMessage = "Select at least one character class."
