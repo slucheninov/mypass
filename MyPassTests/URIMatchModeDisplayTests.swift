@@ -35,17 +35,24 @@ final class URIMatchModeDisplayTests: XCTestCase {
     /// Task 9 required `startsWith` matching to compare `rest` (path and query) only
     /// after `origin` (scheme, host, non-default port) matches exactly -- comparing
     /// the whole URL as one string let a stored "https://example.com" match a
-    /// lookalike like "https://example.com.attacker.com". This help text must
-    /// disclose the cost Task 9 kept deliberately: a prefix ending mid-path still
-    /// matches a longer path sharing that start (an "app" prefix also covers
-    /// "app-legacy"), rather than describing the older, less precise whole-URL
-    /// prefix behaviour from the original spec.
-    func testStartsWithHelpTextDisclosesPathSuffixOvermatch() {
+    /// lookalike like "https://example.com.attacker.com". The help text must state
+    /// that restriction explicitly, not just demonstrate a same-site cost: a string
+    /// that only says "begins with this one" and then illustrates the path-suffix
+    /// overmatch without ever leaving the original site does not correct a reader who
+    /// looks at "example.com.attacker.com" and reasonably concludes it will match,
+    /// since it does literally begin with the same text. This assertion pins the exact
+    /// English -- both the guarantee (different or lookalike domains never match) and
+    /// the disclosed cost Task 9 kept deliberately (a prefix ending mid-path still
+    /// matches a longer path sharing that start, e.g. "app" also covering
+    /// "app-legacy") -- not a fragment of either.
+    func testStartsWithHelpTextStatesSameSiteRestrictionAndDisclosesPathSuffixOvermatch() {
         XCTAssertEqual(
             URIMatchMode.startsWith.helpText,
-            "Matches any page whose address begins with this one. Note: this can also match " +
-                "unrelated pages that share the same prefix, such as example.com/app also matching " +
-                "example.com/app-legacy."
+            "Matches any page on the same site as this address — the scheme and host must be " +
+                "identical, so a lookalike domain such as example.com.attacker.com will never match " +
+                "even though it starts with the same text. Within that same site, this can still match " +
+                "more than intended: example.com/app also matches example.com/app-legacy, since both " +
+                "begin the same way."
         )
     }
 

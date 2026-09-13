@@ -363,7 +363,12 @@ extension URIMatchMode {
     /// `.startsWith` matches the comment above its branch in that same file (Task 9) --
     /// prefix matching is scoped to path-and-query within an exactly-matching origin,
     /// which deliberately still lets a prefix ending mid-path also match a longer path
-    /// sharing that start.
+    /// sharing that start. The `.startsWith` text states the same-scheme-and-host
+    /// restriction explicitly rather than only demonstrating the path-suffix cost: a
+    /// user who reads "begins with this one" without that restriction, then looks at a
+    /// lookalike domain that literally begins with the same text, would reasonably
+    /// expect a match that the matcher deliberately refuses to make (that refusal is the
+    /// entire point of Task 9's origin-exact check).
     var helpText: String {
         switch self {
         case .registrableDomain:
@@ -371,9 +376,11 @@ extension URIMatchMode {
         case .host:
             return "Matches only this exact hostname and port. A different subdomain will not match."
         case .startsWith:
-            return "Matches any page whose address begins with this one. Note: this can also match " +
-                "unrelated pages that share the same prefix, such as example.com/app also matching " +
-                "example.com/app-legacy."
+            return "Matches any page on the same site as this address — the scheme and host must be " +
+                "identical, so a lookalike domain such as example.com.attacker.com will never match " +
+                "even though it starts with the same text. Within that same site, this can still match " +
+                "more than intended: example.com/app also matches example.com/app-legacy, since both " +
+                "begin the same way."
         case .exact:
             return "Matches only this exact page address, including its path and query."
         case .never:
