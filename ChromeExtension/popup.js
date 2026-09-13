@@ -1182,6 +1182,10 @@ if (typeof document !== 'undefined') {
   // fillCredential already uses (query-the-active-tab, hostname pre-check, scope-to-
   // frameId-0 all included) — this function used to hand-roll that same sequence itself,
   // which is how it ended up as a second, less careful copy missing the hostname check.
+  // The response is stripped the same way fillCredential's is, so the generated password
+  // never enters this popup's JS runtime at all; `generatedPasswordFilled` is the whole
+  // of the success signal, and branching on it rather than on a password's presence is
+  // what makes that stripping real instead of merely intended.
   // `url` travels alongside `domain` in the request purely so that relay has a page URL
   // to compare against the active tab's URL; the app only ever reads `domain` from this
   // message (PasswordRulesCatalog.rules(forHost:)), so the extra field is inert on the
@@ -1197,7 +1201,7 @@ if (typeof document !== 'undefined') {
       return;
     }
     chrome.runtime.sendMessage({ type: 'generatePassword', domain, url: activeTabUrl }, (response) => {
-      if (!response || response.type !== 'generatedPassword' || !response.password) {
+      if (!response || response.type !== 'generatedPasswordFilled') {
         generatePasswordErrorEl.textContent = describeSaveProposalOutcome(response);
         generatePasswordErrorEl.hidden = false;
         return;

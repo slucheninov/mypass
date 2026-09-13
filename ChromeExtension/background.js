@@ -120,13 +120,27 @@ function resolveSenderFillTarget(sender, requestUrl) {
 }
 
 function buildApplyFillMessage(credentialResponse, requestUrl) {
-  return {
+  const message = {
     type: "applyFill",
     username: credentialResponse.username,
     password: credentialResponse.password,
     totp: credentialResponse.totp || null,
     url: requestUrl
   };
+  // A generated password must land in the page's NEW-password field, never wherever
+  // content.js's fallback happens to look first. Without this flag a popup-originated
+  // fill has no pending click target, so applyFill resolved its destination with
+  // findLoginForm() — the first visible password input in document order — and wrote the
+  // new secret over the CURRENT-password box on a change-password form. The popup
+  // correctly detected the new-password field in order to offer the button at all, then
+  // discarded that knowledge before the fill. The flag rides on the message rather than
+  // being threaded through relayFillToActiveTab/sendApplyFill/sendApplyFillToSender as a
+  // fourth argument, because it is a property of WHAT is being filled, not of how it is
+  // being delivered — and the response type already says which.
+  if (credentialResponse.type === "generatedPassword") {
+    message.fillTarget = "newPassword";
+  }
+  return message;
 }
 
 // The popup branch. The popup has no sender.frameId/documentId of its own, but it is
@@ -239,10 +253,23 @@ function relayFillToActiveTab(credentialResponse, requestUrl, sender) {
 // success/failure — the actual fill happens via relayFillToActiveTab's
 // direct message to content.js, so the popup's JS runtime never needs to
 // see the plaintext credential.
+//
+// The generatedPassword branch is the same rule applied to the same situation: once a
+// popup-originated generate is relayed to the tab, the popup has no remaining use for
+// the plaintext — it only closes itself — so it must not receive it either. It shipped
+// once without this, with a test pinning the unstripped shape, because
+// "relayFillToActiveTab is used here too" was read as parity with the fillCredential
+// path when only half of that path was actually reused. A content-script-originated
+// generatePassword is NOT stripped and must not be: nothing relays for it, the content
+// script does the fill itself, and the caller in that case is the page-adjacent script
+// that is about to type the secret into the field anyway.
 function stripCredentialSecrets(response) {
   if (!response) return response;
   if (response.type === "credential") {
     return { type: "ok", message: response.message };
+  }
+  if (response.type === "generatedPassword") {
+    return { type: "generatedPasswordFilled" };
   }
   return response;
 }
@@ -545,6 +572,11 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     // would be exactly the "second way to write a value into a page" Task 13 ruled out.
     if (message.type === "generatePassword" && response && response.type === "generatedPassword" && !sender.tab) {
       relayFillToActiveTab(response, message.url, sender);
+      // Stripped, exactly like the fillCredential branch above: the secret has gone to
+      // the content script, and the popup branches on this shape rather than on the
+      // presence of a password it should never have been handed.
+      sendResponse(stripCredentialSecrets(response));
+      return;
     }
     sendResponse(response);
   });

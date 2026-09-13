@@ -89,7 +89,11 @@ const { handleRuntimeMessage } = require(path.join(__dirname, '..', 'background.
     assert.ok(sentNativeMessage, 'generatePassword must be forwarded to the native host');
     assert.strictEqual(sentNativeMessage.type, 'generatePassword');
     assert.strictEqual(sentNativeMessage.domain, 'example.com');
-    assert.deepStrictEqual(responded, { type: 'generatedPassword', password: 'Tr0ub4dor&3' });
+    // Stripped, exactly like the fillCredential branch: the secret went to the content
+    // script, so the popup's JS runtime must never see it. This assertion used to pin
+    // the UNSTRIPPED shape, which is how the leak shipped — the popup only ever checked
+    // the password for truthiness, and now branches on this type instead.
+    assert.deepStrictEqual(responded, { type: 'generatedPasswordFilled' });
 
     // The popup has no DOM access of its own, so a successful response must be relayed
     // to the active tab through the exact same relayFillToActiveTab/sendApplyFill path
@@ -101,6 +105,8 @@ const { handleRuntimeMessage } = require(path.join(__dirname, '..', 'background.
     assert.strictEqual(relayed.tabId, 99);
     assert.strictEqual(relayed.message.type, 'applyFill');
     assert.strictEqual(relayed.message.password, 'Tr0ub4dor&3');
+    assert.strictEqual(relayed.message.fillTarget, 'newPassword',
+      'the relayed fill must name the new-password field, or content.js writes it over the current-password box');
     assert.deepStrictEqual(relayed.options, { frameId: 0 }, 'scoped to the top frame, exactly like the fillCredential relay');
 
     console.log('generatePassword.test.js: background.js allowlist + forwarding + popup relay OK');
@@ -123,6 +129,9 @@ const { handleRuntimeMessage } = require(path.join(__dirname, '..', 'background.
         (response) => { responded = response; resolve(); }
       );
     });
+    // NOT stripped, deliberately: nothing relays for this sender, and the content script
+    // is the thing that does the fill. Stripping here would leave the inline panel's
+    // Generate row with nothing to type into the field.
     assert.deepStrictEqual(responded, { type: 'generatedPassword', password: 'Tr0ub4dor&3' });
     assert.strictEqual(tabsQueryCalls.length, 0, 'a content-script-originated request must never trigger the relay');
     assert.strictEqual(tabsSendMessageCalls.length, 0, 'and must never send a second applyFill');
@@ -165,6 +174,71 @@ function fakeRoot(inputs) {
 }
 
 console.log('generatePassword.test.js: buildNewPasswordFieldQueryResponse OK');
+
+// --- content.js: WHERE a popup-originated generated password actually lands -----------
+// The assertions above prove the relay carries the right payload; these prove it reaches
+// the right input. Nothing checked that before, which is exactly how a popup-originated
+// generate came to write the new secret over the CURRENT-password field of a
+// change-password form: with no clicked target, applyFill resolved its destination with
+// findLoginForm(), the first visible password input in document order. Signup forms hid
+// it, because there the first password field IS the new-password field.
+
+const { resolveApplyFillTargets } = require(path.join(__dirname, '..', 'content.js'));
+
+{
+  // The canonical change-password form: current, new, confirm.
+  const current = fakeInput({ type: 'password', autocomplete: 'current-password' });
+  const fresh = fakeInput({ type: 'password', autocomplete: 'new-password' });
+  const confirm = fakeInput({ type: 'password', autocomplete: 'new-password' });
+  const root = fakeRoot([current, fresh, confirm]);
+
+  const generated = resolveApplyFillTargets({ type: 'applyFill', fillTarget: 'newPassword' }, null, root);
+  assert.strictEqual(generated.passwordInput, fresh,
+    'a generated password must land in the new-password field, not the first password field on the page');
+  assert.notStrictEqual(generated.passwordInput, current,
+    'writing a generated password over the current-password box is the exact defect this asserts against');
+  assert.strictEqual(generated.usernameInput, null, 'a generated password carries no username to fill');
+
+  // The ordinary credential fill is unchanged and still targets findLoginForm's pick.
+  const credential = resolveApplyFillTargets({ type: 'applyFill' }, null, root);
+  assert.strictEqual(credential.passwordInput, current);
+}
+
+{
+  // Three unlabelled password fields — no autocomplete attributes at all, so
+  // isNewPasswordCandidate falls back to "any field after the first".
+  const first = fakeInput({ type: 'password' });
+  const second = fakeInput({ type: 'password' });
+  const third = fakeInput({ type: 'password' });
+  const root = fakeRoot([first, second, third]);
+  const generated = resolveApplyFillTargets({ type: 'applyFill', fillTarget: 'newPassword' }, null, root);
+  assert.strictEqual(generated.passwordInput, second);
+}
+
+{
+  // A login form has no new-password field at all. The safe failure for a generated
+  // password is to go nowhere — never to fall back to the sign-in password box.
+  const root = fakeRoot([fakeInput({ type: 'password', autocomplete: 'current-password' })]);
+  const generated = resolveApplyFillTargets({ type: 'applyFill', fillTarget: 'newPassword' }, null, root);
+  assert.strictEqual(generated.passwordInput, null,
+    'with no new-password field the fill must land nowhere rather than in the current-password field');
+}
+
+{
+  // A clicked field still wins outright: the user chose that group, and the popup's flag
+  // must not override a deliberate in-page click.
+  const clicked = fakeInput({ type: 'password', autocomplete: 'current-password' });
+  const fresh = fakeInput({ type: 'password', autocomplete: 'new-password' });
+  const root = fakeRoot([clicked, fresh]);
+  const generated = resolveApplyFillTargets(
+    { type: 'applyFill', fillTarget: 'newPassword' },
+    { input: clicked, kind: 'password' },
+    root
+  );
+  assert.strictEqual(generated.passwordInput, clicked);
+}
+
+console.log('generatePassword.test.js: resolveApplyFillTargets destination OK');
 
 // --- content.js: the inline panel's generate-password failure path ------------------
 // Covers exactly what previously shipped untested: togglePanel's generate-row click

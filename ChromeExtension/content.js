@@ -247,8 +247,8 @@
   // Kept for applyFill's existing contract. Rebuilt on findFillableFields so the two
   // cannot drift apart. `form` is now nullable: a password field outside any <form> used
   // to make this return null, which meant applyFill silently did nothing on such pages.
-  function findLoginForm() {
-    const fields = findFillableFields(document);
+  function findLoginForm(root) {
+    const fields = findFillableFields(root || document);
     const passwordField = fields.find((field) => field.kind === 'password');
     if (!passwordField) return null;
     const usernameField = fields.find((field) => field.kind === 'username');
@@ -257,6 +257,47 @@
       form,
       passwordInput: passwordField.input,
       usernameInput: usernameField ? usernameField.input : null,
+    };
+  }
+
+  // Which fields an applyFill message writes into. Extracted from the message listener
+  // below — which is unreachable from the node tests, living inside the browser-only
+  // wiring guard — precisely because the destination of a fill is the thing that must be
+  // testable. The existing test for the popup's Generate button asserted the relayed
+  // message payload and never which input received it, which is how the bug this
+  // function's `newPassword` branch fixes shipped.
+  //
+  // Three cases, in priority order:
+  //
+  //  1. A clicked field (pendingFillTarget) wins outright, so the fill lands in the group
+  //     the user actually clicked rather than the first password field in document order.
+  //  2. `fillTarget: 'newPassword'` — a popup-originated generated password. The popup
+  //     has no clicked field, and falling back to findLoginForm() here wrote the new
+  //     secret over the CURRENT-password box on a change-password form (current / new /
+  //     confirm), since findLoginForm returns the first visible password input in
+  //     document order. That is exactly the outcome the inline panel's own
+  //     new-password-only gating exists to prevent, arriving through the other surface.
+  //     Signup forms only appeared to work because there the first password field happens
+  //     to be the new-password field. When no new-password field is found this fills
+  //     NOTHING — never the first password field — because the safe failure for a
+  //     generated password is to go nowhere.
+  //  3. Everything else: the popup's ordinary credential fill, unchanged.
+  function resolveApplyFillTargets(message, target, root) {
+    if (target) return resolveFillTargets(target);
+
+    const scope = root || document;
+    if (message && message.fillTarget === 'newPassword') {
+      const field = findFillableFields(scope).find(
+        (candidate) => candidate.kind === 'password' && candidate.isNewPassword
+      );
+      return { usernameInput: null, passwordInput: field ? field.input : null, otpInput: null };
+    }
+
+    const loginForm = findLoginForm(scope);
+    return {
+      usernameInput: loginForm ? loginForm.usernameInput : null,
+      passwordInput: loginForm ? loginForm.passwordInput : null,
+      otpInput: findOtpField(scope),
     };
   }
 
@@ -1360,26 +1401,10 @@
           console.warn('MyPass: applyFill rejected — message URL does not match the current page hostname');
           return;
         }
-        // A clicked field (pendingFillTarget) takes priority so the fill lands in the group
-        // the user actually clicked, not the first password field in document order. The
-        // popup's own fill path has no clicked field and falls back to findLoginForm/
-        // findOtpField exactly as before.
-        let usernameInput = null;
-        let passwordInput = null;
-        let otpInput = null;
-        if (target) {
-          const resolved = resolveFillTargets(target);
-          usernameInput = resolved.usernameInput;
-          passwordInput = resolved.passwordInput;
-          otpInput = resolved.otpInput;
-        } else {
-          const loginForm = findLoginForm();
-          if (loginForm) {
-            usernameInput = loginForm.usernameInput;
-            passwordInput = loginForm.passwordInput;
-          }
-          otpInput = findOtpField();
-        }
+        // See resolveApplyFillTargets for the priority order and for why a
+        // `fillTarget: 'newPassword'` message must never fall back to the first password
+        // field on the page.
+        const { usernameInput, passwordInput, otpInput } = resolveApplyFillTargets(message, target, document);
 
         if (usernameInput && message.username) {
           setNativeValue(usernameInput, message.username);
@@ -1442,7 +1467,8 @@
   if (typeof module !== 'undefined') {
     module.exports = {
       scoreUsernameLikeness, findBestUsernameInput, hostnameMatches, scoreOtpLikeness, findOtpField,
-      isFieldVisible, findFillableFields, findLoginForm, resolveFillTargets, isNewPasswordCandidate,
+      isFieldVisible, findFillableFields, findLoginForm, resolveFillTargets, resolveApplyFillTargets,
+      isNewPasswordCandidate,
       isFillTargetUsable,
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
