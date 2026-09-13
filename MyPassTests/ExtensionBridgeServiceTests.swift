@@ -1305,6 +1305,49 @@ final class ExtensionBridgeServiceTests: XCTestCase {
 
         XCTAssertEqual(recorder.recordActivityCallCount, 0, "background status polling must not reset the idle timer")
     }
+
+    func testGeneratePasswordReturnsLockedWhenVaultIsLocked() {
+        session.lock()
+        let response = service.handle(.generatePassword(token: "t", domain: "example.com", pairing: authorizedPairingSecret))
+        XCTAssertEqual(response, .locked)
+    }
+
+    func testGeneratePasswordNotifiesAutoLockActivityRecorderWhenServed() {
+        let recorder = SpyAutoLockActivityRecorder()
+        let store = InMemoryExtensionPairingStore()
+        let secret = ExtensionBridgeTokenStore.generateToken()
+        let hash = SHA256.hash(data: Data(secret.utf8))
+            .compactMap { String(format: "%02x", $0) }
+            .joined()
+        try! store.add(PairedBrowser(id: UUID(), label: "Test", createdAt: Date(), secretHash: hash))
+        let notifying = ExtensionBridgeService(
+            vaultSession: session, pairingManager: ExtensionPairingManager(store: store),
+            autoLockActivityRecorder: recorder
+        )
+
+        let response = notifying.handle(.generatePassword(token: "t", domain: "example.com", pairing: secret))
+
+        guard case .generatedPassword = response else { return XCTFail("expected the request to actually be served") }
+        XCTAssertEqual(recorder.recordActivityCallCount, 1, "a paired, served generatePassword is a deliberate user action and must reset the idle timer")
+    }
+
+    func testGeneratePasswordForADomainWithAKnownRuleProducesAPasswordSatisfyingItsLengthBounds() throws {
+        let domain = "apple.com"
+        let rules = try XCTUnwrap(
+            PasswordRulesCatalog.rules(forHost: domain),
+            "apple.com is expected to carry a rule in the vendored password-rules.json snapshot from Task 1"
+        )
+        let response = service.handle(.generatePassword(token: "t", domain: domain, pairing: authorizedPairingSecret))
+        guard case .generatedPassword(let password) = response else {
+            return XCTFail("expected generatedPassword, got \(response)")
+        }
+        if let minLength = rules.minLength {
+            XCTAssertGreaterThanOrEqual(password.count, minLength)
+        }
+        if let maxLength = rules.maxLength {
+            XCTAssertLessThanOrEqual(password.count, maxLength)
+        }
+    }
 }
 
 final class SpyAutoLockActivityRecorder: AutoLockActivityRecording {

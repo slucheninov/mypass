@@ -199,6 +199,7 @@ final class LoopbackServer {
         case .passkeyGet(let token, _, _, _, _): return token
         case .passkeyGetApprove(let token, _, _, _): return token
         case .passkeyCancel(let token, _, _): return token
+        case .generatePassword(let token, _, _): return token
         }
     }
 

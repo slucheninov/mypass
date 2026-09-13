@@ -515,4 +515,45 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         XCTAssertNil(json["privateKeyPEM"])
         XCTAssertNil(json["pem"])
     }
+
+    func testGeneratePasswordRoundTripsAndHasExpectedShape() throws {
+        let request = ExtensionBridgeRequest.generatePassword(token: "tok-9", domain: "example.com", pairing: "pair-1")
+        let data = try JSONEncoder().encode(request)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data)
+        XCTAssertEqual(decoded, request)
+
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["type"] as? String, "generatePassword")
+        XCTAssertEqual(object["token"] as? String, "tok-9")
+        XCTAssertEqual(object["domain"] as? String, "example.com")
+        XCTAssertEqual(object["pairing"] as? String, "pair-1")
+    }
+
+    func testGeneratePasswordWithoutPairingOmitsPairingKey() throws {
+        let request = ExtensionBridgeRequest.generatePassword(token: "tok-10", domain: "example.com", pairing: nil)
+        let data = try JSONEncoder().encode(request)
+        let object = try jsonObject(from: data)
+        XCTAssertNil(object["pairing"])
+    }
+
+    func testGeneratePasswordIsAnswerableWhileLockedIsFalse() {
+        let request = ExtensionBridgeRequest.generatePassword(token: "t", domain: "example.com", pairing: nil)
+        XCTAssertFalse(request.isAnswerableWhileLocked)
+    }
+
+    func testGeneratePasswordResetsAutoLockTimerIsTrue() {
+        let request = ExtensionBridgeRequest.generatePassword(token: "t", domain: "example.com", pairing: nil)
+        XCTAssertTrue(request.resetsAutoLockTimer)
+    }
+
+    func testGeneratedPasswordResponseRoundTripsAndHasExpectedShape() throws {
+        let response = ExtensionBridgeResponse.generatedPassword(password: "Tr0ub4dor&3xyz")
+        let data = try JSONEncoder().encode(response)
+        let decoded = try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data)
+        XCTAssertEqual(decoded, response)
+
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["type"] as? String, "generatedPassword")
+        XCTAssertEqual(object["password"] as? String, "Tr0ub4dor&3xyz")
+    }
 }

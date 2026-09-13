@@ -18,12 +18,13 @@ public enum ExtensionBridgeRequest: Equatable {
     case passkeyGet(token: String, requestId: Int, requestDetailsJson: String, originUrl: String, pairing: String?)
     case passkeyGetApprove(token: String, requestId: Int, entryId: String, pairing: String?)
     case passkeyCancel(token: String, requestId: Int, pairing: String?)
+    case generatePassword(token: String, domain: String, pairing: String?)
 }
 
 extension ExtensionBridgeRequest: Codable {
     private enum CodingKeys: String, CodingKey {
         case type, token, url, id, username, password, pairing, browser, code, otpauthOrSecret, entryId
-        case enabled, requestId, requestDetailsJson, originUrl, replace
+        case enabled, requestId, requestDetailsJson, originUrl, replace, domain
     }
 
     public init(from decoder: Decoder) throws {
@@ -108,6 +109,10 @@ extension ExtensionBridgeRequest: Codable {
             let requestId = try container.decode(Int.self, forKey: .requestId)
             let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
             self = .passkeyCancel(token: token, requestId: requestId, pairing: pairing)
+        case "generatePassword":
+            let domain = try container.decode(String.self, forKey: .domain)
+            let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
+            self = .generatePassword(token: token, domain: domain, pairing: pairing)
         default:
             throw DecodingError.dataCorruptedError(
                 forKey: .type, in: container, debugDescription: "Unknown ExtensionBridgeRequest type: \(type)"
@@ -202,6 +207,11 @@ extension ExtensionBridgeRequest: Codable {
             try container.encode(token, forKey: .token)
             try container.encode(requestId, forKey: .requestId)
             try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .generatePassword(let token, let domain, let pairing):
+            try container.encode("generatePassword", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encode(domain, forKey: .domain)
+            try container.encodeIfPresent(pairing, forKey: .pairing)
         }
     }
 }
@@ -222,7 +232,8 @@ public extension ExtensionBridgeRequest {
         case .getPasskeyProxyStatus:
             return true
         case .getCredentials, .fillCredential, .getTotp, .proposeSaveLogin, .proposeSaveTotp, .startPairing, .completePairing,
-             .setPasskeyProxyEnabled, .passkeyCreate, .passkeyCreateConfirm, .passkeyGet, .passkeyGetApprove, .passkeyCancel:
+             .setPasskeyProxyEnabled, .passkeyCreate, .passkeyCreateConfirm, .passkeyGet, .passkeyGetApprove, .passkeyCancel,
+             .generatePassword:
             return false
         }
     }
@@ -257,7 +268,7 @@ public extension ExtensionBridgeRequest {
         // `passkeyGetApprove`, `requestUnlock`) — none of these can fire on a page's
         // own timing.
         case .fillCredential, .getTotp, .proposeSaveLogin, .proposeSaveTotp,
-             .passkeyCreateConfirm, .passkeyGetApprove, .requestUnlock:
+             .passkeyCreateConfirm, .passkeyGetApprove, .requestUnlock, .generatePassword:
             return true
         // Page-triggerable, no user gesture required: `content.js`'s automatic
         // `requestCredentials()` on any detected login form, and the
@@ -324,6 +335,7 @@ public enum ExtensionBridgeResponse: Equatable {
     case passkeyGetPending(requestId: Int, rpId: String, matches: [ExtensionCredentialSummary])
     case passkeyGetComplete(requestId: Int, responseJson: String?, error: PasskeyErrorDetails?)
     case passkeyCancelled(requestId: Int)
+    case generatedPassword(password: String)
     case error(String)
 }
 
@@ -400,6 +412,9 @@ extension ExtensionBridgeResponse: Codable {
         case "passkeyCancelled":
             let requestId = try container.decode(Int.self, forKey: .requestId)
             self = .passkeyCancelled(requestId: requestId)
+        case "generatedPassword":
+            let password = try container.decode(String.self, forKey: .password)
+            self = .generatedPassword(password: password)
         case "error":
             let message = try container.decode(String.self, forKey: .message)
             self = .error(message)
@@ -472,6 +487,9 @@ extension ExtensionBridgeResponse: Codable {
         case .passkeyCancelled(let requestId):
             try container.encode("passkeyCancelled", forKey: .type)
             try container.encode(requestId, forKey: .requestId)
+        case .generatedPassword(let password):
+            try container.encode("generatedPassword", forKey: .type)
+            try container.encode(password, forKey: .password)
         case .error(let message):
             try container.encode("error", forKey: .type)
             try container.encode(message, forKey: .message)

@@ -145,7 +145,7 @@ final class ExtensionBridgeService {
             return error == nil
         case .pairingStarted, .paired, .credentialList, .credential, .totp, .saveProposalAccepted,
              .unlockPresented, .unlockNotNeeded, .passkeyProxyStatus, .passkeyProxyEnabled,
-             .passkeyCreatePending, .passkeyGetPending, .passkeyCancelled:
+             .passkeyCreatePending, .passkeyGetPending, .passkeyCancelled, .generatedPassword:
             return true
         }
     }
@@ -553,6 +553,30 @@ final class ExtensionBridgeService {
             pendingPasskeyCreates.removeValue(forKey: requestId)
             pendingPasskeyGets.removeValue(forKey: requestId)
             return .passkeyCancelled(requestId: requestId)
+
+        case .generatePassword(_, let domain, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            // No vault data is needed here — rules come from the bundled
+            // PasswordRulesCatalog and preferences from PasswordGeneratorDefaults,
+            // neither of which lives behind the vault key. The outer guard at the
+            // top of this function (`vaultSession?.currentDatabase != nil ||
+            // request.isAnswerableWhileLocked`) already turned away a locked vault
+            // before this case is ever reached — generatePassword.isAnswerableWhileLocked
+            // is false — so there is no redundant lock re-check to write here.
+            let options = PasswordGeneratorDefaults.load()
+            let rules = PasswordRulesCatalog.rules(forHost: domain)
+            do {
+                let password = try PasswordGenerator.generate(options: options, rules: rules)
+                return .generatedPassword(password: password)
+            } catch {
+                // .unsatisfiableRules (and any other PasswordGeneratorError) surfaces
+                // through the existing generic `.error(String)` response case — there
+                // is no dedicated failure case for this request, matching how
+                // .completePairing already reports its own failure via `.error("invalid_code")`.
+                return .error("This site's password requirements could not be satisfied")
+            }
         }
     }
 }
