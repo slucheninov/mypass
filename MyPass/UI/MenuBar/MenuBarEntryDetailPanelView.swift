@@ -40,7 +40,16 @@ struct MenuBarEntryDetailPanelView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     heroSection
-                    fieldsCard
+                    if entry.entryType == .address {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(entry.addressSummary)
+                            Text([entry.address.addressLine1, entry.address.addressLine2, entry.address.postalCode, entry.address.countryName].filter { !$0.isEmpty }.joined(separator: "\n"))
+                                .foregroundStyle(.secondary)
+                            Button("Edit Address in MyPass", action: openEntryForEdit)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    } else {
+                        fieldsCard
+                    }
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
@@ -86,11 +95,11 @@ struct MenuBarEntryDetailPanelView: View {
 
     private var heroSection: some View {
         HStack(alignment: .center, spacing: 12) {
-            LetterAvatarView(
-                title: displayTitle,
-                size: 44,
-                cornerRadius: 10
-            )
+            if entry.entryType == .address {
+                Image(systemName: "house.fill").font(.title).foregroundStyle(.teal).frame(width: 44, height: 44)
+            } else {
+                LetterAvatarView(title: displayTitle, size: 44, cornerRadius: 10)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(displayTitle)
                     .font(.headline)

@@ -29,6 +29,7 @@ APP_SUPPORT="${HOME}/Library/Application Support"
 
 CHROMIUM_BROWSER_BASES=(
   "Google/Chrome"
+  "Google/Chrome for Testing"
   "Google/Chrome Beta"
   "Google/Chrome Canary"
   "Google/Chrome Dev"
@@ -51,7 +52,7 @@ INSTALLED_MANIFESTS=()
 
 for base in "${CHROMIUM_BROWSER_BASES[@]}"; do
   base_dir="${APP_SUPPORT}/${base}"
-  if [[ "$base" == "Google/Chrome" ]] || [[ -d "$base_dir" ]]; then
+  if [[ "$base" == "Google/Chrome" || "$base" == "Google/Chrome for Testing" ]] || [[ -d "$base_dir" ]]; then
     target_dir="${base_dir}/NativeMessagingHosts"
     manifest_path="${target_dir}/com.mypass.chromehost.json"
     mkdir -p "$target_dir"

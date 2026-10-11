@@ -12,13 +12,17 @@ struct MenuBarRecentEntryRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                LetterAvatarView(title: displayTitle, size: 28, cornerRadius: 6)
+                if entry.entryType == .address {
+                    Image(systemName: "house.fill").foregroundStyle(.teal).frame(width: 28, height: 28)
+                } else {
+                    LetterAvatarView(title: displayTitle, size: 28, cornerRadius: 6)
+                }
                 VStack(alignment: .leading, spacing: 2) {
                     Text(displayTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
-                    if !entry.login.isEmpty {
-                        Text(entry.login)
+                    if entry.entryType == .address || !entry.login.isEmpty {
+                        Text(entry.entryType == .address ? entry.addressSummary : entry.login)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

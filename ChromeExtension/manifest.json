@@ -10,10 +10,11 @@
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
   },
-  "permissions": ["nativeMessaging", "activeTab", "storage", "webAuthenticationProxy", "alarms"],
+  "permissions": ["nativeMessaging", "activeTab", "storage", "webAuthenticationProxy", "alarms", "notifications"],
+  "optional_permissions": ["privacy", "management"],
   "minimum_chrome_version": "127",
   "background": {
-    "service_worker": "background.js"
+    "service_worker": "background-loader.js"
   },
   "action": {
     "default_popup": "popup.html",
@@ -33,7 +34,16 @@
     {
       "matches": ["<all_urls>"],
       "all_frames": true,
-      "js": ["shared/entry-visuals.js", "content.js"],
+      "js": [
+        "shared/entry-visuals.js",
+        "shared/url-match.js",
+        "shared/bridge-status.js",
+        "shared/base32.js",
+        "shared/form-detection.js",
+        "shared/address-form.js",
+        "shared/totp-detection.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ]

@@ -68,6 +68,9 @@ final class NavigationState: ObservableObject {
     @Published private(set) var securityUsesGroupScope: Bool = false
 
     func selectSmartCategory(_ category: SmartCategory) {
+        if !isCategoryMode || selectedSmartCategory != category {
+            clearBrowseSelection()
+        }
         if category == .security {
             if selectedSmartCategory != .security {
                 securityUsesGroupScope = !isCategoryMode
@@ -83,6 +86,7 @@ final class NavigationState: ObservableObject {
     }
 
     func exitCategoryModeForGroupSelection() {
+        clearBrowseSelection()
         isCategoryMode = false
         selectedSmartCategory = .all
         activeCategoryFilter = .all
@@ -96,7 +100,23 @@ final class NavigationState: ObservableObject {
     /// default group keep working once category mode exits.
     var sidebarSelectedGroupID: UUID? {
         get { isCategoryMode ? nil : selectedGroupID }
-        set { selectedGroupID = newValue }
+        set {
+            // List also sends nil when a category takes focus. Keep the remembered
+            // group in that case; it remains the default destination for new entries.
+            guard let newValue else { return }
+            guard isCategoryMode || selectedGroupID != newValue else { return }
+            selectedGroupID = newValue
+            // Re-selecting the remembered group from a category does not change its
+            // UUID, so an onChange observer alone cannot exit category mode.
+            exitCategoryModeForGroupSelection()
+        }
+    }
+
+    private func clearBrowseSelection() {
+        // Category/group navigation must not discard a draft or incoming proposal.
+        // ContentView observes selectedEntryID changes and would leave its editor.
+        guard detailPresentation == .browse else { return }
+        selectedEntryID = nil
     }
 
     func isSmartCategorySelected(_ category: SmartCategory) -> Bool {

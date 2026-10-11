@@ -128,6 +128,7 @@ struct GroupSidebarView: View {
     private var flattenedGroups: [KdbxGroup] {
         flattenSubgroups(rootGroup).filter { group in
             if group.uuid == rootGroup.uuid { return false }
+            if PasswordGeneratorHistoryStore.isHistoryGroup(group) { return false }
             return !GroupTreeOperations.isTheRecycleBin(group, recycleBinGroupUUID: recycleBinGroupUUID)
         }
     }
@@ -225,9 +226,12 @@ private struct SmartCategorySidebarRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 8) {
-                Circle()
-                    .fill(category.accentColor)
-                    .frame(width: 8, height: 8)
+                Image(systemName: category.symbolName)
+                    .font(.system(size: 16, weight: .medium))
+                    .symbolRenderingMode(.hierarchical)
+                    .foregroundStyle(category.accentColor)
+                    .frame(width: 20, height: 20)
+                    .accessibilityHidden(true)
                 Text(category.title)
                     .foregroundStyle(.primary)
                 Spacer(minLength: 4)

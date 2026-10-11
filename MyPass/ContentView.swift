@@ -117,6 +117,8 @@ private struct DetailColumnView: View {
     private func browseDetail() -> some View {
         if let entry = currentBrowseEntry {
             switch entry.entryType {
+            case .address:
+                AddressDetailView(entry: entry)
             case .card:
                 CardDetailView(entry: entry)
             case .notes:
@@ -125,8 +127,24 @@ private struct DetailColumnView: View {
                 EntryDetailView()
             }
         } else {
-            EntryDetailView()
+            scopeOverview
         }
+    }
+
+    private var scopeOverview: some View {
+        let category = navigationState.selectedSmartCategory
+        let group = EntryListQuery.currentGroup(in: rootGroup, selectedID: navigationState.selectedGroupID)
+        let categoryMode = navigationState.isCategoryMode
+        let count = EntryListQuery.entries(root: rootGroup, database: vaultSession.currentDatabase, navigation: navigationState).count
+        return ScopeOverviewView(
+            title: categoryMode ? category.title : group.name,
+            symbolName: categoryMode ? category.symbolName : "folder",
+            emoji: categoryMode ? nil : group.emoji,
+            accentColor: categoryMode ? category.accentColor : .secondary,
+            itemCount: count,
+            isSearching: !navigationState.searchText.isEmpty,
+            searchesWholeVault: !categoryMode || (category == .security && navigationState.securityUsesGroupScope)
+        )
     }
 
     @ViewBuilder
@@ -182,6 +200,13 @@ private struct DetailColumnView: View {
                 // The create path carries the OTP inside the proposal itself;
                 // the edit path passes it explicitly via prefilledOtpauthInput.
                 prefilledOtpauthInput: prefilledOtpauthInput ?? totpProposal?.otpauthOrSecret
+            )
+            .id(navigationState.detailPresentation)
+        case .address:
+            AddressEditView(
+                existingEntry: existingEntry, rootGroup: rootGroup,
+                recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
+                onCancel: onCancel, onSave: onSave, onDelete: onDelete
             )
             .id(navigationState.detailPresentation)
         case .card:

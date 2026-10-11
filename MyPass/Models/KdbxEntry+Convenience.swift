@@ -115,7 +115,7 @@ public extension KdbxEntry {
         "Title", "UserName", "Password", "URL", "Notes", "otp", "Favorite",
         "MyPass.EntryType", "MyPass.CardNumber", "MyPass.CardholderName", "MyPass.ExpiryDate", "MyPass.CVV", "MyPass.NotesBody",
         KdbxEntry.uriMatchModeFieldKey
-    ]).union(KdbxEntry.passkeyFieldKeys)
+    ]).union(KdbxEntry.passkeyFieldKeys).union(KdbxEntry.addressFieldKeys)
     static let additionalURLsStringArrayKey = "KP2A_URL"
 
     /// Primary URL (if non-empty) followed by `KP2A_URL` StringArray extras, deduplicated,

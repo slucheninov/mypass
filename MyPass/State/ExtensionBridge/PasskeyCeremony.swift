@@ -26,6 +26,7 @@ struct PasskeyCreateContext {
     let userId: Data
     let userName: String
     let userDisplayName: String
+    let excludeCredentialIds: [Data]
     /// The RP's requested attestation conveyance, verbatim. WebAuthn's default is
     /// "none", and a live capture confirms Chrome forwards this field unchanged, so
     /// the authenticator — us — is what must honour it.
@@ -120,9 +121,27 @@ enum PasskeyCeremony {
         let userName = (user["name"] as? String) ?? ""
         let userDisplayName = (user["displayName"] as? String) ?? userName
         let attestation = (json["attestation"] as? String) ?? "none"
+        // Chrome serializes descriptor IDs as base64url. Decode to bytes before
+        // comparing with vault IDs so padding cannot change the exclusion decision.
+        // Unsupported credential types cannot identify one of our public-key records.
+        var excludeCredentialIds: [Data] = []
+        if let rawDescriptors = json["excludeCredentials"] {
+            guard let descriptors = rawDescriptors as? [[String: Any]] else {
+                throw PasskeyCeremonyError.invalidRequestJSON
+            }
+            for descriptor in descriptors {
+                guard let type = descriptor["type"] as? String,
+                      let encodedId = descriptor["id"] as? String,
+                      let credentialId = PasskeyBase64URL.decode(encodedId), !credentialId.isEmpty else {
+                    throw PasskeyCeremonyError.invalidRequestJSON
+                }
+                if type == "public-key" { excludeCredentialIds.append(credentialId) }
+            }
+        }
         return PasskeyCreateContext(
             rpId: rpId, rpName: rpName, challenge: challenge,
             userId: userId, userName: userName, userDisplayName: userDisplayName,
+            excludeCredentialIds: excludeCredentialIds,
             attestation: attestation
         )
     }
@@ -306,6 +325,11 @@ enum PasskeyCeremony {
             "response": [
                 "clientDataJSON": PasskeyBase64URL.encode(clientDataJSON),
                 "attestationObject": PasskeyBase64URL.encode(attestationObject),
+                // Chrome validates these WebAuthn JSON fields against the CBOR object;
+                // omitting them rejects completion even after the vault saved the key.
+                "publicKeyAlgorithm": -7,
+                "authenticatorData": PasskeyBase64URL.encode(authData),
+                "publicKey": PasskeyBase64URL.encode(publicKey.derRepresentation),
                 "transports": ["internal"],
             ],
             "clientExtensionResults": [String: Any](),

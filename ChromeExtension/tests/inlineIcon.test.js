@@ -339,20 +339,72 @@ for (const prop of ['position', 'z-index', 'display', 'pointer-events']) {
 const host = fakeElement('div');
 positionHostToField(host, { top: 100, left: 50, width: 200, height: 30 }, { scrollX: 40, scrollY: 200 });
 assert.strictEqual(host.style.position, 'absolute');
-// top  = rect.top(100)  + scrollY(200) + (height(30) - size(20)) / 2      = 305
-// left = rect.left(50)  + scrollX(40)  + width(200) - size(20) - inset(6) = 264
-assert.strictEqual(host.style.top, '305px', 'top = rect.top + scrollY + (height - 20) / 2');
-assert.strictEqual(host.style.left, '264px', 'left = rect.left + scrollX + width - 20 - 6');
+assert.strictEqual(host.style.top, '302px', 'the 26px button is vertically centered in the 30px field');
+assert.strictEqual(host.style.left, '258px', 'the button has a 6px trailing inset, with scroll compensation');
 assert.strictEqual(host.style.priority.top, 'important', 'top is set !important');
 assert.strictEqual(host.style.priority.left, 'important', 'left is set !important');
 assert.strictEqual(host.style.priority.position, 'important', 'position is set !important');
 
-// The same field with no scroll — proves the two offsets above really came from
-// scrollX/scrollY rather than from constants that happen to match.
 const unscrolledHost = fakeElement('div');
 positionHostToField(unscrolledHost, { top: 100, left: 50, width: 200, height: 30 }, { scrollX: 0, scrollY: 0 });
-assert.strictEqual(unscrolledHost.style.top, '105px', 'without scroll the top is 200px higher');
-assert.strictEqual(unscrolledHost.style.left, '224px', 'without scroll the left is 40px further left');
+assert.strictEqual(unscrolledHost.style.top, '102px', 'without scroll the top is 200px higher');
+assert.strictEqual(unscrolledHost.style.left, '218px', 'without scroll the left is 40px further left');
+
+// Actual overlapping controls move the button; unrelated submit buttons and controls
+// on a neighbouring row must not. Input coordinates remain the positioning boundary.
+const field = { top: 100, left: 50, width: 300, height: 48 };
+const reveal = { top: 108, left: 310, width: 32, height: 32 };
+const clear = { top: 108, left: 276, width: 30, height: 32 };
+const obstacleHost = fakeElement('div');
+positionHostToField(obstacleHost, field, {}, [reveal, clear]);
+assert.strictEqual(obstacleHost.style.left, '244px', 'the key clears both visible trailing controls');
+positionHostToField(obstacleHost, field, {}, [clear, reveal]);
+assert.strictEqual(obstacleHost.style.left, '244px', 'DOM order does not affect adjacent control clearance');
+positionHostToField(obstacleHost, field, {}, [
+  { top: 160, left: 300, width: 40, height: 32 },
+  { top: 108, left: 354, width: 80, height: 32 },
+  { top: 108, left: 320, width: 0, height: 32 },
+]);
+assert.strictEqual(obstacleHost.style.left, '316px', 'controls outside the icon bounds do not add arbitrary inset');
+positionHostToField(obstacleHost, { top: 0, left: 0, width: 48, height: 32 }, {});
+assert.strictEqual(obstacleHost.style.display, 'none', 'a tiny field keeps its typing space');
+positionHostToField(obstacleHost, { top: 0, left: 0, width: 300, height: 16 }, {});
+assert.strictEqual(obstacleHost.style.display, 'none', 'a short field never gets an oversized button');
+positionHostToField(obstacleHost, field, {}, [{ top: 108, left: 100, width: 242, height: 32 }]);
+assert.strictEqual(obstacleHost.style.display, 'none', 'no usable space after reserving site controls hides the icon');
+positionHostToField(obstacleHost, field, {});
+assert.strictEqual(obstacleHost.style.display, 'block', 'the icon returns when the field has space again');
+// A body-mounted host must inherit the effective clipping of nested field wrappers.
+// Axis-specific overflow, borders, and scrollbars all affect the usable rectangle.
+const { fieldClipRect } = require('../content.js');
+const clipDocument = { body: {}, documentElement: {} };
+const outerClip = {
+  parentElement: clipDocument.body, clientLeft: 2, clientTop: 2,
+  clientWidth: 196, clientHeight: 176, offsetWidth: 200, offsetHeight: 180,
+  getBoundingClientRect: () => ({ left: 40, top: 30, width: 200, height: 180 }),
+  overflow: { overflowX: 'hidden', overflowY: 'visible' },
+};
+const innerClip = {
+  parentElement: outerClip, clientLeft: 1, clientTop: 1,
+  clientWidth: 278, clientHeight: 98, offsetWidth: 280, offsetHeight: 100,
+  getBoundingClientRect: () => ({ left: 20, top: 70, width: 280, height: 100 }),
+  overflow: { overflowX: 'visible', overflowY: 'auto' },
+};
+const clipViewport = { innerWidth: 800, innerHeight: 600, getComputedStyle: (el) => el.overflow };
+const clipBounds = fieldClipRect({ ownerDocument: clipDocument, parentElement: innerClip }, clipViewport);
+assert.deepStrictEqual(clipBounds, { left: 42, top: 71, right: 238, bottom: 169 });
+const clippedHost = fakeElement('div');
+const visibleInClip = { left: 50, top: 100, width: 180, height: 48 };
+positionHostToField(clippedHost, visibleInClip, {}, [], clipBounds);
+assert.strictEqual(clippedHost.style.display, 'block', 'nested wrappers show a fully contained logo');
+positionHostToField(clippedHost, { ...visibleInClip, top: 40 }, {}, [], clipBounds);
+assert.strictEqual(clippedHost.style.display, 'none', 'a field scrolled above its container hides the floating logo');
+positionHostToField(clippedHost, { ...visibleInClip, top: 55 }, {}, [], clipBounds);
+assert.strictEqual(clippedHost.style.display, 'none', 'even a partially clipped logo cannot intercept outside clicks');
+positionHostToField(clippedHost, { ...visibleInClip, left: 100 }, {}, [], clipBounds);
+assert.strictEqual(clippedHost.style.display, 'none', 'horizontal clipping is respected independently');
+positionHostToField(clippedHost, visibleInClip, {}, [], clipBounds);
+assert.strictEqual(clippedHost.style.display, 'block', 'scrolling the field back into the container restores the logo');
 console.log('inlineIcon.test.js: icon host OK');
 
 // buildShadowHost is the bare scaffolding shared by the icon and the panel — the panel

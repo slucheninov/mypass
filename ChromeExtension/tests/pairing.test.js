@@ -94,6 +94,32 @@ assert.strictEqual(detectBrowserName(), 'Chromium browser');
   assert.strictEqual(sentNativeMessages[0].pairing, undefined);
   assert.strictEqual(storage[PAIRING_STORAGE_KEY], 'newSecret');
 
+  // Transport errors describe connectivity, not whether an already-open app exists.
+  // Preserve only known diagnostic categories; never expose raw host/path details.
+  const originalNativeSend = chrome.runtime.sendNativeMessage;
+  const { handleRuntimeMessage } = require('../background.js');
+  for (const [rawError, expectedCode] of [
+    ['Specified native messaging host not found.', 'native_host_not_found'],
+    ['Native host has exited.', 'connection_unavailable'],
+    ['Access to the specified native messaging host is forbidden.', 'connection_unavailable'],
+    ['/private/test-only/path: native messaging failed', 'connection_unavailable'],
+    [null, 'connection_unavailable']
+  ]) {
+    let calls = 0;
+    chrome.runtime.sendNativeMessage = (_host, _message, callback) => {
+      calls++;
+      chrome.runtime.lastError = rawError ? { message: rawError } : null;
+      callback(undefined);
+      chrome.runtime.lastError = null;
+    };
+    const response = await new Promise((resolve) => handleRuntimeMessage(
+      { type: 'getCredentials', url: 'https://example.com' }, {}, resolve));
+    assert.deepStrictEqual(response, { type: 'error', code: expectedCode, message: expectedCode });
+    assert.strictEqual(calls, 1, 'transport errors must not automatically replay requests');
+    assert.strictEqual(storage[PAIRING_STORAGE_KEY], 'newSecret', 'transport failure must not revoke pairing');
+  }
+  chrome.runtime.sendNativeMessage = originalNativeSend;
+
   {
     const { knownTypes } = require('../background.js');
     assert.ok(knownTypes.includes('getTotp'), 'getTotp must be a known routed message type');

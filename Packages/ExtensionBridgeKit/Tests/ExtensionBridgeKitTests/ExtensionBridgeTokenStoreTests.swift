@@ -56,7 +56,8 @@ final class ExtensionBridgeTokenStoreTests: XCTestCase {
 
     func testRealKeychainStoreSavesLoadsAndClears() throws {
         try requireKeychainTestsEnabled()
-        let store = ExtensionBridgeTokenStore()
+        let store = ExtensionBridgeTokenStore(service: "com.mypass.extensionbridge.tests.\(UUID().uuidString)")
+        defer { try? store.clear() }
         try store.clear()
         XCTAssertNil(try store.load())
 
@@ -70,7 +71,8 @@ final class ExtensionBridgeTokenStoreTests: XCTestCase {
 
     func testRealKeychainStoreSaveOverwritesExistingEndpoint() throws {
         try requireKeychainTestsEnabled()
-        let store = ExtensionBridgeTokenStore()
+        let store = ExtensionBridgeTokenStore(service: "com.mypass.extensionbridge.tests.\(UUID().uuidString)")
+        defer { try? store.clear() }
         try store.save(ExtensionBridgeEndpoint(port: 1, token: "first"))
         try store.save(ExtensionBridgeEndpoint(port: 2, token: "second"))
         XCTAssertEqual(try store.load(), ExtensionBridgeEndpoint(port: 2, token: "second"))

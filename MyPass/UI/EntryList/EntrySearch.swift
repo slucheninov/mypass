@@ -4,12 +4,17 @@ import MyPassKit
 enum EntrySearch {
     static func matches(entry: KdbxEntry, query: String) -> Bool {
         guard !query.isEmpty else { return true }
-        let haystacks = [entry.title, entry.login, entry.url, entry.notes, entry.notesBody]
+        var haystacks = [entry.title, entry.login, entry.url, entry.notes, entry.notesBody]
+        if entry.entryType == .address {
+            let address = entry.address
+            haystacks += KdbxEntry.addressFields.map { address[keyPath: $0.1] }
+        }
         return haystacks.contains { $0.range(of: query, options: .caseInsensitive) != nil }
     }
 
     static func allEntries(in group: KdbxGroup) -> [KdbxEntry] {
-        group.entries + group.subgroups.flatMap { allEntries(in: $0) }
+        let own = PasswordGeneratorHistoryStore.isHistoryGroup(group) ? [] : group.entries
+        return own + group.subgroups.flatMap { allEntries(in: $0) }
     }
 
     static func entries(in group: KdbxGroup, matching query: String) -> [KdbxEntry] {

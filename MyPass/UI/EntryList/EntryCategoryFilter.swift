@@ -14,8 +14,12 @@ enum EntryCategoryFilter {
                 guard let secret = $0.totpSecretBase32, !secret.isEmpty else { return false }
                 return !RecycleBinEntryFilter.isInRecycleBin($0, database: database)
             }
+        case .addresses:
+            return all.filter { $0.entryType == .address && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         case .cards:
             return all.filter { $0.entryType == .card && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
+        case .passkeys:
+            return all.filter { $0.hasPasskey && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         case .notes:
             return all.filter { $0.entryType == .notes && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         case .security:

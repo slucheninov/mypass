@@ -232,6 +232,14 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
 
         let gated: [ExtensionBridgeRequest] = [
             .getCredentials(token: "t", url: "https://example.com", pairing: nil),
+            .getFavorites(token: "t", pairing: nil),
+            .listEntries(token: "t", category: "favorites", pairing: nil),
+            .searchEntries(token: "t", query: "ada", pairing: nil),
+            .createEntry(
+                token: "t", entryType: "Login", title: "Ada", username: "ada", password: "pw",
+                url: "https://ada.example", cardNumber: "", cardholderName: "", expiry: "",
+                cvv: "", notes: "", favorite: false, match: "", otp: "", pairing: nil
+            ),
             .fillCredential(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .getTotp(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .proposeSaveLogin(token: "t", url: "https://example.com", username: "u", password: "p", pairing: nil),
@@ -244,6 +252,9 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
             .passkeyGet(token: "t", requestId: 1, requestDetailsJson: "{}", originUrl: "https://example.com", pairing: nil),
             .passkeyGetApprove(token: "t", requestId: 1, entryId: "e", pairing: nil),
             .passkeyCancel(token: "t", requestId: 1, pairing: nil),
+            .recordGeneratedPassword(token: "t", password: "pw", url: "https://example.com", createdAt: nil, pairing: nil),
+            .getGeneratedPasswordHistory(token: "t", pairing: nil),
+            .deleteGeneratedPassword(token: "t", id: "e", pairing: nil),
         ]
         for request in gated {
             XCTAssertFalse(request.isAnswerableWhileLocked, "\(request) must stay behind the locked gate")
@@ -262,6 +273,17 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
             .passkeyCreateConfirm(token: "t", requestId: 1, entryId: nil, replace: false, pairing: nil),
             .passkeyGetApprove(token: "t", requestId: 1, entryId: "e", pairing: nil),
             .requestUnlock(token: "t", pairing: nil),
+            .getFavorites(token: "t", pairing: nil),
+            .listEntries(token: "t", category: "favorites", pairing: nil),
+            .searchEntries(token: "t", query: "ada", pairing: nil),
+            .createEntry(
+                token: "t", entryType: "Login", title: "Ada", username: "ada", password: "pw",
+                url: "https://ada.example", cardNumber: "", cardholderName: "", expiry: "",
+                cvv: "", notes: "", favorite: false, match: "", otp: "", pairing: nil
+            ),
+            .recordGeneratedPassword(token: "t", password: "pw", url: "https://example.com", createdAt: nil, pairing: nil),
+            .getGeneratedPasswordHistory(token: "t", pairing: nil),
+            .deleteGeneratedPassword(token: "t", id: "e", pairing: nil),
         ]
         for request in resetting {
             XCTAssertTrue(request.resetsAutoLockTimer, "\(request) should reset the idle auto-lock timer")
@@ -516,6 +538,67 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         XCTAssertNil(json["pem"])
     }
 
+    func testGetFavoritesRoundTripsAndOmitsPairingWhenAbsent() throws {
+        let request = ExtensionBridgeRequest.getFavorites(token: "tok-f", pairing: nil)
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["type"] as? String, "getFavorites")
+        XCTAssertEqual(object["token"] as? String, "tok-f")
+        XCTAssertNil(object["pairing"])
+        XCTAssertNil(object["url"])
+    }
+
+    func testListSearchAndCreateRoundTrip() throws {
+        let list = ExtensionBridgeRequest.listEntries(token: "tok", category: "cards", pairing: nil)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: try JSONEncoder().encode(list)), list)
+        XCTAssertEqual(try jsonObject(from: try JSONEncoder().encode(list))["category"] as? String, "cards")
+
+        let search = ExtensionBridgeRequest.searchEntries(token: "tok", query: "ada", pairing: nil)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: try JSONEncoder().encode(search)), search)
+
+        let create = ExtensionBridgeRequest.createEntry(
+            token: "tok", entryType: "Notes", title: "Memo", username: "", password: "", url: "",
+            cardNumber: "", cardholderName: "", expiry: "", cvv: "", notes: "hello",
+            favorite: true, match: "host", otp: "JBSWY3DPEHPK3PXP", pairing: nil
+        )
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: try JSONEncoder().encode(create)), create)
+        let createdObject = try jsonObject(from: try JSONEncoder().encode(create))
+        XCTAssertEqual(createdObject["favorite"] as? Bool, true)
+        XCTAssertEqual(createdObject["match"] as? String, "host")
+        XCTAssertEqual(createdObject["otp"] as? String, "JBSWY3DPEHPK3PXP")
+        XCTAssertEqual(
+            try jsonObject(from: try JSONEncoder().encode(ExtensionBridgeResponse.entryCreated))["type"] as? String,
+            "entryCreated"
+        )
+
+        let legacy = #"{"type":"createEntry","token":"tok","entryType":"Login","title":"Ada"}"#.data(using: .utf8)!
+        XCTAssertEqual(
+            try JSONDecoder().decode(ExtensionBridgeRequest.self, from: legacy),
+            .createEntry(
+                token: "tok", entryType: "Login", title: "Ada", username: "", password: "", url: "",
+                cardNumber: "", cardholderName: "", expiry: "", cvv: "", notes: "",
+                favorite: false, match: "", otp: "", pairing: nil
+            )
+        )
+    }
+
+    func testFavoriteSummaryRoundTripsUrlAndOmitsItWhenAbsent() throws {
+        let withUrl = ExtensionCredentialSummary(
+            id: "1", title: "Example", username: "alice", hasTotp: false, hasPasskey: false, url: "https://example.com"
+        )
+        let encoded = try JSONEncoder().encode(withUrl)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionCredentialSummary.self, from: encoded), withUrl)
+        XCTAssertEqual(try jsonObject(from: encoded)["url"] as? String, "https://example.com")
+
+        let withoutUrl = ExtensionCredentialSummary(
+            id: "1", title: "Example", username: "alice", hasTotp: false, hasPasskey: false
+        )
+        let bare = try JSONEncoder().encode(withoutUrl)
+        XCTAssertNil(try jsonObject(from: bare)["url"])
+        XCTAssertNil(try jsonObject(from: bare)["password"])
+    }
+
     func testGeneratePasswordRoundTripsAndHasExpectedShape() throws {
         let request = ExtensionBridgeRequest.generatePassword(token: "tok-9", domain: "example.com", pairing: "pair-1")
         let data = try JSONEncoder().encode(request)
@@ -555,5 +638,42 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         let object = try jsonObject(from: data)
         XCTAssertEqual(object["type"] as? String, "generatedPassword")
         XCTAssertEqual(object["password"] as? String, "Tr0ub4dor&3xyz")
+    }
+
+    func testPasswordHistoryRequestsRoundTrip() throws {
+        let record = ExtensionBridgeRequest.recordGeneratedPassword(
+            token: "tok", password: "pw", url: "https://gitlab.com", createdAt: 1_700_000_000_000, pairing: "pair"
+        )
+        let recordData = try JSONEncoder().encode(record)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: recordData), record)
+        let recordJSON = try jsonObject(from: recordData)
+        XCTAssertEqual(recordJSON["type"] as? String, "recordGeneratedPassword")
+        XCTAssertEqual(recordJSON["createdAt"] as? Double, 1_700_000_000_000)
+
+        let list = ExtensionBridgeRequest.getGeneratedPasswordHistory(token: "tok", pairing: nil)
+        let listJSON = try jsonObject(from: try JSONEncoder().encode(list))
+        XCTAssertEqual(listJSON["type"] as? String, "getGeneratedPasswordHistory")
+        XCTAssertNil(listJSON["pairing"])
+
+        let delete = ExtensionBridgeRequest.deleteGeneratedPassword(token: "tok", id: "E4B1C0A2-7D58-4F13-9A6E-2C8F5B0D11A7", pairing: nil)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: try JSONEncoder().encode(delete)), delete)
+    }
+
+    func testPasswordHistoryResponseRoundTrips() throws {
+        let item = ExtensionPasswordHistoryItem(
+            id: "1", password: "pw", url: "https://gitlab.com", createdAt: 1_700_000_000_000
+        )
+        let response = ExtensionBridgeResponse.passwordHistory([item])
+        let data = try JSONEncoder().encode(response)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
+        let object = try jsonObject(from: data)
+        XCTAssertEqual(object["type"] as? String, "generatedPasswordHistory")
+        let entries = object["entries"] as? [[String: Any]]
+        XCTAssertEqual(entries?.first?["password"] as? String, "pw")
+        XCTAssertEqual(entries?.first?["createdAt"] as? Double, 1_700_000_000_000)
+
+        let ok = try jsonObject(from: try JSONEncoder().encode(ExtensionBridgeResponse.acknowledged))
+        XCTAssertEqual(ok["type"] as? String, "ok")
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: try JSONEncoder().encode(ExtensionBridgeResponse.acknowledged)), .acknowledged)
     }
 }

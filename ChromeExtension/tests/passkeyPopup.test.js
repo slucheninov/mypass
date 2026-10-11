@@ -44,12 +44,14 @@ global.document = {
 // The pending ceremony written by background.js lives in chrome.storage.session, which
 // is what getPairingStorageArea() prefers.
 let sessionStore = {};
+let pendingStorageListener;
 const sentMessages = [];
 let closed = 0;
 global.window = { close: () => { closed += 1; } };
 
 global.chrome = {
   storage: {
+    onChanged: { addListener: (listener) => { pendingStorageListener = listener; } },
     local: {
       get: (_keys, cb) => cb({ passkeyProxyEnabled: true }),
       set: (_items, cb) => cb && cb(),
@@ -73,7 +75,7 @@ global.chrome = {
   runtime: {
     sendMessage: (msg, cb) => {
       sentMessages.push(msg);
-      if (cb) cb({ type: 'ok' });
+      if (cb) cb({ type: msg.type === 'passkeyCreateConfirm' ? 'passkeyCreateComplete' : msg.type === 'passkeyGetApprove' ? 'passkeyGetComplete' : 'ok' });
     }
   },
   tabs: { query: (_opts, cb) => cb([{ url: 'https://example.com', id: 1 }]) }
@@ -185,26 +187,26 @@ assert.strictEqual(elements['passkey-replace-panel'].hidden, true);
 assert.strictEqual(elements['list-panel'].hidden, true, 'a ceremony hides the ordinary credential list');
 assert.strictEqual(elements['add-totp-section'].hidden, true, 'a ceremony hides the Add-2FA section');
 assert.strictEqual(elements['passkey-settings-footer'].hidden, true, 'a ceremony hides the settings toggle');
-assert.strictEqual(elements['passkey-save-summary'].textContent, 'New entry for example.com');
-assert.strictEqual(elements['passkey-save-detail'].textContent, 'example.com — https://example.com', 'origin line stays visible as a secondary line');
+assert.strictEqual(elements['passkey-save-summary'].textContent, 'A new entry will be created.');
+assert.deepStrictEqual(elements['passkey-save-detail'].children.slice(-4).map((el) => el.textContent), ['Website', 'example.com', 'Origin', 'https://example.com']);
 console.log('passkeyPopup.test.js: create panel renders and owns the popup OK');
 
 resetPanels();
 renderPasskeyCeremonyPanel({ kind: 'create', requestId: 1.5, rpId: 'example.com', originUrl: 'https://example.com', matches: [withoutPasskey] });
 assert.strictEqual(elements['passkey-save-panel'].hidden, false);
-assert.strictEqual(elements['passkey-save-summary'].textContent, 'Save passkey to "Example" (bob)?', 'single match names the target entry');
-assert.strictEqual(elements['passkey-save-detail'].textContent, 'example.com — https://example.com');
+assert.deepStrictEqual(elements['passkey-save-detail'].children.slice(0, 4).map((el) => el.textContent), ['Entry', 'Example', 'Account', 'bob']);
+assert.deepStrictEqual(elements['passkey-save-detail'].children.slice(-4).map((el) => el.textContent), ['Website', 'example.com', 'Origin', 'https://example.com']);
 console.log('passkeyPopup.test.js: single-match save panel names the target entry OK');
 
 resetPanels();
 renderPasskeyCeremonyPanel({ kind: 'create', requestId: 2, rpId: 'example.com', originUrl: 'https://example.com', matches: [withPasskey] });
 assert.strictEqual(elements['passkey-replace-panel'].hidden, false);
-assert.strictEqual(elements['passkey-replace-summary'].textContent, 'Replace passkey in "Example" (alice)?');
-assert.strictEqual(elements['passkey-replace-detail'].textContent, 'example.com — https://example.com');
+assert.deepStrictEqual(elements['passkey-replace-detail'].children.slice(0, 4).map((el) => el.textContent), ['Entry', 'Example', 'Account', 'alice']);
+assert.deepStrictEqual(elements['passkey-replace-detail'].children.slice(-4).map((el) => el.textContent), ['Website', 'example.com', 'Origin', 'https://example.com']);
 elements['passkey-replace-btn'].onclick();
 assert.deepStrictEqual(sentMessages[0], { type: 'passkeyCreateConfirm', requestId: 2, entryId: 'e1', replace: true });
 assert.strictEqual(closed, 1, 'confirming closes the popup');
-assert.strictEqual(sessionStore[PENDING_PASSKEY_KEY], undefined, 'confirming clears the pending record');
+assert.strictEqual(sessionStore[PENDING_PASSKEY_KEY], undefined, 'the UI leaves background-owned pending state untouched');
 console.log('passkeyPopup.test.js: replace panel sends replace:true and names the target entry OK');
 
 resetPanels();
@@ -212,8 +214,8 @@ renderPasskeyCeremonyPanel({ kind: 'get', requestId: 3, rpId: 'example.com', ori
 assert.strictEqual(elements['passkey-use-panel'].hidden, false);
 // Gate: the "Use passkey" panel used to render only the bare rpId/origin summary, never
 // naming which entry it was about to sign in as.
-assert.strictEqual(elements['passkey-use-summary'].textContent, 'Sign in as "Example" (alice)?', 'the use panel must name the target entry');
-assert.strictEqual(elements['passkey-use-detail'].textContent, 'example.com — https://example.com', 'the rpId/origin line stays visible for phishing resistance');
+assert.deepStrictEqual(elements['passkey-use-detail'].children.slice(0, 4).map((el) => el.textContent), ['Entry', 'Example', 'Account', 'alice']);
+assert.deepStrictEqual(elements['passkey-use-detail'].children.slice(-4).map((el) => el.textContent), ['Website', 'example.com', 'Origin', 'https://example.com']);
 elements['passkey-approve-btn'].onclick();
 assert.deepStrictEqual(sentMessages[0], { type: 'passkeyGetApprove', requestId: 3, entryId: 'e1' });
 console.log('passkeyPopup.test.js: use panel names the target entry and approves with the matched entry OK');
@@ -260,7 +262,7 @@ assert.ok(
 passkeyRow.listeners.click[0]();
 assert.strictEqual(sentMessages.length, 0, 'selecting an entry that already has a passkey must not confirm directly');
 assert.strictEqual(elements['passkey-replace-panel'].hidden, false, 'it must route to the Replace confirm panel instead');
-assert.strictEqual(elements['passkey-replace-summary'].textContent, 'Replace passkey in "Example" (alice)?');
+assert.deepStrictEqual(elements['passkey-replace-detail'].children.slice(0, 4).map((el) => el.textContent), ['Entry', 'Example', 'Account', 'alice']);
 elements['passkey-replace-btn'].onclick();
 assert.deepStrictEqual(sentMessages[0], { type: 'passkeyCreateConfirm', requestId: 12, entryId: 'e1', replace: true });
 console.log('passkeyPopup.test.js: picker routes an existing-passkey row to Replace confirm OK');
@@ -273,7 +275,7 @@ const [, plainRowAgain] = elements['passkey-picker-list'].children;
 plainRowAgain.listeners.click[0]();
 assert.strictEqual(sentMessages.length, 0, 'selecting a plain entry must not confirm directly either');
 assert.strictEqual(elements['passkey-save-panel'].hidden, false);
-assert.strictEqual(elements['passkey-save-summary'].textContent, 'Save passkey to "Example" (bob)?');
+assert.deepStrictEqual(elements['passkey-save-detail'].children.slice(0, 4).map((el) => el.textContent), ['Entry', 'Example', 'Account', 'bob']);
 elements['passkey-save-btn'].onclick();
 assert.deepStrictEqual(sentMessages[0], { type: 'passkeyCreateConfirm', requestId: 13, entryId: 'e2', replace: false });
 console.log('passkeyPopup.test.js: picker routes a plain row to a named Save confirm OK');
@@ -337,7 +339,9 @@ assert.strictEqual(
   elements['passkey-settings-footer'].hidden, false,
   'initPasskeySettingsToggle must still show the footer when idle'
 );
-assert.strictEqual(elements['passkey-proxy-toggle'].checked, true, 'checkbox still synced from stored cache');
+elements['open-settings-btn'].listeners.click[0]();
+assert.strictEqual(sentMessages.at(-1).type, 'openBrowserSettings', 'settings open the native app');
+assert.strictEqual(elements['settings-open-error'].hidden, false, 'missing native acknowledgement displays recovery instructions');
 console.log('passkeyPopup.test.js: refreshPasskeyProxy fires and settings footer/checkbox still initialize when idle OK');
 
 // --- ordinary credential list: passkey badge --------------------------------
@@ -363,3 +367,84 @@ assert.ok(
 console.log('passkeyPopup.test.js: ordinary credential list shows the passkey badge OK');
 
 console.log('passkeyPopup.test.js OK');
+
+// Runtime status must never confuse a stored preference with working interception.
+const { passkeyProxyStatusText, browserManagerDiagnosticsText } = require('../popup.js');
+assert.match(passkeyProxyStatusText({ proxyState: 'attachment-error' }), /MyPass settings/);
+assert.strictEqual(passkeyProxyStatusText({ proxyState: 'active' }), '');
+assert.strictEqual(passkeyProxyStatusText({ proxyState: 'locked' }), '');
+assert.strictEqual(browserManagerDiagnosticsText({ checked: false }), '');
+const managersOnText = browserManagerDiagnosticsText({
+  checked: true, passwordSavingEnabled: true, extensions: [{ name: 'iCloud Passwords' }, { name: '1Password' }]
+});
+assert.match(managersOnText, /Browser password saving/);
+assert.match(managersOnText, /iCloud Passwords, 1Password/);
+assert.match(managersOnText, /MyPass settings/);
+assert.strictEqual(browserManagerDiagnosticsText({ checked: true, passwordSavingEnabled: false, extensions: [] }), '');
+assert.strictEqual(choosePasskeyPanel({ kind: 'create', phase: 'checking', matches: [] }), null);
+console.log('passkeyPopup.test.js: actionable runtime and manager diagnostics OK');
+
+// Opening the popup during the native round trip must show a loading surface and
+// transition in place when storage receives the eventual reply (no popup reload).
+sessionStore[PENDING_PASSKEY_KEY] = { kind: 'create', requestId: 80, phase: 'checking' };
+initPasskeyPopupUI();
+assert.strictEqual(elements['passkey-checking-panel'].hidden, false);
+assert.strictEqual(elements['passkey-save-panel'].hidden, true);
+const ready = { kind: 'create', requestId: 80, rpId: 'example.com', matches: [] };
+sessionStore[PENDING_PASSKEY_KEY] = ready;
+pendingStorageListener({ [PENDING_PASSKEY_KEY]: { newValue: ready } }, 'local');
+assert.strictEqual(elements['passkey-checking-panel'].hidden, false, 'local storage must not drive session ceremonies');
+pendingStorageListener({ [PENDING_PASSKEY_KEY]: { newValue: ready } }, 'session');
+assert.strictEqual(elements['passkey-checking-panel'].hidden, true);
+assert.strictEqual(elements['passkey-save-panel'].hidden, false, 'late native reply renders confirmation in the already-open popup');
+delete sessionStore[PENDING_PASSKEY_KEY];
+pendingStorageListener({ [PENDING_PASSKEY_KEY]: { oldValue: ready } }, 'session');
+assert.strictEqual(elements['passkey-save-panel'].hidden, true, 'cancellation restores ordinary UI');
+
+// A delayed approval/cancel callback belongs to the old popup, not the next request.
+const ordinarySendMessage = chrome.runtime.sendMessage;
+const popupExports = require('../popup.js');
+for (const act of [() => popupExports.sendPasskeyCreateConfirm(81, 'entry', false), () => popupExports.sendPasskeyGetApprove(81, 'entry'), () => sendPasskeyCancel(81)]) {
+  let finishOldRequest;
+  chrome.runtime.sendMessage = (_message, callback) => { finishOldRequest = callback; };
+  act();
+  const next = { kind: 'get', requestId: 82, phase: 'checking' };
+  sessionStore[PENDING_PASSKEY_KEY] = next;
+  finishOldRequest({ type: 'ok' });
+  assert.strictEqual(sessionStore[PENDING_PASSKEY_KEY], next, 'old UI callback must never remove the next ceremony');
+}
+chrome.runtime.sendMessage = ordinarySendMessage;
+console.log('passkeyPopup.test.js: live checking/ready/cancel hydration and exclusive background storage ownership OK');
+
+// Browser completion errors remain visible even if the worker removes pending first.
+chrome.runtime.sendMessage = (_message, callback) => callback({ type: 'passkeyCreateComplete', error: { name: 'OperationError' } });
+popupExports.sendPasskeyCreateConfirm(90, 'entry', false);
+assert.strictEqual(elements['passkey-failure-panel'].hidden, false);
+assert.match(elements['passkey-failure-message'].textContent, /local passkey may already exist/);
+pendingStorageListener({ [PENDING_PASSKEY_KEY]: { oldValue: { requestId: 90 } } }, 'session');
+assert.strictEqual(elements['passkey-failure-panel'].hidden, false);
+chrome.runtime.sendMessage = ordinarySendMessage;
+sessionStore = { lastPasskeyFailure: { requestId: 90, kind: 'create' } };
+rehydratePendingPasskeyCeremony((owns) => assert.strictEqual(owns, true));
+assert.strictEqual(elements['passkey-failure-panel'].hidden, false, 'failure survives reopening');
+sessionStore = { [PENDING_PASSKEY_KEY]: { requestId: 91, kind: 'create', phase: 'completing' } };
+rehydratePendingPasskeyCeremony((owns) => assert.strictEqual(owns, true));
+assert.strictEqual(elements['passkey-checking-panel'].hidden, false);
+assert.strictEqual(elements['passkey-save-panel'].hidden, true, 'cannot approve twice while completing');
+console.log('passkeyPopup.test.js: durable completion failure and completing state OK');
+
+const nextCeremony = { kind: 'create', requestId: 92, rpId: 'example.com', originUrl: 'https://example.com', matches: [] };
+pendingStorageListener({ [PENDING_PASSKEY_KEY]: { newValue: nextCeremony } }, 'session');
+assert.strictEqual(elements['passkey-save-panel'].hidden, false);
+pendingStorageListener({ lastPasskeyFailure: { newValue: { requestId: 91, kind: 'create' } } }, 'session');
+assert.strictEqual(elements['passkey-save-panel'].hidden, false, 'old completion failure cannot cover the new ceremony');
+assert.strictEqual(elements['passkey-failure-panel'].hidden, true);
+let finishPrevious;
+chrome.runtime.sendMessage = (_message, callback) => { finishPrevious = callback; };
+popupExports.sendPasskeyCreateConfirm(92, 'entry', false);
+pendingStorageListener({ [PENDING_PASSKEY_KEY]: { newValue: { ...nextCeremony, requestId: 93 } } }, 'session');
+finishPrevious({ type: 'passkeyCreateComplete', error: { name: 'OperationError' } });
+assert.strictEqual(elements['passkey-save-panel'].hidden, false, 'old callback cannot cover the new ceremony');
+assert.strictEqual(elements['passkey-failure-panel'].hidden, true);
+chrome.runtime.sendMessage = ordinarySendMessage;
+console.log('passkeyPopup.test.js: stale failure event and callback do not cover the next approval OK');

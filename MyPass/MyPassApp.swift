@@ -185,21 +185,27 @@ struct MyPassApp: App {
             pairingManager: pairingManager,
             autoLockActivityRecorder: controller
         )
-        let extensionBridgeServer = LoopbackServer(
-            tokenStore: ExtensionBridgeTokenStore(),
-            handler: extensionBridgeService.handle
-        )
-        do {
-            try extensionBridgeServer.start()
-        } catch {
-            os_log(
-                "ExtensionBridgeServer failed to start: %{public}@",
-                log: OSLog(subsystem: "com.mypass.app", category: "ExtensionBridge"),
-                type: .error,
-                String(describing: error)
+        // Hosted XCTest runs launch a second MyPass process. Publishing its
+        // endpoint overwrites the running app's discovery record, leaving Chrome
+        // pointed at a dead listener after the tests exit. Previews must likewise
+        // never advertise themselves as the user's browser bridge.
+        if !AppRuntimeEnvironment.isTestOrPreviewHost {
+            let extensionBridgeServer = LoopbackServer(
+                tokenStore: ExtensionBridgeTokenStore(),
+                handler: extensionBridgeService.handle
             )
+            do {
+                try extensionBridgeServer.start()
+            } catch {
+                os_log(
+                    "ExtensionBridgeServer failed to start: %{public}@",
+                    log: OSLog(subsystem: "com.mypass.app", category: "ExtensionBridge"),
+                    type: .error,
+                    String(describing: error)
+                )
+            }
+            AppDelegate.extensionBridgeServer = extensionBridgeServer
         }
-        AppDelegate.extensionBridgeServer = extensionBridgeServer
 
         let navigationState = NavigationState()
         _navigationState = StateObject(wrappedValue: navigationState)
@@ -238,6 +244,9 @@ struct MyPassApp: App {
         // chance to process the `@Published pendingSaveProposal` change (so the sheet
         // exists before we bring the window forward), so the async hop stays as
         // defense-in-depth rather than being removed.
+        extensionBridgeService.onBrowserSettingsRequested = {
+            DispatchQueue.main.async { BrowserSettingsActivator.request() }
+        }
         extensionBridgeService.onSaveProposal = { [weak navigationState] url, username, password in
             DispatchQueue.main.async {
                 navigationState?.pendingSaveProposal = PendingSaveProposal(url: url, username: username, password: password)
@@ -324,6 +333,7 @@ struct MyPassApp: App {
                 .environmentObject(deviceUnlockPromptCoordinator)
                 .background(SettingsHotkeyObserver())
                 .background(OpenMainWindowOnDemand())
+                .background(OpenBrowserSettingsOnDemand())
         }
     }
 
@@ -335,6 +345,7 @@ struct MyPassApp: App {
                 .environmentObject(navigationState)
                 .environmentObject(deviceUnlockPromptCoordinator)
                 .background(OpenMainWindowOnDemand())
+                .background(OpenBrowserSettingsOnDemand())
         }
         .menuBarExtraStyle(.window)
     }
@@ -343,6 +354,7 @@ struct MyPassApp: App {
     private var settingsWindow: some Scene {
         Settings {
             SettingsView()
+                .background(OpenBrowserSettingsOnDemand())
                 .environmentObject(autoLockController)
                 .environmentObject(vaultSession)
         }

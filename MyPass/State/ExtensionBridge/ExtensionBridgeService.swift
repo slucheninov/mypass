@@ -16,6 +16,7 @@ protocol AutoLockActivityRecording: AnyObject {
 final class ExtensionBridgeService {
     weak var vaultSession: VaultSession?
     private let pairingManager: ExtensionPairingManager
+    private let browserDiagnostics: BrowserDiagnosticsStore
     /// Injectable so the debounce is testable without sleeping.
     private let now: () -> Date
     /// Weak, like `vaultSession` — the service observes the auto-lock controller's
@@ -44,15 +45,18 @@ final class ExtensionBridgeService {
     /// forward and re-trigger the Touch ID prompt. The service itself never unlocks
     /// anything — presenting the unlock UI is the app layer's job.
     var onUnlockRequested: (() -> Void)?
+    var onBrowserSettingsRequested: (() -> Void)?
 
     init(
         vaultSession: VaultSession,
         pairingManager: ExtensionPairingManager,
         now: @escaping () -> Date = Date.init,
-        autoLockActivityRecorder: AutoLockActivityRecording? = nil
+        autoLockActivityRecorder: AutoLockActivityRecording? = nil,
+        browserDiagnostics: BrowserDiagnosticsStore = .shared
     ) {
         self.vaultSession = vaultSession
         self.pairingManager = pairingManager
+        self.browserDiagnostics = browserDiagnostics
         self.now = now
         self.autoLockActivityRecorder = autoLockActivityRecorder
         // Locking the vault must invalidate anything mid-ceremony. Without this a
@@ -87,14 +91,119 @@ final class ExtensionBridgeService {
             title: entry.title,
             username: entry.login,
             hasTotp: entry.totpSecretBase32?.isEmpty == false,
-            hasPasskey: entry.passkeyPrivateKeyPEM?.isEmpty == false
+            hasPasskey: entry.hasPasskey
         )
+    }
+
+    /// Same fields as `summary(for:)`, plus the saved URL and entry type so a
+    /// browsed row can open its site. An empty URL stays nil and is omitted on the wire.
+    private func browseSummary(for entry: KdbxEntry) -> ExtensionCredentialSummary {
+        ExtensionCredentialSummary(
+            id: entry.uuid.uuidString,
+            title: entry.title,
+            username: entry.entryType == .address ? entry.address.fullName : entry.login,
+            hasTotp: entry.totpSecretBase32?.isEmpty == false,
+            hasPasskey: entry.hasPasskey,
+            url: entry.url.isEmpty ? nil : entry.url,
+            entryType: entry.entryType.rawValue
+        )
+    }
+
+    /// Favorites the popup shows when the active tab is not a website. Recycle Bin
+    /// residents stay hidden, and a never-mode entry stays hidden too: the user told
+    /// the app not to offer it to the browser.
+    private func favoriteEntries(in database: KdbxDatabase) -> [KdbxEntry] {
+        EntrySearch.allEntries(in: database.rootGroup)
+            .filter { $0.isFavorite }
+            .filter { $0.uriMatchMode != .never }
+            .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
+            .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    /// Popup category menu. Nil means the category name is not one the popup offers.
+    /// Favorites keeps the never-mode exclusion. The other categories are the vault
+    /// browser, so a never-mode entry still appears there.
+    private func browseEntries(category: String, in database: KdbxDatabase) -> [KdbxEntry]? {
+        if category == "favorites" {
+            return favoriteEntries(in: database)
+        }
+        let live = EntrySearch.allEntries(in: database.rootGroup)
+            .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
+        let matched: [KdbxEntry]
+        switch category {
+        case "all":
+            matched = live
+        case "logins":
+            matched = live.filter { $0.entryType == .login }
+        case "codes":
+            matched = live.filter { $0.totpSecretBase32?.isEmpty == false }
+        case "passkeys":
+            matched = live.filter { $0.hasPasskey }
+        case "addresses":
+            matched = live.filter { $0.entryType == .address }
+        case "cards":
+            matched = live.filter { $0.entryType == .card }
+        case "notes":
+            matched = live.filter { $0.entryType == .notes }
+        default:
+            return nil
+        }
+        return matched.sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+    }
+
+    private func makeCreatedEntry(
+        entryType: EntryType,
+        title: String,
+        username: String,
+        password: String,
+        url: String,
+        cardNumber: String,
+        cardholderName: String,
+        expiry: String,
+        cvv: String,
+        notes: String,
+        favorite: Bool,
+        match: String,
+        otp: String
+    ) -> KdbxEntry {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now,
+            history: []
+        )
+        entry.title = title
+        entry.entryType = entryType
+        entry.isFavorite = favorite
+        switch entryType {
+        case .login:
+            entry.login = username
+            entry.password = password
+            entry.url = url
+            entry.notes = notes
+            if let mode = URIMatchMode(rawValue: match) {
+                entry.uriMatchMode = mode
+            }
+            EntryEditSaveLogic.applyOTP(to: &entry, otpauthInput: otp)
+        case .address:
+            break // Address creation uses the dedicated native editor, not the flat login/card payload.
+        case .card:
+            entry.cardholderName = cardholderName
+            entry.cardNumber = cardNumber.filter(\.isNumber)
+            entry.expiryDate = expiry
+            entry.cvv = cvv
+            entry.login = cardholderName
+        case .notes:
+            entry.notesBody = notes
+        }
+        return entry
     }
 
     /// Matches entries for `url`, then excludes any that live in the Recycle Bin —
     /// soft-deleted entries must never be surfaced to or filled by the extension.
     private func matchingEntries(forURL url: String, in database: KdbxDatabase) -> [KdbxEntry] {
         ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
+            .filter { $0.entryType != .address }
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
     }
 
@@ -143,9 +252,10 @@ final class ExtensionBridgeService {
             return error == nil
         case .passkeyGetComplete(_, _, let error):
             return error == nil
-        case .pairingStarted, .paired, .credentialList, .credential, .totp, .saveProposalAccepted,
+        case .pairingStarted, .paired, .credentialList, .credential, .address, .totp, .saveProposalAccepted,
              .unlockPresented, .unlockNotNeeded, .passkeyProxyStatus, .passkeyProxyEnabled,
-             .passkeyCreatePending, .passkeyGetPending, .passkeyCancelled, .generatedPassword:
+             .passkeyCreatePending, .passkeyGetPending, .passkeyCancelled, .generatedPassword,
+             .entryCreated, .acknowledged, .passwordHistory:
             return true
         }
     }
@@ -155,6 +265,15 @@ final class ExtensionBridgeService {
             return .locked
         }
         switch request {
+        case .openBrowserSettings(_, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else { return .pairingRequired }
+            onBrowserSettingsRequested?()
+            return .acknowledged
+        case .reportBrowserDiagnostics(_, let report, let pairing):
+            guard let browser = pairingManager.authorizedBrowser(pairing: pairing) else { return .pairingRequired }
+            guard report.isValid else { return .error("invalid_browser_diagnostics") }
+            browserDiagnostics.record(report, for: browser.id, receivedAt: now())
+            return .acknowledged
         case .startPairing(_, let browser):
             _ = pairingManager.startPairing(browser: browser)
             return .pairingStarted
@@ -172,6 +291,102 @@ final class ExtensionBridgeService {
             }
             let matches = matchingEntries(forURL: url, in: database)
             return .credentialList(matches.map(summary(for:)))
+
+        case .getFavorites(_, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let database = vaultSession?.currentDatabase else {
+                return .locked
+            }
+            return .credentialList(favoriteEntries(in: database).map(browseSummary(for:)))
+
+        case .listEntries(_, let category, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let database = vaultSession?.currentDatabase else {
+                return .locked
+            }
+            guard let entries = browseEntries(category: category, in: database) else {
+                return .error("unknown category")
+            }
+            return .credentialList(entries.map(browseSummary(for:)))
+
+        case .searchEntries(_, let query, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let database = vaultSession?.currentDatabase else {
+                return .locked
+            }
+            let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return .credentialList([])
+            }
+            let matches = EntrySearch.allEntries(in: database.rootGroup)
+                .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
+                .filter { EntrySearch.matches(entry: $0, query: trimmed) }
+                .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
+            return .credentialList(matches.map(browseSummary(for:)))
+
+        case .createEntry(
+            _, let entryTypeRaw, let title, let username, let password, let url,
+            let cardNumber, let cardholderName, let expiry, let cvv, let notes,
+            let favorite, let match, let otp, let pairing
+        ):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let session = vaultSession, session.currentDatabase != nil else {
+                return .locked
+            }
+            guard let entryType = EntryType(rawValue: entryTypeRaw) else {
+                return .error("unknown entry type")
+            }
+            let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let trimmedHolder = cardholderName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let resolvedTitle: String
+            switch entryType {
+            case .login:
+                resolvedTitle = EntryEditSaveLogic.resolvedTitle(draftTitle: trimmedTitle, url: url)
+            case .address:
+                return .error("Create addresses in MyPass using Add > Address")
+            case .card:
+                resolvedTitle = trimmedTitle.isEmpty ? trimmedHolder : trimmedTitle
+            case .notes:
+                resolvedTitle = trimmedTitle
+            }
+            guard !resolvedTitle.isEmpty else {
+                return .error("title required")
+            }
+            let entry = makeCreatedEntry(
+                entryType: entryType, title: resolvedTitle, username: username, password: password,
+                url: url, cardNumber: cardNumber, cardholderName: cardholderName, expiry: expiry,
+                cvv: cvv, notes: notes, favorite: favorite, match: match, otp: otp
+            )
+            session.mutate { database in
+                database.rootGroup.entries.append(entry)
+            }
+            return .entryCreated
+
+        case .fillAddress(_, let id, let url, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else { return .pairingRequired }
+            guard let database = vaultSession?.currentDatabase else { return .locked }
+            guard let destination = URLComponents(string: url),
+                  ["http", "https"].contains(destination.scheme?.lowercased() ?? ""),
+                  let host = destination.host, !host.isEmpty,
+                  destination.user == nil, destination.password == nil else {
+                return .error("Address autofill requires a website URL")
+            }
+            guard let entry = EntrySearch.allEntries(in: database.rootGroup).first(where: {
+                $0.uuid.uuidString == id && $0.entryType == .address
+                    && !RecycleBinEntryFilter.isInRecycleBin($0, database: database)
+            }) else { return .error("Address not found") }
+            // Addresses are deliberately reusable across websites. The extension pins this
+            // explicit selection to one document/form before requesting the private values.
+            vaultSession?.touchAccess(entryID: entry.uuid)
+            return .address(entry.address)
 
         case .fillCredential(_, let id, let url, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {
@@ -352,6 +567,24 @@ final class ExtensionBridgeService {
                 return .passkeyCreateComplete(
                     requestId: requestId, responseJson: nil,
                     error: PasskeyErrorDetails(name: "NotAllowedError", message: "No pending request")
+                )
+            }
+            // WebAuthn requires user consent before revealing that an excluded
+            // credential exists (InvalidStateError). Check here, after Save/Replace,
+            // rather than at the page-triggered request. Re-read the current vault:
+            // another registration or sync may have added the key while UI was open.
+            // This is an authenticator ownership check, not an autofill match, so a
+            // live credential with URI matching disabled still prevents replacement.
+            let excludedCredentialExists = EntrySearch.allEntries(in: database.rootGroup).contains { entry in
+                entry.hasPasskey && entry.passkeyRelyingParty == pending.context.rpId
+                    && !RecycleBinEntryFilter.isInRecycleBin(entry, database: database)
+                    && entry.passkeyCredentialId.map { pending.context.excludeCredentialIds.contains($0) } == true
+            }
+            if excludedCredentialExists {
+                pendingPasskeyCreates.removeValue(forKey: requestId)
+                return .passkeyCreateComplete(
+                    requestId: requestId, responseJson: nil,
+                    error: PasskeyErrorDetails(name: "InvalidStateError", message: "A passkey for this account already exists")
                 )
             }
             // Resolved from the same candidate set `.passkeyCreate` offered the popup — not
@@ -554,6 +787,48 @@ final class ExtensionBridgeService {
             pendingPasskeyGets.removeValue(forKey: requestId)
             return .passkeyCancelled(requestId: requestId)
 
+        case .recordGeneratedPassword(_, let password, let url, let createdAt, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let session = vaultSession, session.currentDatabase != nil else {
+                return .locked
+            }
+            let trimmed = password.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else {
+                return .error("password required")
+            }
+            let when = createdAt.map { Date(timeIntervalSince1970: $0 / 1000) } ?? Date()
+            session.mutate { database in
+                PasswordGeneratorHistoryStore.record(password: trimmed, url: url, createdAt: when, in: &database)
+            }
+            return .acknowledged
+
+        case .getGeneratedPasswordHistory(_, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let database = vaultSession?.currentDatabase else {
+                return .locked
+            }
+            return .passwordHistory(PasswordGeneratorHistoryStore.items(in: database.rootGroup))
+
+        case .deleteGeneratedPassword(_, let id, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let session = vaultSession, session.currentDatabase != nil else {
+                return .locked
+            }
+            guard let uuid = UUID(uuidString: id) else {
+                return .error("entry not found")
+            }
+            var removed = false
+            session.mutate { database in
+                removed = PasswordGeneratorHistoryStore.delete(id: uuid, in: &database)
+            }
+            return removed ? .acknowledged : .error("entry not found")
+
         case .generatePassword(_, let domain, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {
                 return .pairingRequired
@@ -589,5 +864,110 @@ final class ExtensionBridgeService {
                 return .error("This site's password requirements could not be satisfied")
             }
         }
+    }
+}
+
+/// Generated passwords live in a fixed group inside the vault so they are encrypted
+/// and synced with everything else. The group stays out of the sidebar, search,
+/// favorites, and site matching: these rows are history, not logins.
+enum PasswordGeneratorHistoryStore {
+    static let groupID = UUID(uuidString: "E4B1C0A2-7D58-4F13-9A6E-2C8F5B0D11A7")!
+    static let markerKey = "MyPass.GeneratorHistory"
+    static let limit = 30
+    static let groupName = "Password Generator History"
+
+    static func isHistoryGroup(_ group: KdbxGroup) -> Bool {
+        group.uuid == groupID || group.customData[markerKey] == "1"
+    }
+
+    static func record(password: String, url: String, createdAt: Date, in database: inout KdbxDatabase) {
+        let group = ensureGroup(in: database.rootGroup)
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: createdAt, lastModificationTime: createdAt, lastAccessTime: createdAt, locationChanged: now,
+            history: []
+        )
+        entry.title = title(for: url)
+        entry.password = password
+        entry.url = url
+        entry.uriMatchMode = .never
+        group.entries.append(entry)
+        group.lastModificationTime = now
+        trim(group, database: &database, now: now)
+    }
+
+    @discardableResult
+    static func delete(id: UUID, in database: inout KdbxDatabase) -> Bool {
+        guard let group = find(in: database.rootGroup),
+              let index = group.entries.firstIndex(where: { $0.uuid == id }) else {
+            return false
+        }
+        group.entries.remove(at: index)
+        let now = Date()
+        group.lastModificationTime = now
+        database.deletedObjects.append(KdbxDeletedObject(uuid: id, deletionTime: now))
+        return true
+    }
+
+    static func items(in root: KdbxGroup) -> [ExtensionPasswordHistoryItem] {
+        guard let group = find(in: root) else { return [] }
+        return group.entries
+            .sorted { $0.creationTime > $1.creationTime }
+            .map { entry in
+                ExtensionPasswordHistoryItem(
+                    id: entry.uuid.uuidString,
+                    password: entry.password,
+                    url: entry.url,
+                    createdAt: (entry.creationTime.timeIntervalSince1970 * 1000).rounded()
+                )
+            }
+    }
+
+    private static func trim(_ group: KdbxGroup, database: inout KdbxDatabase, now: Date) {
+        let sorted = group.entries.sorted { $0.creationTime > $1.creationTime }
+        guard sorted.count > limit else {
+            group.entries = sorted
+            return
+        }
+        group.entries = Array(sorted.prefix(limit))
+        for entry in sorted.dropFirst(limit) {
+            database.deletedObjects.append(KdbxDeletedObject(uuid: entry.uuid, deletionTime: now))
+        }
+    }
+
+    private static func ensureGroup(in root: KdbxGroup) -> KdbxGroup {
+        if let existing = find(in: root) { return existing }
+        let now = Date()
+        let group = KdbxGroup(
+            uuid: groupID,
+            name: groupName,
+            iconID: 0,
+            creationTime: now,
+            lastModificationTime: now,
+            locationChanged: now,
+            entries: [],
+            subgroups: [],
+            customData: [markerKey: "1"]
+        )
+        root.subgroups.append(group)
+        root.lastModificationTime = now
+        return group
+    }
+
+    private static func find(in group: KdbxGroup) -> KdbxGroup? {
+        if isHistoryGroup(group) { return group }
+        for child in group.subgroups {
+            if let found = find(in: child) { return found }
+        }
+        return nil
+    }
+
+    private static func title(for url: String) -> String {
+        let trimmed = url.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "Generated password" }
+        if let host = URL(string: trimmed)?.host, !host.isEmpty { return host }
+        if let host = URL(string: "https://\(trimmed)")?.host, !host.isEmpty { return host }
+        return trimmed
     }
 }

@@ -91,7 +91,7 @@ extension KdbxEntry {
     /// True when this entry carries usable passkey material — the two fields a
     /// signing ceremony cannot proceed without.
     var hasPasskey: Bool {
-        passkeyCredentialId != nil && passkeyPrivateKeyPEM != nil
+        passkeyCredentialId?.isEmpty == false && passkeyPrivateKeyPEM?.isEmpty == false
     }
 
     mutating func clearPasskey() {

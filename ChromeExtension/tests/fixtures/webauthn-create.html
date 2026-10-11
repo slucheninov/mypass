@@ -8,16 +8,22 @@
     Chrome treats localhost as one, so no TLS setup is required.
   </p>
   <button id="register-btn">Create passkey</button>
+  <button id="cancel-btn">Cancel pending request</button>
+  <p>With MyPass enabled and unlocked, its confirmation must appear. With a competing proxy enabled, check the MyPass popup for an actionable conflict warning. Canceling must not leave a stale confirmation.</p>
   <pre id="result"></pre>
   <script>
+    let controller;
+    document.getElementById("cancel-btn").addEventListener("click", () => controller?.abort());
     function randomBytes(n) {
       const arr = new Uint8Array(n);
       crypto.getRandomValues(arr);
       return arr;
     }
     document.getElementById('register-btn').addEventListener('click', async () => {
+      controller = new AbortController();
       try {
         const credential = await navigator.credentials.create({
+          signal: controller.signal,
           publicKey: {
             challenge: randomBytes(32),
             rp: { id: location.hostname, name: 'MyPass Fixture' },

@@ -2,7 +2,9 @@ const PAIRING_STARTED_AT_KEY = 'pairingStartedAt';
 const PAIRING_CHALLENGE_TTL_MS = 120_000;
 
 const APP_UNAVAILABLE_STATUS_TEXT =
-  'MyPass not found. Make sure the app is installed and has been launched at least once (to register the native messaging host).';
+  'Cannot connect to MyPass. Make sure the app is open, then click Retry.';
+const HOST_UNAVAILABLE_STATUS_TEXT =
+  'The MyPass browser connector was not found. Complete browser setup, then click Retry.';
 const APP_UNAVAILABLE_OPEN_HELPER_TEXT =
   'Open MyPass from Applications or the Dock. Unlock your vault if needed, then tap Retry.';
 
@@ -14,6 +16,60 @@ const LOCKED_TITLE_TEXT = 'MyPass is locked';
 const LOCKED_HELPER_TEXT = 'Open MyPass and unlock the vault';
 const EMPTY_LIST_TITLE_TEXT = 'No saved logins for this site';
 const LIST_HEADER_TEXT = 'Select an entry to autofill:';
+const FAVORITES_HEADER_TEXT = 'Favorites';
+const NO_FAVORITES_TEXT = 'No favorites';
+const NO_ITEMS_TEXT = 'No items';
+const NO_SEARCH_RESULTS_TEXT = 'No matches';
+const BROWSER_CATEGORIES = [
+  { id: 'thisSite', title: 'This site' },
+  { id: 'favorites', title: 'Favorites' },
+  { id: 'all', title: 'All' },
+  { id: 'logins', title: 'Logins' },
+  { id: 'passkeys', title: 'Passkeys' },
+  { id: 'codes', title: 'Codes' },
+  { id: 'cards', title: 'Cards' },
+  { id: 'addresses', title: 'Addresses' },
+  { id: 'notes', title: 'Notes' }
+];
+
+function passkeyProxyStatusText(status, context, matchedCredentials) {
+  if (status && status.proxyState === 'disabled'
+    && (!context || context.kind !== 'site' || !passkeySiteHints.hasSiteHint(context.url, matchedCredentials))) return '';
+  const messages = {
+    active: '',
+    disabled: 'Passkeys are off. Enable them in MyPass settings.',
+    locked: '', // The locked panel already explains how to unlock.
+    unpaired: '', // Pairing has its own panel.
+    unavailable: '', // Connection errors have their own panel.
+    'attachment-error': 'Another provider may be blocking passkeys. Open MyPass settings for help.'
+  };
+  return messages[status && status.proxyState] || '';
+}
+
+function browserManagerDiagnosticsText(result) {
+  if (!result) return '';
+  const names = (result.extensions || []).map((item) => item.name);
+  if (result.passwordSavingEnabled === true) names.unshift('Browser password saving');
+  return names.length ? 'Also enabled: ' + names.join(', ') + '. Review in MyPass settings.' : '';
+}
+
+function categoryTitle(categoryId) {
+  const match = BROWSER_CATEGORIES.find((category) => category.id === categoryId);
+  return match ? match.title : FAVORITES_HEADER_TEXT;
+}
+
+// chrome://extensions, the new tab, and a tab with no URL have nothing to
+// autofill. The popup lists favorites there instead of treating the missing
+// page as "MyPass not found".
+function isSiteUrl(url) {
+  if (!url || typeof url !== 'string') return false;
+  try {
+    const protocol = new URL(url).protocol;
+    return protocol === 'http:' || protocol === 'https:';
+  } catch (e) {
+    return false;
+  }
+}
 const PAIRING_PANEL_TITLE_TEXT = 'Connect browser extension';
 const UNLOCK_BUTTON_LABEL = 'Unlock MyPass';
 // Must match PAIRING_STORAGE_KEY in background.js — asserted by unlockButton.test.js.
@@ -24,14 +80,6 @@ const POPUP_PAIRING_STORAGE_KEY = 'pairingSecret';
 const UNLOCK_POLL_INTERVAL_MS = 800;
 const UNLOCK_POLL_MAX_ATTEMPTS = 75; // 800 ms x 75 = 60 s of real unlocking time
 const WAITING_FOR_UNLOCK_TEXT = 'Waiting for you to unlock MyPass\u2026';
-
-function classifyGetCredentialsResponse(response) {
-  if (!response || response.type === 'error') return 'error';
-  if (response.type === 'locked') return 'locked';
-  if (response.type === 'pairingRequired') return 'pairingRequired';
-  if (response.type === 'credentialList') return 'credentialList';
-  return 'unknown';
-}
 
 function shouldShowUnlockButton(pairingSecret) {
   return typeof pairingSecret === 'string' && pairingSecret.length > 0;
@@ -80,6 +128,21 @@ function normalizePairingCode(raw) {
 const entryVisuals = typeof require === 'function'
   ? require('./shared/entry-visuals.js')
   : { letterFromTitle: window.letterFromTitle, colorForTitle: window.colorForTitle };
+
+// classifyGetCredentialsResponse is shared with the in-page panel
+// (shared/bridge-status.js). isBase32Secret is shared with the page scanner
+// (shared/base32.js). Same global-scope rule as entryVisuals above: popup.html
+// loads those scripts first, so do not destructure their function names into
+// top-level consts here.
+const bridgeStatus = typeof require === 'function'
+  ? require('./shared/bridge-status.js')
+  : window.mypassBridgeStatus;
+const base32 = typeof require === 'function'
+  ? require('./shared/base32.js')
+  : { isBase32Secret: window.isBase32Secret };
+const passkeySiteHints = typeof require === 'function'
+  ? require('./shared/passkey-sites.js')
+  : window.mypassPasskeySites;
 
 function getPairingStorageArea() {
   if (typeof chrome !== 'undefined' && chrome.storage && chrome.storage.session) {
@@ -359,8 +422,7 @@ function validateTotpPasteInput(raw) {
 }
 
 function isBase32PasteSecret(candidate) {
-  const normalized = (candidate || '').replace(/\s+/g, '');
-  return /^[A-Z2-7]{16,128}$/i.test(normalized);
+  return base32.isBase32Secret(candidate);
 }
 
 // Shared by the picker row click handler and routeTotpCandidate's zero/one-match
@@ -397,6 +459,7 @@ let refreshPasskeyProxy = null;
 let initPasskeyPopupUI = null;
 
 const PENDING_PASSKEY_KEY = 'pendingPasskeyCeremony';
+const LAST_PASSKEY_FAILURE_KEY = 'lastPasskeyFailure';
 
 /// Both values are shown on every confirm panel: the relying party the credential will
 /// be bound to, and the origin the ceremony actually came from. A mismatch between them
@@ -412,7 +475,7 @@ function passkeyCeremonySummary(pending) {
 /// carries a passkey means the Replace confirm, and a get always requires an explicit
 /// Approve — there is no silent auto-sign path even with exactly one match.
 function choosePasskeyPanel(pending) {
-  if (!pending || (pending.kind !== 'create' && pending.kind !== 'get')) return null;
+  if (!pending || pending.phase === 'checking' || (pending.kind !== 'create' && pending.kind !== 'get')) return null;
   const matches = pending.matches || [];
   if (matches.length > 1) return 'passkey-picker';
   if (pending.kind === 'get') {
@@ -478,13 +541,27 @@ if (typeof document !== 'undefined') {
   const submitCodeBtn = document.getElementById('submit-code-btn');
   const pairingErrorEl = document.getElementById('pairing-error');
 
+  const passkeyCheckingPanel = document.getElementById('passkey-checking-panel');
+  let pendingPasskeyOwnsPopup = false;
+  let visiblePasskeyFailure = null;
+  let activePasskeyRequestId = null;
+  let pendingPasskeyRevision = 0;
+  let ordinaryPopupInitialized = false;
+  let passkeySettingsInitialized = false;
   const passkeySavePanel = document.getElementById('passkey-save-panel');
   const passkeyReplacePanel = document.getElementById('passkey-replace-panel');
   const passkeyUsePanel = document.getElementById('passkey-use-panel');
   const passkeyPickerPanel = document.getElementById('passkey-picker-panel');
   const passkeyPickerListEl = document.getElementById('passkey-picker-list');
   const passkeySettingsFooter = document.getElementById('passkey-settings-footer');
-  const passkeyProxyToggle = document.getElementById('passkey-proxy-toggle');
+  const openSettingsBtn = document.getElementById('open-settings-btn');
+  const browserChrome = document.getElementById('browser-chrome');
+  const vaultSearch = document.getElementById('vault-search');
+  const categoryBtn = document.getElementById('category-btn');
+  const categoryMenu = document.getElementById('category-menu');
+  const addEntryBtn = document.getElementById('add-entry-btn');
+  const addEntryMenu = document.getElementById('add-entry-menu');
+  const openGeneratorBtn = document.getElementById('open-generator-btn');
 
   const addTotpSection = document.getElementById('add-totp-section');
   const addTotpBtn = document.getElementById('add-totp-btn');
@@ -504,9 +581,23 @@ if (typeof document !== 'undefined') {
   // post-pairing/post-unlock re-checks) so the Add-2FA button can reuse the active tab's
   // URL without re-querying chrome.tabs itself.
   let currentTabUrl = null;
-
+  // 'site' looks up logins for currentTabUrl. 'favorites' is the chrome:// and
+  // empty-tab list. Retries, unlock polling, and the post-pairing refresh follow it.
+  let popupContext = { kind: 'category', category: 'favorites' };
+  let latestPasskeyProxyStatus = null;
+  let matchedSiteCredentials = [];
+  let selectedCategory = 'favorites';
+  let browseRequestId = 0;
   lockedTitleEl.textContent = LOCKED_TITLE_TEXT;
   lockedHelperEl.textContent = LOCKED_HELPER_TEXT;
+
+  // Status and site lookup arrive independently. Recompute from current context
+  // at either callback, including when switching into search or global browsing.
+  function renderPasskeyProxyStatus() {
+    const el = document.getElementById('passkey-proxy-status');
+    el.textContent = passkeyProxyStatusText(latestPasskeyProxyStatus, popupContext, matchedSiteCredentials);
+    el.hidden = !el.textContent;
+  }
 
   const PANEL_SECTIONS = [
     lockedPanel,
@@ -514,26 +605,42 @@ if (typeof document !== 'undefined') {
     emptyPanel,
     listPanel,
     pairingPanel,
+    passkeyCheckingPanel,
+    document.getElementById('passkey-failure-panel'),
     passkeySavePanel,
     passkeyReplacePanel,
     passkeyUsePanel,
     passkeyPickerPanel
   ];
 
-  const PASSKEY_PANELS = ['passkey-save', 'passkey-replace', 'passkey-use', 'passkey-picker'];
+  const PASSKEY_PANELS = ['passkey-failure', 'passkey-checking', 'passkey-save', 'passkey-replace', 'passkey-use', 'passkey-picker'];
 
   function showPanel(name) {
+    if (pendingPasskeyOwnsPopup && !PASSKEY_PANELS.includes(name)) return;
     for (const section of PANEL_SECTIONS) {
       section.hidden = true;
     }
     openMypassHelper.hidden = true;
-    // A ceremony owns the whole popup: the Add-2FA input and the settings toggle would
-    // both be distractions next to a confirmation the user is being asked to make.
+    // Approval owns the popup; unrelated actions must not interrupt a ceremony.
     if (PASSKEY_PANELS.includes(name)) {
       addTotpSection.hidden = true;
-      passkeySettingsFooter.hidden = true;
+      generatePasswordSection.hidden = true;
+    }
+    passkeySettingsFooter.hidden = PASSKEY_PANELS.includes(name);
+    document.getElementById('passkey-diagnostics').hidden = PASSKEY_PANELS.includes(name);
+    document.getElementById('site-passkey-hint').hidden = true;
+    browserChrome.hidden = name !== 'credential-list' && name !== 'empty';
+    if (name !== 'credential-list' && name !== 'empty') {
+      categoryMenu.hidden = true;
+      addEntryMenu.hidden = true;
     }
     switch (name) {
+      case 'passkey-failure':
+        document.getElementById('passkey-failure-panel').hidden = false;
+        break;
+      case 'passkey-checking':
+        passkeyCheckingPanel.hidden = false;
+        break;
       case 'passkey-save':
         passkeySavePanel.hidden = false;
         break;
@@ -612,7 +719,92 @@ if (typeof document !== 'undefined') {
     return avatar;
   }
 
-  renderCredentials = function (credentials, url) {
+  function openSavedEntry(credential, passkeyOnly) {
+    if (!isSiteUrl(credential.url)) return;
+    chrome.tabs.create({ url: credential.url, active: true }, (tab) => {
+      if (passkeyOnly || !tab || typeof tab.id !== 'number') {
+        window.close();
+        return;
+      }
+      chrome.runtime.sendMessage({
+        type: 'armOpenAndFill',
+        tabId: tab.id,
+        id: credential.id,
+        url: credential.url
+      }, () => window.close());
+    });
+  }
+
+  function addressFillError(response) {
+    if (response && response.type === 'locked') return 'Unlock MyPass, then select the address again.';
+    if (response && response.type === 'pairingRequired') return 'Connect this browser to MyPass, then try again.';
+    const messages = {
+      address_no_form: 'No supported address form on this page. Open a form with standard address autocomplete fields. Address filling is available in the main page only.',
+      address_page_changed: 'The page or selected tab changed. Return to the address form and select the address again.',
+      address_form_changed: 'The address form changed. Review any fields already filled, then select the address again.',
+      address_no_values: 'No saved address values match the fields in this form. Edit this address in MyPass.',
+    };
+    return messages[response && response.code] || 'Could not fill the address. Check that MyPass is unlocked, then select the address again.';
+  }
+
+  function beginAddressFill(credential) {
+    const requestId = ++browseRequestId;
+    listEl.innerHTML = '';
+    listHeaderEl.textContent = 'Checking address forms…';
+    const chooser = document.createElement('li');
+    chooser.className = 'address-fill-chooser';
+    listEl.appendChild(chooser);
+    const messageEl = document.createElement('p');
+    messageEl.setAttribute('role', 'status');
+    chooser.appendChild(messageEl);
+    chrome.runtime.sendMessage({ type: 'prepareAddressFill' }, (response) => {
+      const runtimeError = chrome.runtime.lastError;
+      if (requestId !== browseRequestId) return;
+      const back = document.createElement('button');
+      back.type = 'button';
+      back.className = 'btn-secondary address-fill-back';
+      back.textContent = 'Back to addresses';
+      back.addEventListener('click', () => selectCategory('addresses'));
+      if (runtimeError || !response || response.type !== 'addressForms') {
+        listHeaderEl.textContent = 'Address not filled';
+        messageEl.textContent = addressFillError(response);
+        chooser.appendChild(back);
+        return;
+      }
+      listHeaderEl.textContent = 'Fill address';
+      messageEl.textContent = 'Send “' + credential.title + '” to ' + new URL(response.url).host + '. Choose the form to fill:';
+      const focused = response.forms.filter((form) => form.focused);
+      const forms = focused.length === 1 ? focused : response.forms;
+      const buttons = [];
+      forms.forEach((form) => {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'btn-secondary address-fill-option';
+        button.textContent = 'Fill ' + form.label.toLowerCase() + ' (' + form.fields + ' fields)';
+        button.addEventListener('click', (event) => {
+          if (!event.isTrusted) return;
+          buttons.forEach((item) => { item.disabled = true; });
+          messageEl.textContent = 'Filling address…';
+          chrome.runtime.sendMessage({ type: 'fillAddress', token: response.token,
+            groupId: form.id, id: credential.id }, (result) => {
+            const failed = chrome.runtime.lastError;
+            if (requestId !== browseRequestId) return;
+            if (!failed && result && result.type === 'addressFilled') {
+              messageEl.textContent = 'Filled ' + result.filled + ' fields. Review the form before submitting.';
+            } else {
+              messageEl.textContent = addressFillError(result);
+            }
+          });
+        });
+        buttons.push(button);
+        chooser.appendChild(button);
+      });
+      chooser.appendChild(back);
+    });
+  }
+
+  renderCredentials = function (credentials, url, options) {
+    const openSavedUrl = !!(options && options.openSavedUrl);
     listEl.innerHTML = '';
     credentials.forEach((credential) => {
       const item = document.createElement('li');
@@ -636,16 +828,36 @@ if (typeof document !== 'undefined') {
       }
 
       item.appendChild(textCol);
+      if (credential.entryType === 'Address') {
+        item.tabIndex = 0;
+        item.setAttribute('role', 'button');
+        item.setAttribute('aria-label', 'Fill address: ' + credential.title);
+        item.addEventListener('keydown', (event) => {
+          if (event.isTrusted && (event.key === 'Enter' || event.key === ' ')) {
+            event.preventDefault();
+            beginAddressFill(credential);
+          }
+        });
+      }
 
-      if (shouldShowTotpCircle(credential.hasTotp)) {
-        item.appendChild(buildTotpCircleElement(credential, url));
+      const totpUrl = openSavedUrl ? credential.url : url;
+      if (shouldShowTotpCircle(credential.hasTotp) && isSiteUrl(totpUrl)) {
+        item.appendChild(buildTotpCircleElement(credential, totpUrl));
       }
 
       if (credential.hasPasskey) {
         item.appendChild(buildPasskeyBadgeElement());
       }
 
-      item.addEventListener('click', () => {
+      item.addEventListener('click', (event) => {
+        if (credential.entryType === 'Address') {
+          if (event.isTrusted) beginAddressFill(credential);
+          return;
+        }
+        if (openSavedUrl) {
+          openSavedEntry(credential, !!(options && options.passkeyOnly));
+          return;
+        }
         chrome.runtime.sendMessage(
           { type: 'fillCredential', id: credential.id, url },
           () => {
@@ -674,14 +886,14 @@ if (typeof document !== 'undefined') {
     });
   }
 
-  function submitPairingCode(url) {
+  function submitPairingCode() {
     setPairingError('');
     const code = normalizePairingCode(codeInput.value);
     chrome.runtime.sendMessage({ type: 'completePairing', code }, (completeResp) => {
       if (completeResp && completeResp.type === 'paired') {
         clearPairingStartedAt(() => {
           hidePairingPanel();
-          queryCredentials(url);
+          reloadCurrentContext();
         });
         return;
       }
@@ -699,23 +911,36 @@ if (typeof document !== 'undefined') {
     openMypassHelper.hidden = true;
   }
 
+  function loadForActiveTab(tab) {
+    currentTabUrl = tab && isSiteUrl(tab.url) ? tab.url : null;
+    buildCategoryMenu();
+    if (currentTabUrl) {
+      requestPageTotpCandidate(tab.id);
+      requestPageNewPasswordField(tab.id);
+      selectCategory('thisSite');
+      return;
+    }
+    selectCategory('favorites');
+  }
+
+  function reloadCurrentContext() {
+    if (popupContext.kind === 'search') querySearch(popupContext.query);
+    else if (popupContext.kind === 'site') queryCredentials(popupContext.url);
+    else queryCategory(popupContext.category || 'favorites');
+  }
+
   function retryCredentialsForActiveTab() {
     listEl.innerHTML = '';
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-      const activeTab = tabs[0];
-      if (!activeTab || !activeTab.url) {
-        appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
-        showAppUnavailableActions(null);
-        return;
-      }
-      queryCredentials(activeTab.url);
+      loadForActiveTab(tabs[0]);
     });
   }
 
-  function showAppUnavailableActions(url) {
+  function showAppUnavailableActions(url, response) {
     hidePairingPanel();
     listEl.innerHTML = '';
-    appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
+    appUnavailableStatusEl.textContent = bridgeStatus.classifyBridgeConnectionError(response) === 'native_host_not_found'
+      ? HOST_UNAVAILABLE_STATUS_TEXT : APP_UNAVAILABLE_STATUS_TEXT;
     showPanel('app-unavailable');
     openMypassHelper.hidden = true;
     retryBtn.onclick = () => {
@@ -732,10 +957,14 @@ if (typeof document !== 'undefined') {
   }
 
   function handleCredentialsResponse(response, url) {
-    const kind = classifyGetCredentialsResponse(response);
+    if (pendingPasskeyOwnsPopup) return;
+    const kind = bridgeStatus.classifyGetCredentialsResponse(response);
+    matchedSiteCredentials = kind === 'credentialList' && popupContext.kind === 'site'
+      ? response.credentials : [];
+    renderPasskeyProxyStatus();
     if (kind === 'error') {
       if (shouldShowAppUnavailableActions(kind)) {
-        showAppUnavailableActions(url);
+        showAppUnavailableActions(url, response);
       }
       restorePendingTotpCandidate(kind);
       return;
@@ -743,9 +972,9 @@ if (typeof document !== 'undefined') {
     hideAppUnavailableActions();
     if (kind === 'locked') {
       showPanel('locked');
-      lockedRetryBtn.onclick = () => queryCredentials(url);
+      lockedRetryBtn.onclick = () => reloadCurrentContext();
       lockedUnlockBtn.textContent = UNLOCK_BUTTON_LABEL;
-      lockedUnlockBtn.onclick = () => requestUnlock(url);
+      lockedUnlockBtn.onclick = () => requestUnlock();
       chrome.storage.local.get(POPUP_PAIRING_STORAGE_KEY, (stored) => {
         lockedUnlockBtn.hidden = !shouldShowUnlockButton(stored[POPUP_PAIRING_STORAGE_KEY]);
       });
@@ -755,7 +984,7 @@ if (typeof document !== 'undefined') {
     if (kind === 'pairingRequired') {
       showPairingPanel();
       connectBtn.onclick = startPairingFlow;
-      submitCodeBtn.onclick = () => submitPairingCode(url);
+      submitCodeBtn.onclick = () => submitPairingCode();
       readPairingStartedAt((startedAt) => {
         if (isPairingChallengeFresh(startedAt, Date.now())) {
           revealCodeEntry();
@@ -765,13 +994,24 @@ if (typeof document !== 'undefined') {
       return;
     }
     if (kind === 'credentialList') {
+      const browsing = popupContext.kind !== 'site';
+      listHeaderEl.textContent = browsing ? categoryTitle(popupContext.category) : LIST_HEADER_TEXT;
+      if (popupContext.kind === 'search') listHeaderEl.textContent = 'Search';
+      emptyTitleEl.textContent = emptyTitleForContext();
       if (response.credentials.length === 0) {
         showPanel('empty');
         restorePendingTotpCandidate(kind);
         return;
       }
       showPanel('credential-list');
-      renderCredentials(response.credentials, url);
+      const passkeyOnly = browsing && popupContext.kind === 'category' && popupContext.category === 'passkeys';
+      renderCredentials(response.credentials, url, browsing ? { openSavedUrl: true, passkeyOnly } : undefined);
+      const hint = document.getElementById('site-passkey-hint');
+      if (hint) {
+        hint.hidden = !passkeyOnly && (browsing || !response.credentials.some((entry) => entry.hasPasskey));
+        hint.textContent = passkeyOnly ? 'Select an entry to open its website.' : '';
+        if (!passkeyOnly) hint.hidden = true;
+      }
     }
     // Only reached for a non-empty credentialList — the primary panel is already
     // showing the current tab's credentials by the time this runs, so a picker
@@ -795,21 +1035,22 @@ if (typeof document !== 'undefined') {
     handleCredentialsResponse(response, url);
   }
 
-  function pollForUnlock(url, attempt) {
-    chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
-      if (!shouldContinueUnlockPolling(classifyGetCredentialsResponse(response), attempt)) {
-        endUnlockWait(response, url);
+  function pollForUnlock(attempt) {
+    const message = browseMessage();
+    chrome.runtime.sendMessage(message, (response) => {
+      if (!shouldContinueUnlockPolling(bridgeStatus.classifyGetCredentialsResponse(response), attempt)) {
+        endUnlockWait(response, popupContext.kind === 'site' ? popupContext.url : null);
         return;
       }
-      unlockPollTimer = setTimeout(() => pollForUnlock(url, attempt + 1), UNLOCK_POLL_INTERVAL_MS);
+      unlockPollTimer = setTimeout(() => pollForUnlock(attempt + 1), UNLOCK_POLL_INTERVAL_MS);
     });
   }
 
-  function requestUnlock(url) {
+  function requestUnlock() {
     chrome.runtime.sendMessage({ type: 'requestUnlock' }, (response) => {
       const kind = classifyRequestUnlockResponse(response);
       if (kind === 'notNeeded') {
-        queryCredentials(url);
+        reloadCurrentContext();
         return;
       }
       if (kind !== 'presented') return;
@@ -817,16 +1058,137 @@ if (typeof document !== 'undefined') {
       // user on a stale panel whose only action is Retry.
       lockedHelperEl.textContent = WAITING_FOR_UNLOCK_TEXT;
       lockedUnlockBtn.disabled = true;
-      pollForUnlock(url, 0);
+      pollForUnlock(0);
+    });
+  }
+
+  function emptyTitleForContext() {
+    if (popupContext.kind === 'search') return NO_SEARCH_RESULTS_TEXT;
+    if (popupContext.kind === 'site') return EMPTY_LIST_TITLE_TEXT;
+    if (popupContext.category === 'favorites') return NO_FAVORITES_TEXT;
+    if (popupContext.category === 'addresses') return 'No addresses. Add one in MyPass using Add > Address.';
+    return NO_ITEMS_TEXT;
+  }
+
+  function browseMessage() {
+    if (popupContext.kind === 'search') return { type: 'searchEntries', query: popupContext.query };
+    if (popupContext.kind === 'site') return { type: 'getCredentials', url: popupContext.url };
+    return { type: 'listEntries', category: popupContext.category || 'favorites' };
+  }
+
+  function sendBrowse(message, url) {
+    const requestId = ++browseRequestId;
+    stopUnlockPolling();
+    matchedSiteCredentials = [];
+    renderPasskeyProxyStatus();
+    chrome.runtime.sendMessage(message, (response) => {
+      if (requestId !== browseRequestId) return;
+      handleCredentialsResponse(response, url);
     });
   }
 
   function queryCredentials(url) {
+    popupContext = { kind: 'site', url };
     currentTabUrl = url;
-    stopUnlockPolling();
-    chrome.runtime.sendMessage({ type: 'getCredentials', url }, (response) => {
-      handleCredentialsResponse(response, url);
+    sendBrowse({ type: 'getCredentials', url }, url);
+  }
+
+  function queryCategory(category) {
+    popupContext = { kind: 'category', category };
+    sendBrowse({ type: 'listEntries', category }, null);
+  }
+
+  function querySearch(query) {
+    popupContext = { kind: 'search', query, category: selectedCategory };
+    sendBrowse({ type: 'searchEntries', query }, null);
+  }
+
+  function buildCategoryMenu() {
+    categoryMenu.innerHTML = '';
+    BROWSER_CATEGORIES.forEach((category) => {
+      if (category.id === 'thisSite' && !isSiteUrl(currentTabUrl)) return;
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'category-option';
+      button.textContent = (category.id === selectedCategory ? '✓ ' : '') + category.title;
+      button.addEventListener('click', () => selectCategory(category.id));
+      categoryMenu.appendChild(button);
     });
+  }
+
+  function selectCategory(categoryId, options) {
+    selectedCategory = categoryId;
+    categoryBtn.textContent = categoryTitle(categoryId) + ' ▾';
+    categoryMenu.hidden = true;
+    if (!options || options.keepSearch !== true) vaultSearch.value = '';
+    buildCategoryMenu();
+    if (categoryId === 'thisSite' && isSiteUrl(currentTabUrl)) queryCredentials(currentTabUrl);
+    else queryCategory(categoryId === 'thisSite' ? 'favorites' : categoryId);
+  }
+
+  function openCenteredExtensionWindow(relativeUrl, width, height) {
+    if (!chrome.windows || typeof chrome.windows.create !== 'function' || !chrome.runtime || typeof chrome.runtime.getURL !== 'function') {
+      return;
+    }
+    const screen = window.screen || {};
+    const availWidth = screen.availWidth || width;
+    const availHeight = screen.availHeight || height;
+    chrome.windows.create({
+      url: chrome.runtime.getURL(relativeUrl),
+      type: 'popup',
+      width: width,
+      height: height,
+      left: Math.round((screen.availLeft || 0) + Math.max(0, (availWidth - width) / 2)),
+      top: Math.round((screen.availTop || 0) + Math.max(0, (availHeight - height) / 2)),
+      focused: true
+    }, () => {
+      if (!chrome.runtime.lastError) window.close();
+    });
+  }
+
+  function buildAddMenu() {
+    addEntryMenu.innerHTML = '';
+    const icons = {
+      Login: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M14.2 3.2a6.3 6.3 0 0 0-5.9 8.3L3.2 16.6V21h4.2l1.3-1.3v-2.2h2.2l1.2-1.2a6.3 6.3 0 1 0 2.1-13.1zm1.5 5.1a1.35 1.35 0 1 1 0 2.7 1.35 1.35 0 0 1 0-2.7z"/></svg>',
+      Card: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><rect x="2.2" y="5" width="19.6" height="14" rx="2.4" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M2.2 9.6h19.6" stroke="currentColor" stroke-width="1.8"/></svg>',
+      Notes: '<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true"><path fill="currentColor" d="M6 3.2h8.2L19.8 9v11.2a.8.8 0 0 1-.8.8H6a.8.8 0 0 1-.8-.8V4a.8.8 0 0 1 .8-.8z"/><path d="M14 3.6V9h5.2" fill="none" stroke="#fff" stroke-width="1.4"/><path d="M8 13.2h8M8 16.6h5.5" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round"/></svg>'
+    };
+    [
+      { type: 'Login', title: 'New login', iconClass: 'add-entry-icon-login' },
+      { type: 'Card', title: 'New card', iconClass: 'add-entry-icon-card' },
+      { type: 'Notes', title: 'New note', iconClass: 'add-entry-icon-note' }
+    ].forEach((choice) => {
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'add-entry-option';
+      const icon = document.createElement('span');
+      icon.className = 'add-entry-icon ' + choice.iconClass;
+      icon.setAttribute('aria-hidden', 'true');
+      icon.innerHTML = icons[choice.type];
+      const label = document.createElement('span');
+      label.className = 'add-entry-label';
+      label.textContent = choice.title;
+      button.appendChild(icon);
+      button.appendChild(label);
+      button.addEventListener('click', () => openAddEntry(choice.type));
+      addEntryMenu.appendChild(button);
+    });
+  }
+
+  function openAddEntry(entryType) {
+    addEntryMenu.hidden = true;
+    const params = new URLSearchParams({ type: entryType });
+    if (entryType === 'Login' && isSiteUrl(currentTabUrl)) params.set('url', currentTabUrl);
+    const height = entryType === 'Notes' ? 640 : entryType === 'Card' ? 680 : 760;
+    openCenteredExtensionWindow('create.html?' + params.toString(), 520, height);
+  }
+
+  function openGenerator() {
+    categoryMenu.hidden = true;
+    addEntryMenu.hidden = true;
+    const params = new URLSearchParams({ purpose: 'autofill' });
+    if (isSiteUrl(currentTabUrl)) params.set('url', currentTabUrl);
+    openCenteredExtensionWindow('generator.html?' + params.toString(), 420, 640);
   }
 
   renderTotpPicker = function (credentials, url, otpauthOrSecret) {
@@ -894,7 +1256,7 @@ if (typeof document !== 'undefined') {
       // response must surface a status here, not silently fall through to a blind
       // proposeSaveTotp (that would happen if we treated "not credentialList" as "zero
       // matches", since routeTotpCandidate's zero-match branch sends the proposal anyway).
-      const kind = classifyGetCredentialsResponse(response);
+      const kind = bridgeStatus.classifyGetCredentialsResponse(response);
       if (kind === 'locked') {
         addTotpErrorEl.textContent = 'Unlock MyPass first';
         addTotpErrorEl.hidden = false;
@@ -957,35 +1319,46 @@ if (typeof document !== 'undefined') {
   // in this popup's memory: the popup is opened fresh by chrome.action.openPopup() after
   // the ceremony has already started, and may be closed and reopened mid-ceremony.
 
-  function clearPendingPasskeyCeremony(cb) {
-    const area = getPairingStorageArea();
-    if (!area || !area.remove) {
-      if (cb) cb();
-      return;
-    }
-    area.remove([PENDING_PASSKEY_KEY], () => {
-      if (cb) cb();
+  // The background worker exclusively owns the pending record. A delayed callback
+  // for this popup may arrive after another ceremony has already reserved that record.
+  // Closing the UI must never remove the next request's state.
+  function showPasskeyFailure(failure) {
+    visiblePasskeyFailure = failure;
+    pendingPasskeyOwnsPopup = true;
+    const message = failure.kind === 'get'
+      ? 'The browser could not finish signing in. Cancel the website request and try again.'
+      : 'The browser could not finish saving this passkey. Cancel the website request and try again. A local passkey may already exist; check the website before replacing it.';
+    document.getElementById('passkey-failure-message').textContent = message;
+    document.getElementById('passkey-failure-close-btn').onclick = () => window.close();
+    showPanel('passkey-failure');
+  }
+
+  function submitPasskeyApproval(message, kind) {
+    activePasskeyRequestId = message.requestId;
+    renderPasskeyCeremonyPanel({ phase: 'completing', requestId: message.requestId });
+    chrome.runtime.sendMessage(message, (response) => {
+      const error = chrome.runtime.lastError;
+      if (activePasskeyRequestId !== message.requestId) return;
+      if (!error && response && !response.error && response.type === (kind === 'create' ? 'passkeyCreateComplete' : 'passkeyGetComplete')) {
+        window.close();
+      } else {
+        showPasskeyFailure({ kind, requestId: message.requestId });
+      }
     });
   }
 
   sendPasskeyCreateConfirm = function (requestId, entryId, replace) {
-    chrome.runtime.sendMessage(
-      { type: 'passkeyCreateConfirm', requestId, entryId, replace: !!replace },
-      () => clearPendingPasskeyCeremony(() => window.close())
-    );
+    submitPasskeyApproval({ type: 'passkeyCreateConfirm', requestId, entryId, replace: !!replace }, 'create');
   };
 
   sendPasskeyGetApprove = function (requestId, entryId) {
-    chrome.runtime.sendMessage(
-      { type: 'passkeyGetApprove', requestId, entryId },
-      () => clearPendingPasskeyCeremony(() => window.close())
-    );
+    submitPasskeyApproval({ type: 'passkeyGetApprove', requestId, entryId }, 'get');
   };
 
   sendPasskeyCancel = function (requestId) {
     chrome.runtime.sendMessage(
       { type: 'passkeyCancelUI', requestId },
-      () => clearPendingPasskeyCeremony(() => window.close())
+      () => window.close()
     );
   };
 
@@ -1032,14 +1405,34 @@ if (typeof document !== 'undefined') {
     });
   };
 
+  function renderPasskeyDetails(prefix, pending, overrideMatch) {
+    const matches = pending.matches || [];
+    const match = overrideMatch || (matches.length === 1 ? matches[0] : null);
+    document.getElementById(prefix + '-summary').textContent = match ? '' : 'A new entry will be created.';
+    const details = document.getElementById(prefix + '-detail');
+    details.innerHTML = '';
+    const rows = [
+      ['Entry', match ? match.title : pending.rpId],
+      ['Account', match && match.username ? match.username : (pending.userName || 'Not provided')],
+      ['Website', pending.rpId || 'Unknown website'],
+      ['Origin', pending.originUrl || 'Unknown origin']
+    ];
+    for (const [label, value] of rows) {
+      const term = document.createElement('dt');
+      term.textContent = label;
+      const description = document.createElement('dd');
+      description.textContent = value;
+      details.appendChild(term);
+      details.appendChild(description);
+    }
+  }
+
   /// Shared by the direct 0/1-match routing in `renderPasskeyCeremonyPanel` and by the
   /// picker's row click handler (which needs to show Save/Replace for the entry the user
   /// just picked, rather than confirming immediately).
   function showPasskeySaveOrReplacePanel(pending, panel, entryId, overrideMatch) {
     const isReplace = panel === 'passkey-replace';
-    const { headline, detail } = passkeyTargetSummary(pending, overrideMatch);
-    document.getElementById(isReplace ? 'passkey-replace-summary' : 'passkey-save-summary').textContent = headline;
-    document.getElementById(isReplace ? 'passkey-replace-detail' : 'passkey-save-detail').textContent = detail;
+    renderPasskeyDetails(isReplace ? 'passkey-replace' : 'passkey-save', pending, overrideMatch);
     document.getElementById(isReplace ? 'passkey-replace-btn' : 'passkey-save-btn').onclick =
       () => sendPasskeyCreateConfirm(pending.requestId, entryId, isReplace);
     document.getElementById(isReplace ? 'passkey-replace-cancel-btn' : 'passkey-cancel-btn').onclick =
@@ -1048,6 +1441,14 @@ if (typeof document !== 'undefined') {
   }
 
   renderPasskeyCeremonyPanel = function (pending) {
+    if (pending) activePasskeyRequestId = pending.requestId;
+    if (pending && (pending.phase === 'checking' || pending.phase === 'completing')) {
+      document.getElementById('passkey-checking-title').textContent = pending.phase === 'completing' ? 'Completing passkey request' : 'Preparing passkey request';
+      document.getElementById('passkey-checking-message').textContent = pending.phase === 'completing' ? 'Waiting for the browser to finish. Keep the website open.' : 'Waiting for MyPass. You will be asked to approve before a passkey is saved or used.';
+      document.getElementById('passkey-checking-cancel-btn').onclick = () => sendPasskeyCancel(pending.requestId);
+      showPanel('passkey-checking');
+      return true;
+    }
     const panel = choosePasskeyPanel(pending);
     if (!panel) return false;
 
@@ -1064,9 +1465,7 @@ if (typeof document !== 'undefined') {
     }
 
     if (panel === 'passkey-use') {
-      const { headline, detail } = passkeyTargetSummary(pending);
-      document.getElementById('passkey-use-summary').textContent = headline;
-      document.getElementById('passkey-use-detail').textContent = detail;
+      renderPasskeyDetails('passkey-use', pending);
       document.getElementById('passkey-approve-btn').onclick = () => sendPasskeyGetApprove(pending.requestId, entryId);
       document.getElementById('passkey-use-cancel-btn').onclick = () => sendPasskeyCancel(pending.requestId);
       showPanel('passkey-use');
@@ -1086,43 +1485,55 @@ if (typeof document !== 'undefined') {
       cb(false);
       return;
     }
-    area.get([PENDING_PASSKEY_KEY], (result) => {
+    const revision = pendingPasskeyRevision;
+    area.get([PENDING_PASSKEY_KEY, LAST_PASSKEY_FAILURE_KEY], (result) => {
+      if (revision !== pendingPasskeyRevision) { cb(pendingPasskeyOwnsPopup); return; }
       const pending = result && result[PENDING_PASSKEY_KEY];
+      const failure = result && result[LAST_PASSKEY_FAILURE_KEY];
+      if (failure && (!pending || pending.requestId === failure.requestId)) { showPasskeyFailure(failure); cb(true); return; }
+      visiblePasskeyFailure = null;
       if (!pending) {
+        pendingPasskeyOwnsPopup = false;
         cb(false);
         return;
       }
+      pendingPasskeyOwnsPopup = !!(pending.phase === 'checking' || pending.phase === 'completing' || choosePasskeyPanel(pending));
       cb(renderPasskeyCeremonyPanel(pending));
     });
   };
 
-  // The app is authoritative (2026-08-23 fix): `checked` is set from a fresh
-  // `status.enabled` whenever the app answers, and only falls back to the extension's
-  // stored flag while the app cannot be reached (matching the 2026-08-09 "C popup toggle
-  // state" decision for the unreachable case). `attachAllowed`/`unlocked` still only
-  // decide whether the control itself is enabled, not its checked state.
+  // Settings live in the app. Browser permissions can only be requested from a
+  // deliberate gesture in an extension page, so that small check stays here.
   initPasskeySettingsToggle = function () {
     passkeySettingsFooter.hidden = false;
-    // `statusApplied` guards against the async chrome.storage.local.get callback below
-    // clobbering a fresher value already set from the app's status — the two callbacks
-    // race with no ordering guarantee between them.
-    let statusApplied = false;
-    chrome.storage.local.get(['passkeyProxyEnabled'], (stored) => {
-      if (statusApplied) return;
-      passkeyProxyToggle.checked = !!(stored && stored.passkeyProxyEnabled);
+    if (passkeySettingsInitialized) return;
+    passkeySettingsInitialized = true;
+    const refreshStatus = () => {
+      chrome.runtime.sendMessage({ type: 'getPasskeyProxyStatus' }, (status) => {
+        void chrome.runtime.lastError;
+        latestPasskeyProxyStatus = status;
+        renderPasskeyProxyStatus();
+      });
+      chrome.runtime.sendMessage({ type: 'getBrowserManagerDiagnostics' }, (result) => {
+        void chrome.runtime.lastError;
+        const el = document.getElementById('browser-manager-status');
+        el.textContent = browserManagerDiagnosticsText(result);
+        el.hidden = !el.textContent;
+      });
+    };
+    refreshStatus();
+    openSettingsBtn.addEventListener('click', () => {
+      chrome.runtime.sendMessage({ type: 'openBrowserSettings' }, (result) => {
+        void chrome.runtime.lastError;
+        const el = document.getElementById('settings-open-error');
+        el.hidden = !!(result && result.type === 'acknowledged');
+        el.textContent = result && result.type === 'pairingRequired'
+          ? 'Connect this browser to MyPass first, then open settings.'
+          : 'Could not open settings. Open MyPass, then choose Settings → Browser.';
+      });
     });
-    chrome.runtime.sendMessage({ type: 'getPasskeyProxyStatus' }, (status) => {
-      const reachable = !!(status && status.type === 'passkeyProxyStatus');
-      // A pre-`enabled` app (old wire shape) reports no opt-in at all; that is not
-      // authoritative, so fall back to whatever the stored cache/checkbox already shows.
-      if (reachable && status.enabled !== undefined) {
-        passkeyProxyToggle.checked = !!status.enabled;
-        statusApplied = true;
-      }
-      passkeyProxyToggle.disabled = !(reachable && status.unlocked && status.paired);
-    });
-    passkeyProxyToggle.addEventListener('change', () => {
-      chrome.runtime.sendMessage({ type: 'setPasskeyProxyEnabled', enabled: passkeyProxyToggle.checked });
+    document.getElementById('check-browser-managers-btn').addEventListener('click', () => {
+      chrome.tabs.create({ url: chrome.runtime.getURL('browser-check.html') });
     });
   };
 
@@ -1212,6 +1623,25 @@ if (typeof document !== 'undefined') {
 
   generatePasswordBtn.onclick = () => handleGeneratePasswordClick(currentTabUrl);
 
+  buildAddMenu();
+  categoryBtn.addEventListener('click', () => {
+    addEntryMenu.hidden = true;
+    categoryMenu.hidden = !categoryMenu.hidden;
+  });
+  addEntryBtn.addEventListener('click', () => {
+    categoryMenu.hidden = true;
+    addEntryMenu.hidden = !addEntryMenu.hidden;
+  });
+  vaultSearch.addEventListener('input', () => {
+    const query = vaultSearch.value.trim();
+    if (!query) {
+      selectCategory(selectedCategory, { keepSearch: true });
+      return;
+    }
+    querySearch(query);
+  });
+  openGeneratorBtn.addEventListener('click', openGenerator);
+
   // A pending ceremony is checked first and, when present, owns the popup outright: the
   // popup was opened *by* that ceremony, and the user is being asked to make a security
   // decision. Running the ordinary credential lookup alongside it would let whichever
@@ -1222,22 +1652,52 @@ if (typeof document !== 'undefined') {
   // rehydrate/refresh/tookOver sequence themselves — a hand-rolled copy in a test would not
   // notice a regression at this call site (e.g. refreshPasskeyProxy() moving back below the
   // `if (tookOver) return;` line).
+  function resumeOrdinaryPopup() {
+    emptyTitleEl.textContent = 'Loading…';
+    showPanel('empty');
+    initPasskeySettingsToggle();
+    if (ordinaryPopupInitialized) {
+      reloadCurrentContext();
+      return;
+    }
+    ordinaryPopupInitialized = true;
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      if (!pendingPasskeyOwnsPopup) loadForActiveTab(tabs[0]);
+    });
+  }
+
+  // The popup can already be open while native code prepares the ceremony. Observe
+  // both the checking reservation and its ready replacement; openPopup() does not
+  // reload an existing popup. Ignore local storage changes and invalidate any old
+  // browse response before the security confirmation takes ownership of the UI.
+  if (chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'session') return;
+    if (changes[LAST_PASSKEY_FAILURE_KEY]) {
+      pendingPasskeyRevision += 1;
+      const failure = changes[LAST_PASSKEY_FAILURE_KEY].newValue;
+      // A late failure from a cancelled request must not cover the next approval.
+      if (failure && pendingPasskeyOwnsPopup && activePasskeyRequestId !== null
+        && failure.requestId !== activePasskeyRequestId) return;
+      visiblePasskeyFailure = failure || null;
+      if (failure) { showPasskeyFailure(failure); return; }
+    }
+    if (!changes[PENDING_PASSKEY_KEY]) return;
+    pendingPasskeyRevision += 1;
+    browseRequestId += 1;
+    const pending = changes[PENDING_PASSKEY_KEY].newValue;
+    if (!pending && visiblePasskeyFailure) { showPasskeyFailure(visiblePasskeyFailure); return; }
+    if (pending && visiblePasskeyFailure && pending.requestId === visiblePasskeyFailure.requestId) { showPasskeyFailure(visiblePasskeyFailure); return; }
+    visiblePasskeyFailure = null;
+    const previouslyOwned = pendingPasskeyOwnsPopup;
+    pendingPasskeyOwnsPopup = !!(pending && (pending.phase === 'checking' || pending.phase === 'completing' || choosePasskeyPanel(pending)));
+    if (pendingPasskeyOwnsPopup) renderPasskeyCeremonyPanel(pending);
+    else if (previouslyOwned) resumeOrdinaryPopup();
+  });
+
   initPasskeyPopupUI = function () {
     rehydratePendingPasskeyCeremony((tookOver) => {
       refreshPasskeyProxy();
-      if (tookOver) return;
-      initPasskeySettingsToggle();
-      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
-        const activeTab = tabs[0];
-        if (!activeTab || !activeTab.url) {
-          appUnavailableStatusEl.textContent = APP_UNAVAILABLE_STATUS_TEXT;
-          showAppUnavailableActions(null);
-          return;
-        }
-        queryCredentials(activeTab.url);
-        requestPageTotpCandidate(activeTab.id);
-        requestPageNewPasswordField(activeTab.id);
-      });
+      if (!tookOver) resumeOrdinaryPopup();
     });
   };
   initPasskeyPopupUI();
@@ -1245,17 +1705,21 @@ if (typeof document !== 'undefined') {
 
 if (typeof module !== 'undefined') {
   module.exports = {
-    classifyGetCredentialsResponse,
+    classifyGetCredentialsResponse: bridgeStatus.classifyGetCredentialsResponse,
     isPairingChallengeFresh,
     normalizePairingCode,
     PAIRING_CHALLENGE_TTL_MS,
     APP_UNAVAILABLE_STATUS_TEXT,
+    HOST_UNAVAILABLE_STATUS_TEXT,
     APP_UNAVAILABLE_OPEN_HELPER_TEXT,
     shouldShowAppUnavailableActions,
     LOCKED_TITLE_TEXT,
     LOCKED_HELPER_TEXT,
     EMPTY_LIST_TITLE_TEXT,
     LIST_HEADER_TEXT,
+    FAVORITES_HEADER_TEXT,
+    NO_FAVORITES_TEXT,
+    isSiteUrl,
     PAIRING_PANEL_TITLE_TEXT,
     shouldShowUnlockButton,
     classifyRequestUnlockResponse,
@@ -1290,6 +1754,8 @@ if (typeof module !== 'undefined') {
     passkeyCeremonySummary,
     passkeyTargetSummary,
     choosePasskeyPanel,
+    passkeyProxyStatusText,
+    browserManagerDiagnosticsText,
     rehydratePendingPasskeyCeremony,
     renderPasskeyCeremonyPanel,
     renderPasskeyPicker,

@@ -1,0 +1,15 @@
+/* Shared control size for the popup and the extension windows. */
+:root {
+  --mp-control-height: 32px;
+  --mp-control-radius: 8px;
+  --mp-control-font: 13px;
+  --mp-control-weight: 600;
+  --mp-blue: #007aff;
+  --mp-fill: #f5f5f7;
+  --mp-line: #d2d2d7;
+  --mp-text: #1d1d1f;
+}
+
+[hidden] {
+  display: none !important;
+}

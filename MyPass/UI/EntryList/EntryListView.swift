@@ -13,23 +13,7 @@ struct EntryListView: View {
     }
 
     private var displayedEntries: [KdbxEntry] {
-        if navigationState.selectedSmartCategory == .security, navigationState.securityUsesGroupScope {
-            if navigationState.searchText.isEmpty {
-                return currentGroup.entries
-            }
-            return EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
-        }
-        if navigationState.isCategoryMode, let database = vaultSession.currentDatabase {
-            let scoped = EntryCategoryFilter.entries(for: navigationState.activeCategoryFilter, in: database)
-            if navigationState.searchText.isEmpty {
-                return scoped
-            }
-            return scoped.filter { EntrySearch.matches(entry: $0, query: navigationState.searchText) }
-        }
-        if navigationState.searchText.isEmpty {
-            return currentGroup.entries
-        }
-        return EntrySearch.entries(in: rootGroup, matching: navigationState.searchText)
+        EntryListQuery.entries(root: rootGroup, database: vaultSession.currentDatabase, navigation: navigationState)
     }
 
     private var headerTitle: String {
@@ -67,7 +51,7 @@ struct EntryListView: View {
             let isSelected = navigationState.selectedEntryID == entry.uuid
             EntryListRow(
                 title: displayTitle(for: entry),
-                subtitle: entry.login,
+                subtitle: entry.entryType == .address ? entry.addressSummary : entry.login,
                 entryType: entry.entryType
             )
             .tag(entry.uuid)
@@ -86,6 +70,7 @@ struct EntryListView: View {
             ToolbarItem {
                 Menu("Add", systemImage: "plus") {
                     Button("Login") { presentCreate(entryType: .login) }
+                    Button("Address") { presentCreate(entryType: .address) }
                     Button("Card") { presentCreate(entryType: .card) }
                     Button("Notes") { presentCreate(entryType: .notes) }
                 }
@@ -198,6 +183,8 @@ private struct EntryListRow: View {
     @ViewBuilder
     private var leadingIcon: some View {
         switch entryType {
+        case .address:
+            templateIconTile(systemName: "house")
         case .card:
             templateIconTile(systemName: "creditcard")
         case .notes:

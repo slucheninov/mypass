@@ -4,7 +4,7 @@
 outstanding workstreams is tracked. Tick a box only when the item is implemented **and**
 its tests pass — see "Definition of done" below.
 
-Last updated: 2026-09-11
+Last updated: 2026-10-11
 
 ---
 
@@ -677,6 +677,73 @@ out again, look for newly added main-queue work in the suite before suspecting t
 Also: never judge a run by `./scripts/test.sh | tail`. The pipeline reports `tail`'s exit
 code, not the script's, which is how a 4-failure run first read as a pass here.
 
+## Passkey discovery and provider diagnostics — 2026-10-11
+
+Design: [spec](../superpowers/specs/2026-10-11-passkey-discovery-and-provider-diagnostics-design.md).
+Implementation: [plan](../superpowers/plans/2026-10-11-passkey-discovery-and-provider-diagnostics.md).
+
+- [x] Passkeys categories in app and extension, consistent badge metadata and live-entry counts.
+- [x] Registration exclusion checks after consent, preserving existing credentials on refusal.
+- [x] Visible proxy attachment health, conflict diagnostics and retry/reconciliation with automated coverage.
+- [x] Browser password-saving/provider warnings with explicit diagnostic limitations.
+- [x] Site passkey-action guidance and confirmation popup fallback with automated coverage.
+- [x] Combined source review and automated verification recorded below.
+- [ ] Authenticated GitHub passkey registration and sign-in with the installed MyPass extension.
+- [ ] Manual checks of native/system passkey providers and other managers in the user's browser profile.
+
+Verification on 2026-10-11: `./scripts/test.sh` passed. Reported Swift totals: app 590
+(1 skipped), MyPassKit 211 XCTest plus 6 Swift Testing tests, SyncKit 86 (20 skipped),
+ExtensionBridgeKit 71 (2 skipped). Combined: 964 tests reported, 23 skipped, 941
+executed, no failures. All 20 standalone JavaScript test files passed. Local run log:
+`/tmp/mypass-final-20261011-102429.log` (temporary verification artifact, not committed).
+
+Final popup review then fixed live checking/ready/cancel transitions, made Passkeys
+category rows open sites without password autofill, and removed popup-owned pending
+state deletion. Independent review approved these changes; all 20 JavaScript test files
+passed again on the final code, recorded in `/tmp/mypass-final-node-20261011.log`.
+The Swift implementation was unchanged after the full-suite run. `git diff --check`
+passed. The post-review JavaScript rerun was not another full Swift-suite run.
+
+GitHub's public login-page inspection confirmed a passkey action, not successful
+registration or authentication. Tests use fixtures/mocks and cannot prove the installed
+extension owns the user's live browser ceremonies. Conditional mediation/autofill UI
+is not implemented by this change; users initiate the site's explicit passkey action.
+Diagnostics cover observable Chrome password-saving settings and known/permission-
+identified extensions only. They cannot establish that every OS provider or unknown
+manager is disabled; that assurance remains unverified.
+
+## Browser settings and manager help — 2026-10-11
+
+Design: [spec](../superpowers/specs/2026-10-11-browser-settings-and-manager-help-design.md).
+Implementation: [plan](../superpowers/plans/2026-10-11-browser-settings-and-manager-help.md).
+
+- [x] Native Browser settings with per-pairing reports, authenticated navigation and manager help; automated checks passed.
+- [x] Compact extension status and browser-owned permission flow.
+- [x] Chromium-compatible passkey create response and completion-error handling.
+- [x] Full automated suite and independent review.
+- [x] Mocked extension popup and browser-check page visual checks.
+- [ ] Real native settings window visual verification.
+- [ ] Real GitHub passkey registration and sign-in confirmed by the website.
+
+Final verification on 2026-10-11: `./scripts/test.sh` passed. Swift totals: app 593
+(1 skipped), MyPassKit 211 XCTest plus 6 Swift Testing tests, SyncKit 86 (20 skipped),
+ExtensionBridgeKit 74 (2 skipped). Combined: 970 reported, 23 skipped, 947 executed,
+zero failures. All 21 registered JavaScript suites passed, followed by an independent
+final rerun of all 21. Logs: `/tmp/mypass-settings-final-20261011-111140.log` and
+`/tmp/mypass-settings-final-node.log` (local temporary artifacts, not committed).
+
+Chromium rejects create responses missing `publicKeyAlgorithm`, `authenticatorData`
+and ES256 DER SPKI `publicKey`, even after the app stores a key. These fields now
+match the emitted CBOR attestation. The extension waits for browser API acknowledgement
+before clearing pending state, reports rejected completion, and guards a newer
+ceremony from stale failure state. Regression tests exercise these boundaries.
+
+Independent review passed. Mocked visual checks found no overflow in normal or long
+popup content at 360 px and covered the browser-check page at desktop size. Native
+help links were verified against official documentation. No live native-window visual
+check, actual manager-configuration changes, or GitHub account registration/sign-in
+was performed by this verification.
+
 ## Verification commands
 
 ```bash
@@ -685,3 +752,23 @@ code, not the script's, which is how a 4-failure run first read as a pass here.
 xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS'
 node ChromeExtension/tests/<file>.test.js
 ```
+
+## Address entries and browser autofill (2026-10-11)
+
+- [x] Native Home / Work / Other address entries, encrypted KDBX fields, and Addresses category.
+- [x] Explicit browser address selection and form-scoped autofill, with document-bound delivery.
+- [x] Regression coverage and the full integrated automated test gate.
+
+Design: [Addresses](../superpowers/specs/2026-10-11-addresses-design.md).
+Plan: [Implementation](../superpowers/plans/2026-10-11-addresses.md).
+
+Verification: `./scripts/test.sh` passed 986 Swift cases (963 passed, 23 skipped) and all 25 JavaScript suites; `./scripts/build-all.sh` built MyPass and ChromeHost. Installed-extension ↔ real-vault address autofill remains unverified. Browser checks used the actual helper with a synthetic profile and a popup with mocked bridge responses.
+
+## Contextual passkey hints (2026-10-11)
+
+- [x] Show disabled-passkey guidance only in This site on HTTPS pages whose exact host appears in a bundled five-provider catalog or for which the app reports a matching saved passkey. Hide the hint on unsupported/unknown sites without a saved match and in global/category/search views.
+
+The catalog is local UI guidance and does not change credential matching or WebAuthn authorization. Regression coverage passed in the same 25-suite JavaScript gate.
+
+Design: [Passkey site hints](../superpowers/specs/2026-10-11-passkey-site-hints-design.md).
+Plan: [Implementation](../superpowers/plans/2026-10-11-passkey-site-hints.md).

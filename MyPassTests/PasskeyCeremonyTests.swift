@@ -63,6 +63,38 @@ final class PasskeyCeremonyTests: XCTestCase {
         XCTAssertEqual(context.challenge, challenge)
         XCTAssertEqual(context.userId, userId)
         XCTAssertEqual(context.attestation, "none")
+        XCTAssertEqual(context.excludeCredentialIds, [])
+    }
+
+    func testParseCreateRequestDecodesExcludedIDsAndIgnoresUnsupportedCredentialTypes() throws {
+        let fixture = createFixtureJSON(challenge: Data([1]), userId: Data([2]))
+        var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(fixture.utf8)) as? [String: Any])
+        json["excludeCredentials"] = [
+            ["type": "public-key", "id": "-_8"],
+            ["type": "public-key", "id": "AQI="],
+            ["type": "future-type", "id": "Aw"]
+        ]
+        let encoded = String(decoding: try JSONSerialization.data(withJSONObject: json), as: UTF8.self)
+
+        let context = try PasskeyCeremony.parseCreateRequest(encoded)
+
+        XCTAssertEqual(context.excludeCredentialIds, [Data([0xfb, 0xff]), Data([1, 2])])
+    }
+
+    func testParseCreateRequestRejectsMalformedExclusionRatherThanDroppingIt() throws {
+        let fixture = createFixtureJSON(challenge: Data([1]), userId: Data([2]))
+        let malformed: [Any] = [
+            "not an array", [["type": "public-key", "id": "%%%"]],
+            [["type": "public-key", "id": ""]], [["type": "public-key"]], [["id": "AQ"]]
+        ]
+        for descriptors in malformed {
+            var json = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(fixture.utf8)) as? [String: Any])
+            json["excludeCredentials"] = descriptors
+            let encoded = String(decoding: try JSONSerialization.data(withJSONObject: json), as: UTF8.self)
+            XCTAssertThrowsError(try PasskeyCeremony.parseCreateRequest(encoded)) { error in
+                XCTAssertEqual(error as? PasskeyCeremonyError, .invalidRequestJSON)
+            }
+        }
     }
 
     func testParseCreateRequestThrowsUnsupportedAlgorithmWhenES256Missing() {
@@ -155,6 +187,35 @@ final class PasskeyCeremonyTests: XCTestCase {
         XCTAssertEqual(clientData["type"] as? String, "webauthn.create")
         XCTAssertEqual(clientData["origin"] as? String, "https://example.com")
         XCTAssertEqual(clientData["challenge"] as? String, PasskeyBase64URL.encode(challenge))
+    }
+
+    func testCreateResponseIncludesChromiumRequiredFieldsMatchingAttestation() throws {
+        for attestation in ["none", "direct"] {
+            let context = try PasskeyCeremony.parseCreateRequest(
+                createFixtureJSON(challenge: Data([1, 2]), userId: Data([3]), attestation: attestation)
+            )
+            let result = try PasskeyCeremony.performCreate(context: context, originUrl: "https://example.com")
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.responseJson.utf8)) as? [String: Any])
+            let response = try XCTUnwrap(root["response"] as? [String: Any])
+            XCTAssertEqual(response["publicKeyAlgorithm"] as? Int, -7)
+            let authData = try XCTUnwrap(PasskeyBase64URL.decode(try XCTUnwrap(response["authenticatorData"] as? String)))
+            XCTAssertEqual(authData, result.authData)
+            let object = try attestationObject(from: result)
+            // Canonical CBOR ends with the authData byte string in both conveyances.
+            // Verify the encoded byte-string length, not only an arbitrary suffix match.
+            let expectedAuthField = Data([0x68]) + Data("authData".utf8) + Data([0x58, UInt8(authData.count)]) + authData
+            XCTAssertEqual(object.suffix(expectedAuthField.count), expectedAuthField)
+            let der = try XCTUnwrap(PasskeyBase64URL.decode(try XCTUnwrap(response["publicKey"] as? String)))
+            let publicKey = try P256.Signing.PublicKey(derRepresentation: der)
+            let savedKey = try P256.Signing.PrivateKey(pemRepresentation: result.privateKeyPEM)
+            XCTAssertEqual(publicKey.rawRepresentation, savedKey.publicKey.rawRepresentation)
+            // Independently construct the EC2 COSE tail: kty=2, alg=-7, crv=1,
+            // followed by 32-byte x/y coordinates from the returned SPKI public key.
+            let cose = Data([0xa5, 0x01, 0x02, 0x03, 0x26, 0x20, 0x01, 0x21, 0x58, 0x20])
+                + publicKey.rawRepresentation.prefix(32) + Data([0x22, 0x58, 0x20])
+                + publicKey.rawRepresentation.suffix(32)
+            XCTAssertEqual(authData.suffix(cose.count), cose)
+        }
     }
 
     func testPerformCreateAuthDataHasAttestedCredentialDataFlagSet() throws {

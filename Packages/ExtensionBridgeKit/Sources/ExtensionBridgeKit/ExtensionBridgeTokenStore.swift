@@ -50,11 +50,19 @@ public final class InMemoryExtensionBridgeTokenStore: ExtensionBridgeTokenStorin
 /// the same Apple Developer Team ID for cross-process Keychain access to work;
 /// that signing requirement cannot be verified by an automated test.
 public final class ExtensionBridgeTokenStore: ExtensionBridgeTokenStoring {
-    private let service = "com.mypass.extensionbridge.endpoint"
+    private let service: String
     private let account = "loopback"
     private let accessGroup = "com.mypass.app.keychain"
 
-    public init() {}
+    public init() {
+        service = "com.mypass.extensionbridge.endpoint"
+    }
+
+    /// Separate namespace for opt-in Keychain integration tests. Even explicitly
+    /// enabled tests must never replace or delete the running app's discovery item.
+    init(service: String) {
+        self.service = service
+    }
 
     public func save(_ endpoint: ExtensionBridgeEndpoint) throws {
         guard let data = try? JSONEncoder().encode(endpoint) else {

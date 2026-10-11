@@ -1,8 +1,8 @@
-// popup.html loads shared/entry-visuals.js and popup.js as two SEPARATE classic <script>
-// tags, back to back, with no module/type="module" wrapper. Classic scripts in the same
-// document share ONE global scope (one GlobalEnvironmentRecord): every top-level `function`,
-// `var`, `const`, or `let` in the first script lands in that shared scope before the second
-// script's own top-level declarations are processed.
+// popup.html loads shared/*.js and then popup.js as SEPARATE classic <script> tags, with
+// no module/type="module" wrapper. Classic scripts in the same document share ONE global
+// scope (one GlobalEnvironmentRecord): every top-level `function`, `var`, `const`, or
+// `let` in an earlier script lands in that shared scope before the next script's own
+// top-level declarations are processed.
 //
 // entry-visuals.js declares `letterFromTitle` and `colorForTitle` as top-level function
 // declarations. If popup.js ALSO declares a top-level lexical binding (`const`/`let`, including
@@ -11,7 +11,9 @@
 // a single statement of popup.js runs. This is exactly what shipped: popup.js used
 // `const { letterFromTitle, colorForTitle } = ...` at top level, which collided with the
 // function declarations entry-visuals.js had already put in the shared global scope, and the
-// entire popup went dead in the browser.
+// entire popup went dead in the browser. The same rule applies to every other shared script
+// popup.html loads, and to the content-script list in manifest.json: those files share one
+// isolated-world global, and content.js must not redeclare their names at column 0.
 //
 // No node test could catch this directly: under `require`, popup.js and entry-visuals.js are
 // each loaded as their own CommonJS module with a private module scope, so the `require`
@@ -66,29 +68,74 @@ function topLevelDeclaredNames(source) {
   return names;
 }
 
-const entryVisualsSource = fs.readFileSync(
-  path.join(__dirname, '..', 'shared', 'entry-visuals.js'),
-  'utf8'
+function readNames(relPath) {
+  const source = fs.readFileSync(path.join(__dirname, '..', relPath), 'utf8');
+  return topLevelDeclaredNames(source);
+}
+
+function assertDisjoint(groupLabel, relPaths) {
+  const owner = new Map();
+  for (const relPath of relPaths) {
+    for (const name of readNames(relPath)) {
+      const previous = owner.get(name);
+      assert.strictEqual(
+        previous,
+        undefined,
+        `${groupLabel}: top-level name '${name}' is declared in both ${previous} and ${relPath}. ` +
+          `Those files are classic scripts in one global scope, so the second declaration is a ` +
+          `load-time SyntaxError ("Identifier already been declared") and the page never runs. ` +
+          `Bind through a namespace object instead of redeclaring the name.`
+      );
+      owner.set(name, relPath);
+    }
+  }
+  return owner;
+}
+
+const popupHtml = fs.readFileSync(path.join(__dirname, '..', 'popup.html'), 'utf8');
+const popupScripts = [];
+const scriptRe = /<script\s+src="([^"]+)"><\/script>/g;
+let scriptMatch;
+while ((scriptMatch = scriptRe.exec(popupHtml))) popupScripts.push(scriptMatch[1]);
+assert.ok(popupScripts.includes('popup.js'), 'sanity: popup.html loads popup.js');
+assert.ok(
+  popupScripts.indexOf('shared/entry-visuals.js') < popupScripts.indexOf('popup.js'),
+  'entry-visuals.js must load before popup.js'
 );
-const popupSource = fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8');
 
-const entryVisualsNames = topLevelDeclaredNames(entryVisualsSource);
-const popupNames = topLevelDeclaredNames(popupSource);
+const popupGroup = assertDisjoint('popup.html', popupScripts);
+assert.ok(popupGroup.has('letterFromTitle'), 'sanity: parser sees entry-visuals.js top-level function letterFromTitle');
+assert.ok(popupGroup.has('colorForTitle'), 'sanity: parser sees entry-visuals.js top-level function colorForTitle');
+assert.ok(popupGroup.get('classifyGetCredentialsResponse') === 'shared/bridge-status.js');
+assert.ok(popupGroup.get('isBase32Secret') === 'shared/base32.js');
 
-assert.ok(entryVisualsNames.has('letterFromTitle'), 'sanity: parser sees entry-visuals.js top-level function letterFromTitle');
-assert.ok(entryVisualsNames.has('colorForTitle'), 'sanity: parser sees entry-visuals.js top-level function colorForTitle');
+const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'manifest.json'), 'utf8'));
+const contentScripts = manifest.content_scripts.find((entry) => entry.js.includes('content.js'));
+assert.ok(contentScripts, 'manifest content script entry that loads content.js');
+const contentGroup = assertDisjoint('content_scripts', contentScripts.js);
+assert.strictEqual(contentGroup.get('hostnameMatches'), 'shared/url-match.js');
+assert.strictEqual(contentGroup.get('findFillableFields'), 'shared/form-detection.js');
+assert.strictEqual(contentGroup.get('detectManualSetupKey'), 'shared/totp-detection.js');
+assert.ok(![...contentGroup.values()].includes('content.js'), 'content.js must not add top-level names; it is an IIFE after the shared scripts');
 
-const collisions = [...popupNames].filter((name) => entryVisualsNames.has(name));
+// background-loader.js importScripts url-match.js, password-generator.js, and then
+// background.js into one worker global, so their top-level names must not overlap.
+assertDisjoint('service worker', ['shared/url-match.js', 'shared/password-generator.js', 'background.js']);
 
-assert.deepStrictEqual(
-  collisions,
-  [],
-  `popup.js declares a top-level lexical/var name that collides with a top-level name ` +
-    `entry-visuals.js already declares: ${collisions.join(', ')}. popup.html loads both as ` +
-    `classic scripts sharing one global scope, so this is a load-time SyntaxError in the ` +
-    `browser ("Identifier already been declared") that kills the whole popup before any ` +
-    `statement of popup.js runs. Bind through a namespace object instead of destructuring ` +
-    `these names at top level.`
-);
+function scriptSources(html) {
+  const sources = [];
+  const re = /<script\s+src="([^"]+)"><\/script>/g;
+  let match;
+  while ((match = re.exec(html))) sources.push(match[1]);
+  return sources;
+}
+
+const createScripts = scriptSources(fs.readFileSync(path.join(__dirname, '..', 'create.html'), 'utf8'));
+assert.ok(createScripts.indexOf('shared/entry-visuals.js') < createScripts.indexOf('create.js'));
+assertDisjoint('create.html', createScripts);
+
+const generatorScripts = scriptSources(fs.readFileSync(path.join(__dirname, '..', 'generator.html'), 'utf8'));
+assert.ok(generatorScripts.indexOf('shared/password-generator.js') < generatorScripts.indexOf('generator.js'));
+assertDisjoint('generator.html', generatorScripts);
 
 console.log('scriptScopes.test.js: no global scope collisions OK');

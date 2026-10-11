@@ -185,6 +185,11 @@ final class LoopbackServer {
     private func requestToken(from request: ExtensionBridgeRequest) -> String {
         switch request {
         case .getCredentials(let token, _, _): return token
+        case .getFavorites(let token, _): return token
+        case .listEntries(let token, _, _): return token
+        case .searchEntries(let token, _, _): return token
+        case .createEntry(let token, _, _, _, _, _, _, _, _, _, _, _, _, _, _): return token
+        case .fillAddress(let token, _, _, _): return token
         case .fillCredential(let token, _, _, _): return token
         case .getTotp(let token, _, _, _): return token
         case .proposeSaveLogin(let token, _, _, _, _): return token
@@ -192,6 +197,8 @@ final class LoopbackServer {
         case .startPairing(let token, _): return token
         case .completePairing(let token, _): return token
         case .requestUnlock(let token, _): return token
+        case .openBrowserSettings(let token, _): return token
+        case .reportBrowserDiagnostics(let token, _, _): return token
         case .getPasskeyProxyStatus(let token, _): return token
         case .setPasskeyProxyEnabled(let token, _, _): return token
         case .passkeyCreate(let token, _, _, _, _): return token
@@ -200,6 +207,9 @@ final class LoopbackServer {
         case .passkeyGetApprove(let token, _, _, _): return token
         case .passkeyCancel(let token, _, _): return token
         case .generatePassword(let token, _, _): return token
+        case .recordGeneratedPassword(let token, _, _, _, _): return token
+        case .getGeneratedPasswordHistory(let token, _): return token
+        case .deleteGeneratedPassword(let token, _, _): return token
         }
     }
 

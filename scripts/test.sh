@@ -28,6 +28,9 @@ xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=
 if command -v node >/dev/null 2>&1; then
   node ChromeExtension/tests/background.manifest.test.js
   node ChromeExtension/tests/backgroundRelay.test.js
+  node ChromeExtension/tests/addressForm.test.js
+  node ChromeExtension/tests/addressRelay.test.js
+  node ChromeExtension/tests/addressPopup.test.js
   node ChromeExtension/tests/formDetection.test.js
   node ChromeExtension/tests/pairing.test.js
   node ChromeExtension/tests/letter-avatar.test.js
@@ -39,10 +42,15 @@ if command -v node >/dev/null 2>&1; then
   node ChromeExtension/tests/totpPicker.test.js
   node ChromeExtension/tests/passkeyProxy.test.js
   node ChromeExtension/tests/passkeyPopup.test.js
+  node ChromeExtension/tests/passkeySites.test.js
+  node ChromeExtension/tests/browserSettings.test.js
+  node ChromeExtension/tests/favoritesPopup.test.js
   node ChromeExtension/tests/inlineIcon.test.js
   node ChromeExtension/tests/scriptScopes.test.js
+  node ChromeExtension/tests/sharedModules.test.js
   node ChromeExtension/tests/newPasswordDetection.test.js
   node ChromeExtension/tests/generatePassword.test.js
+  node ChromeExtension/tests/passwordGenerator.test.js
 else
   echo "Warning: node not found — skipping ChromeExtension JS tests." >&2
 fi

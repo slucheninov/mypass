@@ -186,7 +186,10 @@ extension GroupTreeOperations {
     }
 
     static func selectableGroups(in root: KdbxGroup, excludingRecycleBin recycleBinGroupUUID: UUID?) -> [KdbxGroup] {
-        flattenGroups(root).filter { !isTheRecycleBin($0, recycleBinGroupUUID: recycleBinGroupUUID) }
+        flattenGroups(root).filter { group in
+            !isTheRecycleBin(group, recycleBinGroupUUID: recycleBinGroupUUID)
+                && !PasswordGeneratorHistoryStore.isHistoryGroup(group)
+        }
     }
 
     private static func flattenGroups(_ group: KdbxGroup) -> [KdbxGroup] {

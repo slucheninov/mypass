@@ -24,23 +24,78 @@ assert.ok(
 // ------ and relays a successful popup-originated response to the active tab -------
 
 let sentNativeMessage = null;
+const nativeMessages = [];
 let tabsQueryCalls = [];
 let tabsSendMessageCalls = [];
+const storedLocal = {};
+const storedSession = {};
 global.chrome = {
   runtime: {
     lastError: null,
     id: 'test-extension-id',
     sendNativeMessage: (hostName, message, cb) => {
+      nativeMessages.push(message);
       sentNativeMessage = message;
+      if (message.type === 'fillCredential') {
+        cb({ type: 'credential', username: 'ada', password: 'secret' });
+        return;
+      }
+      if (message.type === 'recordGeneratedPassword' || message.type === 'deleteGeneratedPassword') {
+        cb({ type: 'ok' });
+        return;
+      }
+      if (message.type === 'getGeneratedPasswordHistory') {
+        cb({
+          type: 'generatedPasswordHistory',
+          entries: [{ id: 'h1', password: 'from-vault', url: 'https://gitlab.com', createdAt: 1700000000000 }]
+        });
+        return;
+      }
       cb({ type: 'generatedPassword', password: 'Tr0ub4dor&3' });
     },
     onMessage: { addListener: () => {} }
   },
   storage: {
     local: {
-      get: (_key, cb) => cb({}),
-      set: (_obj, cb) => cb && cb(),
-      remove: (_key, cb) => cb && cb()
+      get: (key, cb) => {
+        if (Array.isArray(key)) {
+          const result = {};
+          key.forEach((name) => {
+            if (storedLocal[name] !== undefined) result[name] = storedLocal[name];
+          });
+          cb(result);
+          return;
+        }
+        cb(key ? { [key]: storedLocal[key] } : { ...storedLocal });
+      },
+      set: (obj, cb) => {
+        Object.assign(storedLocal, obj);
+        if (cb) cb();
+      },
+      remove: (key, cb) => {
+        const names = Array.isArray(key) ? key : [key];
+        names.forEach((name) => { delete storedLocal[name]; });
+        if (cb) cb();
+      }
+    },
+    session: {
+      get: (key, cb) => {
+        const names = Array.isArray(key) ? key : [key];
+        const result = {};
+        names.forEach((name) => {
+          if (storedSession[name] !== undefined) result[name] = storedSession[name];
+        });
+        cb(result);
+      },
+      set: (obj, cb) => {
+        Object.assign(storedSession, obj);
+        if (cb) cb();
+      },
+      remove: (key, cb) => {
+        const names = Array.isArray(key) ? key : [key];
+        names.forEach((name) => { delete storedSession[name]; });
+        if (cb) cb();
+      }
     }
   },
   // Only reached by the popup-sender scenario below — a content-script sender must never
@@ -86,9 +141,13 @@ const { handleRuntimeMessage } = require(path.join(__dirname, '..', 'background.
       );
     });
     assert.strictEqual(keepChannelOpen, true, 'the async response path must keep the message channel open');
-    assert.ok(sentNativeMessage, 'generatePassword must be forwarded to the native host');
-    assert.strictEqual(sentNativeMessage.type, 'generatePassword');
-    assert.strictEqual(sentNativeMessage.domain, 'example.com');
+    const generated = nativeMessages.filter((message) => message.type === 'generatePassword');
+    assert.strictEqual(generated.length, 1, 'generatePassword must be forwarded to the native host');
+    assert.strictEqual(generated[0].domain, 'example.com');
+    const recorded = nativeMessages.filter((message) => message.type === 'recordGeneratedPassword');
+    assert.strictEqual(recorded.length, 1, 'the generated password is stored in the vault');
+    assert.strictEqual(recorded[0].password, 'Tr0ub4dor&3');
+    assert.strictEqual(recorded[0].url, 'https://example.com/signup');
     // Stripped, exactly like the fillCredential branch: the secret went to the content
     // script, so the popup's JS runtime must never see it. This assertion used to pin
     // the UNSTRIPPED shape, which is how the leak shipped — the popup only ever checked
@@ -137,6 +196,229 @@ const { handleRuntimeMessage } = require(path.join(__dirname, '..', 'background.
     assert.strictEqual(tabsSendMessageCalls.length, 0, 'and must never send a second applyFill');
 
     console.log('generatePassword.test.js: background.js content-script sender is never relayed OK');
+  }
+
+  const historyRecords = nativeMessages.filter((message) => message.type === 'recordGeneratedPassword');
+  assert.strictEqual(historyRecords.length, 2, 'each generate is sent to the vault');
+  assert.strictEqual(historyRecords[0].password, 'Tr0ub4dor&3');
+  assert.strictEqual(historyRecords[0].url, 'https://example.com/signup');
+  assert.strictEqual(historyRecords[1].url, 'https://example.com/signup');
+  assert.strictEqual(storedLocal.generatedPasswordHistory, undefined, 'history is not kept in the browser profile');
+
+  {
+    tabsSendMessageCalls = [];
+    sentNativeMessage = null;
+    let armed = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'armOpenAndFill', tabId: 5, id: 'entry-1', url: 'https://alpha.example/login' },
+        {},
+        (response) => { armed = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(armed, { type: 'ok' });
+
+    let ignored = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'claimPendingFill', url: 'https://alpha.example/login' },
+        { tab: { id: 5 }, frameId: 3, url: 'https://alpha.example/login' },
+        (response) => { ignored = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(ignored, { type: 'none' });
+    assert.strictEqual(tabsSendMessageCalls.length, 0, 'a subframe must not take the pending fill');
+
+    let claimed = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'claimPendingFill', url: 'https://alpha.example/login' },
+        { tab: { id: 5 }, frameId: 0, url: 'https://alpha.example/login' },
+        (response) => { claimed = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(claimed, { type: 'ok' });
+    assert.strictEqual(sentNativeMessage.type, 'fillCredential');
+    assert.strictEqual(sentNativeMessage.id, 'entry-1');
+    assert.strictEqual(sentNativeMessage.url, 'https://alpha.example/login');
+    assert.strictEqual(tabsSendMessageCalls.length, 1);
+    assert.strictEqual(tabsSendMessageCalls[0].tabId, 5);
+    assert.strictEqual(tabsSendMessageCalls[0].message.type, 'applyFill');
+    assert.strictEqual(tabsSendMessageCalls[0].message.username, 'ada');
+    assert.strictEqual(tabsSendMessageCalls[0].message.password, 'secret');
+    console.log('generatePassword.test.js: open-and-fill claim delivers the login to the new tab OK');
+  }
+
+  {
+    nativeMessages.length = 0;
+    sentNativeMessage = null;
+    tabsQueryCalls = [];
+    tabsSendMessageCalls = [];
+    let responded = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'generatePassword', domain: 'example.com', url: 'https://example.com/signup', preview: true },
+        {},
+        (response) => { responded = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(responded, { type: 'generatedPassword', password: 'Tr0ub4dor&3' });
+    assert.ok(nativeMessages.some((message) => message.type === 'generatePassword'));
+    assert.ok(nativeMessages.some((message) => message.type === 'recordGeneratedPassword' && message.password === 'Tr0ub4dor&3'));
+    assert.strictEqual(tabsQueryCalls.length, 0, 'a generator preview must not fill the active tab');
+    assert.strictEqual(tabsSendMessageCalls.length, 0);
+    console.log('generatePassword.test.js: extension-page preview returns the password OK');
+  }
+
+  {
+    storedLocal.passwordGeneratorSettings = {
+      type: 'pin',
+      useAsDefault: true,
+      pin: { length: 4 }
+    };
+    nativeMessages.length = 0;
+    sentNativeMessage = null;
+    tabsQueryCalls = [];
+    tabsSendMessageCalls = [];
+    let responded = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'generatePassword', domain: 'example.com', url: 'https://example.com/signup' },
+        {},
+        (response) => { responded = response; resolve(); }
+      );
+    });
+    assert.ok(!nativeMessages.some((message) => message.type === 'generatePassword'), 'a default PIN is generated in the extension');
+    assert.deepStrictEqual(responded, { type: 'generatedPasswordFilled' });
+    assert.strictEqual(tabsSendMessageCalls.length, 1);
+    assert.match(tabsSendMessageCalls[0].message.password, /^\d{4}$/);
+    assert.strictEqual(nativeMessages[0].type, 'recordGeneratedPassword');
+    assert.strictEqual(nativeMessages[0].password, tabsSendMessageCalls[0].message.password);
+
+    nativeMessages.length = 0;
+    sentNativeMessage = null;
+    tabsSendMessageCalls = [];
+    let pageResponse = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'generatePassword', domain: 'example.com', url: 'https://example.com/signup', preview: true },
+        { tab: { id: 7 }, url: 'https://example.com/signup', frameId: 0, documentId: 'doc-1' },
+        (response) => { pageResponse = response; resolve(); }
+      );
+    });
+    assert.ok(!nativeMessages.some((message) => message.type === 'generatePassword'), 'a content script cannot opt out of the default generator');
+    assert.strictEqual(nativeMessages.filter((message) => message.type === 'recordGeneratedPassword').length, 1);
+    assert.match(pageResponse.password, /^\d{4}$/);
+    assert.strictEqual(pageResponse.type, 'generatedPassword');
+    assert.strictEqual(tabsSendMessageCalls.length, 0);
+    console.log('generatePassword.test.js: use-by-default PIN stays in the extension OK');
+  }
+
+  {
+    delete storedLocal.passwordGeneratorSettings;
+    nativeMessages.length = 0;
+    let rejected = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'recordGeneratedPassword', password: 'from-page', url: 'https://evil.example' },
+        { tab: { id: 7 }, url: 'https://evil.example' },
+        (response) => { rejected = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(rejected, { type: 'error' });
+    assert.strictEqual(nativeMessages.length, 0, 'a page must not write generator history');
+
+    let recorded = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'recordGeneratedPassword', password: 'local-memorable', url: 'https://gitlab.com' },
+        {},
+        (response) => { recorded = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(recorded, { type: 'ok' });
+    const saved = nativeMessages[nativeMessages.length - 1];
+    assert.strictEqual(saved.type, 'recordGeneratedPassword');
+    assert.strictEqual(saved.password, 'local-memorable');
+    assert.strictEqual(saved.url, 'https://gitlab.com');
+
+    let removed = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'deleteGeneratedPassword', id: 'saved-id' },
+        {},
+        (response) => { removed = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(removed, { type: 'ok' });
+    assert.strictEqual(nativeMessages[nativeMessages.length - 1].type, 'deleteGeneratedPassword');
+    assert.strictEqual(nativeMessages[nativeMessages.length - 1].id, 'saved-id');
+
+    let pageDelete = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'deleteGeneratedPassword', id: 'saved-id' },
+        { tab: { id: 7 } },
+        (response) => { pageDelete = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(pageDelete, { type: 'error' });
+
+    storedLocal.generatedPasswordHistory = [
+      { id: 'old', password: 'from-chrome', url: 'https://old.example', createdAt: 10 }
+    ];
+    nativeMessages.length = 0;
+    let listed = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'getGeneratedPasswordHistory' },
+        {},
+        (response) => { listed = response; resolve(); }
+      );
+    });
+    assert.strictEqual(listed.type, 'generatedPasswordHistory');
+    assert.strictEqual(listed.entries[0].password, 'from-vault');
+    assert.ok(nativeMessages.some((message) => (
+      message.type === 'recordGeneratedPassword' && message.password === 'from-chrome' && message.createdAt === 10
+    )));
+    assert.strictEqual(nativeMessages[nativeMessages.length - 1].type, 'getGeneratedPasswordHistory');
+    assert.strictEqual(storedLocal.generatedPasswordHistory, undefined);
+
+    const beforePageRead = nativeMessages.length;
+    let hidden = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'getGeneratedPasswordHistory' },
+        { tab: { id: 7 } },
+        (response) => { hidden = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(hidden, { type: 'generatedPasswordHistory', entries: [] });
+    assert.strictEqual(nativeMessages.length, beforePageRead, 'a page must not read generator history');
+
+    tabsSendMessageCalls = [];
+    let filled = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'fillGeneratedPassword', password: 'shown-password', url: 'https://example.com/signup' },
+        {},
+        (response) => { filled = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(filled, { type: 'generatedPasswordFilled' });
+    assert.strictEqual(tabsSendMessageCalls[0].message.password, 'shown-password');
+    assert.strictEqual(tabsSendMessageCalls[0].message.fillTarget, 'newPassword');
+
+    let pageFill = null;
+    await new Promise((resolve) => {
+      handleRuntimeMessage(
+        { type: 'fillGeneratedPassword', password: 'shown-password', url: 'https://example.com/signup' },
+        { tab: { id: 7 } },
+        (response) => { pageFill = response; resolve(); }
+      );
+    });
+    assert.deepStrictEqual(pageFill, { type: 'error' });
+    console.log('generatePassword.test.js: history record, delete, and autofill stay on the extension page OK');
   }
 })();
 

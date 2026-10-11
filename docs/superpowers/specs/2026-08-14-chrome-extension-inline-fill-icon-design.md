@@ -111,10 +111,14 @@ Sync sources, all coalesced through one `requestAnimationFrame`:
 | `IntersectionObserver` on the input | hide when the field leaves the viewport |
 | existing `MutationObserver` | fields added by SPA navigation |
 
-Accepted consequence: the icon overlays the field's right inner edge and may cover a
-site's own control there (a show-password eye, a clear button). Judged the lesser evil
-against mutating the page's geometry. If a site proves unusable, the escape hatch is the
-popup, which is unchanged.
+Updated 2026-10-11: the icon keeps a 6px inset from the actual input edge. It reserves
+the measured bounds of overlapping buttons and links within the field's wrapper, keeping
+show-password and clear controls usable without mutating the input. The target is at most
+28px square, shrinks to fit compact fields, and is hidden when fewer than 36px remain for
+typing or the target would be smaller than 20px. The toolbar popup remains available.
+Controls outside that wrapper and browser-native decorations cannot all be detected.
+The full button must fit inside the viewport and every ancestor overflow clip, checked per
+axis; scrolling a field outside its container hides the overlay until it fits again.
 
 ### Field recognition
 
@@ -179,8 +183,12 @@ defensive.
 `web_accessible_resources` is unset in the manifest, so `icons/*.png` cannot be referenced
 from a page-injected element. Rather than declare them — which would widen what any page can
 probe for — the key glyph is an **inline SVG path** built in the shadow root. It is drawn to
-read as the same object as the app's menu-bar `key.fill` SF Symbol, at 14×14 with the field's
-computed text colour at reduced opacity, rising to full opacity on hover and focus.
+match the extension's upright green MyPass key (`icons/icon128.png`), with its round head,
+hole and right-facing teeth. Updated 2026-10-11: the visible mark is up to 24px high in a
+28px target, with a transparent idle background, subtle green hover surface, and explicit
+keyboard focus ring. Compact fields scale the mark down with the target. High-contrast
+mode uses system colors. `inline-icon-layout.html` covers large, compact, tiny, dark and
+reveal-button layouts, including hostile page CSS.
 
 ## Files touched
 

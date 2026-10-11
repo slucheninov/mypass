@@ -29,7 +29,23 @@ assert.ok(
   !manifest.permissions.includes('scripting'),
   'scripting permission is unused (content_scripts already covers injection) and should not be requested'
 );
-assert.strictEqual(manifest.background.service_worker, 'background.js');
+assert.strictEqual(manifest.background.service_worker, 'background-loader.js');
+const loaderSource = fs.readFileSync(path.join(__dirname, '..', 'background-loader.js'), 'utf8');
+const loaderCode = loaderSource.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '').trim();
+assert.ok(
+  loaderCode.startsWith("importScripts('shared/url-match.js')"),
+  'url-match.js must be importScripts first, before background.js does any other work'
+);
+assert.ok(
+  loaderCode.indexOf("importScripts('shared/url-match.js')") < loaderCode.indexOf("importScripts('shared/password-generator.js')")
+    && loaderCode.indexOf("importScripts('shared/password-generator.js')") < loaderCode.indexOf("importScripts('background.js')"),
+  'url-match.js and password-generator.js must exist before background.js runs'
+);
+const backgroundSource = fs.readFileSync(path.join(__dirname, '..', 'background.js'), 'utf8');
+assert.ok(
+  !backgroundSource.includes('importScripts('),
+  'background.js must not call importScripts itself: Chrome rejects that call once other startup code has run, and the message listener never registers'
+);
 assert.strictEqual(manifest.action.default_popup, 'popup.html');
 const contentScripts = manifest.content_scripts;
 assert.strictEqual(contentScripts.length, 2, 'two entries: the QR decoder stays top-frame, the rest runs everywhere');
@@ -41,8 +57,21 @@ assert.ok(!qrEntry.all_frames, 'the QR decoder must NOT be injected into subfram
 
 assert.deepStrictEqual(
   mainEntry.js,
-  ['shared/entry-visuals.js', 'content.js'],
-  'shared visuals load before content.js, which reads them'
+  [
+    'shared/entry-visuals.js',
+    'shared/url-match.js',
+    'shared/bridge-status.js',
+    'shared/base32.js',
+    'shared/form-detection.js',
+  'shared/address-form.js',
+    'shared/totp-detection.js',
+    'content.js',
+  ],
+  'shared scripts load before content.js, which reads them'
+);
+assert.ok(
+  mainEntry.js.indexOf('shared/base32.js') < mainEntry.js.indexOf('shared/totp-detection.js'),
+  'totp-detection.js calls isBase32Secret from the base32.js global'
 );
 assert.strictEqual(mainEntry.all_frames, true, 'the icon must reach login forms inside iframes');
 assert.ok(!mainEntry.js.includes('vendor/jsQR.js'), 'jsQR must not sneak back into the all-frames entry');
@@ -63,3 +92,6 @@ for (const size of expectedSizes) {
 }
 
 console.log('manifest.json OK');
+
+assert.ok(manifest.permissions.includes('notifications'), 'passkey popup fallback requires notifications permission');
+assert.deepStrictEqual(manifest.optional_permissions, ['privacy', 'management'], 'manager inspection remains an explicit opt-in');

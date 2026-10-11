@@ -1,7 +1,8 @@
 const NATIVE_HOST_NAME = "com.mypass.chromehost";
 const PAIRING_STORAGE_KEY = "pairingSecret";
 const knownTypes = [
-  "getCredentials", "fillCredential", "getTotp", "proposeSaveLogin", "proposeSaveTotp",
+  "getCredentials", "getFavorites", "listEntries", "searchEntries", "createEntry",
+  "fillCredential", "getTotp", "proposeSaveLogin", "proposeSaveTotp",
   "startPairing", "completePairing", "requestUnlock",
   "getPasskeyProxyStatus", "setPasskeyProxyEnabled", "passkeyCreateConfirm", "passkeyGetApprove",
   "generatePassword"
@@ -9,8 +10,31 @@ const knownTypes = [
 
 const PASSKEY_WATCHDOG_MS = 120000;
 const PASSKEY_WATCHDOG_ALARM = "passkeyCeremonyWatchdog";
+const PASSKEY_REFRESH_ALARM = "passkeyProxyRefresh";
+let proxyRefresh = null;
+let passkeyStateQueue = Promise.resolve();
+let proxyOperationQueue = Promise.resolve();
+
+function withPasskeyState(operation) {
+  const result = passkeyStateQueue.then(operation);
+  passkeyStateQueue = result.catch(() => {});
+  return result;
+}
+
+function withProxyOperation(operation) {
+  const result = proxyOperationQueue.then(operation);
+  proxyOperationQueue = result.catch(() => {});
+  return result;
+}
+const dispatchingPasskeys = new Set();
+const cancelledPasskeys = new Set();
 const PENDING_KEY = "pendingPasskeyCeremony";
+const PASSKEY_FAILURE_KEY = "lastPasskeyFailure";
 const PASSKEY_ENABLED_KEY = "passkeyProxyEnabled";
+const GENERATED_HISTORY_KEY = "generatedPasswordHistory";
+let localHistoryMigration = null;
+const PENDING_OPEN_FILL_KEY = "pendingOpenFill";
+const PENDING_OPEN_FILL_TTL_MS = 20000;
 
 function detectBrowserName() {
   const brands = (navigator.userAgentData && navigator.userAgentData.brands) || [];
@@ -54,8 +78,14 @@ function readPairingSecret() {
 function sendNativeMessage(message) {
   return new Promise((resolve) => {
     chrome.runtime.sendNativeMessage(NATIVE_HOST_NAME, message, (response) => {
-      if (chrome.runtime.lastError || !response) {
-        resolve({ type: "error", message: "app_not_running" });
+      const runtimeError = chrome.runtime.lastError;
+      if (runtimeError || !response) {
+        // A host exit or a broken loopback connection does not mean the app is
+        // absent. Only Chrome's explicit missing-host error proves setup is missing.
+        // Keep raw runtime errors out of replies; they can contain local paths.
+        const code = runtimeError && /^Specified native messaging host not found\.?$/i.test(runtimeError.message || "")
+          ? "native_host_not_found" : "connection_unavailable";
+        resolve({ type: "error", code, message: code });
         return;
       }
       resolve(response);
@@ -78,19 +108,22 @@ async function sendPairingCompletion(message) {
   return response;
 }
 
-// Mirrors content.js's `hostnameMatches` — duplicated rather than shared
-// because a service worker and a content script don't share a module system
-// in this MV3 extension without a build step.
-function hostnameMatches(messageUrl, pageUrl) {
-  if (!messageUrl || !pageUrl) return false;
-  try {
-    const messageHost = new URL(messageUrl).hostname.toLowerCase();
-    const pageHost = new URL(pageUrl).hostname.toLowerCase();
-    return messageHost === pageHost;
-  } catch (e) {
-    return false;
-  }
-}
+// hostnameMatches lives in shared/url-match.js, the same function content.js
+// uses before it writes into the page. background-loader.js importScripts that
+// file before this one, so in the service worker the function is already a
+// global. Node tests require this file directly and take the require branch.
+// The result stays on `urlMatch`: a top-level binding named hostnameMatches
+// here would collide with the function importScripts already declared.
+const urlMatch = typeof require === 'function'
+  ? require('./shared/url-match.js')
+  : globalThis;
+
+// password-generator.js is importScripts'd before this file. The binding stays
+// on this object: a top-level name such as generateRandomPassword here would
+// collide with the function that script already declared.
+const passwordGenerator = typeof require === 'function'
+  ? require('./shared/password-generator.js')
+  : globalThis;
 
 // Pure decision function so the branch selection is unit-testable without a chrome.tabs
 // mock. `manifest.json` grants only `activeTab` (no `host_permissions`), and Chrome only
@@ -116,7 +149,7 @@ function hostnameMatches(messageUrl, pageUrl) {
 //                               reject outright, do NOT fall back to the active tab.
 function resolveSenderFillTarget(sender, requestUrl) {
   if (!sender || !sender.tab || sender.tab.id === undefined) return null;
-  return { tabId: sender.tab.id, ok: hostnameMatches(requestUrl, sender.url) };
+  return { tabId: sender.tab.id, ok: urlMatch.hostnameMatches(requestUrl, sender.url) };
 }
 
 function buildApplyFillMessage(credentialResponse, requestUrl) {
@@ -202,6 +235,109 @@ function sendApplyFillToSender(tabId, sender, credentialResponse, requestUrl) {
   );
 }
 
+function readGeneratorSettings() {
+  return new Promise((resolve) => {
+    const fallback = passwordGenerator.defaultGeneratorSettings();
+    if (!chrome.storage || !chrome.storage.local) {
+      resolve(fallback);
+      return;
+    }
+    chrome.storage.local.get([passwordGenerator.GENERATOR_SETTINGS_KEY], (stored) => {
+      resolve(passwordGenerator.normalizeGeneratorSettings(stored && stored[passwordGenerator.GENERATOR_SETTINGS_KEY]));
+    });
+  });
+}
+
+function deliverGeneratedOrFilled(message, sender, sendResponse, response, preview) {
+  const recorded = response && response.type === "generatedPassword"
+    ? rememberGeneratedPassword(response.password, (message && message.url) || "")
+    : Promise.resolve();
+  recorded.then(() => {
+    if (message.type === "fillCredential" && response && response.type === "credential") {
+      relayFillToActiveTab(response, message.url, sender);
+      sendResponse(stripCredentialSecrets(response));
+      return;
+    }
+    // A generator window is an extension page: no sender.tab, same as the popup.
+    // preview returns the password and does not type it into the page. A content
+    // script always has sender.tab, so this branch never runs for it and preview
+    // cannot turn a page request into a copy of the secret beyond the fill that
+    // script already performs itself.
+    if (message.type === "generatePassword" && response && response.type === "generatedPassword" && !(sender && sender.tab)) {
+      if (preview) {
+        sendResponse(response);
+        return;
+      }
+      relayFillToActiveTab(response, message.url, sender);
+      sendResponse(stripCredentialSecrets(response));
+      return;
+    }
+    sendResponse(response);
+  });
+}
+
+function rememberGeneratedPassword(password, pageUrl) {
+  return migrateLocalPasswordHistory().then(() =>
+    recordVaultPasswordHistory(password, pageUrl, Date.now())
+  );
+}
+
+function recordVaultPasswordHistory(password, pageUrl, createdAt) {
+  if (!password) return Promise.resolve({ type: "error" });
+  return sendNativeMessageWithPairing({
+    type: "recordGeneratedPassword",
+    password: password,
+    url: pageUrl || "",
+    createdAt: createdAt
+  }).catch(() => ({ type: "error" }));
+}
+
+function readLocalPasswordHistory() {
+  return new Promise((resolve) => {
+    if (!chrome.storage || !chrome.storage.local) {
+      resolve([]);
+      return;
+    }
+    chrome.storage.local.get([GENERATED_HISTORY_KEY], (stored) => {
+      const history = stored && stored[GENERATED_HISTORY_KEY];
+      resolve(Array.isArray(history) ? history : []);
+    });
+  });
+}
+
+function clearLocalPasswordHistory() {
+  return new Promise((resolve) => {
+    if (!chrome.storage || !chrome.storage.local) {
+      resolve();
+      return;
+    }
+    chrome.storage.local.remove([GENERATED_HISTORY_KEY], () => resolve());
+  });
+}
+
+// Older builds kept generator history in the browser profile. Move that list into
+// the vault once, oldest first, and leave it in place if the vault cannot take it yet.
+function migrateLocalPasswordHistory() {
+  if (!localHistoryMigration) {
+    localHistoryMigration = migrateLocalPasswordHistoryOnce().finally(() => {
+      localHistoryMigration = null;
+    });
+  }
+  return localHistoryMigration;
+}
+
+async function migrateLocalPasswordHistoryOnce() {
+  const local = await readLocalPasswordHistory();
+  if (!local.length) return;
+  const oldestFirst = local.slice().reverse();
+  for (const entry of oldestFirst) {
+    if (!entry || !entry.password) continue;
+    const response = await recordVaultPasswordHistory(entry.password, entry.url || "", entry.createdAt || Date.now());
+    if (!response || response.type !== "ok") return;
+  }
+  await clearLocalPasswordHistory();
+}
+
 function relayFillToActiveTab(credentialResponse, requestUrl, sender) {
   const senderTarget = resolveSenderFillTarget(sender, requestUrl);
 
@@ -238,7 +374,7 @@ function relayFillToActiveTab(credentialResponse, requestUrl, sender) {
     // that tab's content-script runtime. content.js's own hostnameMatches
     // check stays in place too, as defense-in-depth — this only stops the
     // secret from being *delivered* to a mismatched tab in the first place.
-    if (!hostnameMatches(requestUrl, activeTab.url)) {
+    if (!urlMatch.hostnameMatches(requestUrl, activeTab.url)) {
       console.warn("MyPass: relayFillToActiveTab aborted — active tab origin does not match request origin");
       return;
     }
@@ -340,118 +476,242 @@ function writePasskeyProxyEnabledCache(enabled) {
 // cache and the actual attach/detach state, or the app's Settings toggle only takes
 // effect after the next service-worker restart (the bug this closes).
 async function syncPasskeyProxyFromStatus(status) {
-  // A pre-`enabled` app (old wire shape) has no opt-in field at all — there is nothing
-  // authoritative to sync against. Treating that as "disabled" would detach an already
-  // legitimately-attached proxy and clobber the cache to false, and the popup toggle
-  // could never turn it back on (set -> refetch old-shaped status -> detach again).
-  if (status.enabled === undefined) return;
+  const result = { ...status, proxyState: "unavailable" };
+  if (!chrome.webAuthenticationProxy || status.enabled === undefined) return result;
   await writePasskeyProxyEnabledCache(status.enabled);
-  if (status.enabled && status.attachAllowed) {
+  if (!status.enabled) {
+    try {
+      await chrome.webAuthenticationProxy.detach();
+      result.proxyState = "disabled";
+    } catch (_) { result.proxyState = "attachment-error"; }
+  } else if (!status.paired) {
+    result.proxyState = "unpaired";
+  } else if (!status.unlocked || !status.attachAllowed) {
+    result.proxyState = "locked";
+  } else {
     try {
       await chrome.webAuthenticationProxy.attach();
-    } catch (error) {
-      console.warn("MyPass: passkey proxy attach failed", error);
+      result.proxyState = "active";
+    } catch (_) {
+      // A checked preference is not proof of interception. Another extension can own
+      // the proxy, and Chrome refuses attach() in that case. Expose that failure.
+      result.proxyState = "attachment-error";
     }
-    return;
   }
-  if (!status.enabled) {
-    await chrome.webAuthenticationProxy.detach().catch(() => {});
-  }
-  // enabled && !attachAllowed (locked): the lock already gates ceremonies via
-  // attachAllowed on every request, so neither attaching nor detaching is needed here.
+  return result;
 }
 
 async function attachPasskeyProxyIfEligible() {
-  if (!chrome.webAuthenticationProxy) return;
-  const status = await fetchPasskeyProxyStatus();
-  // App unreachable: nothing authoritative to sync against. Leave the cache and the
-  // current attach state untouched rather than guessing from the local flag.
-  if (!status) return;
-  await syncPasskeyProxyFromStatus(status);
+  if (proxyRefresh) return proxyRefresh;
+  proxyRefresh = withProxyOperation(async () => {
+    const status = await sendNativeMessageWithPairing({ type: "getPasskeyProxyStatus" });
+    const result = status && status.type === "passkeyProxyStatus"
+      ? await syncPasskeyProxyFromStatus(status)
+      : {
+        type: "passkeyProxyStatus", unlocked: false, paired: false,
+        proxyState: status && status.type === "pairingRequired" ? "unpaired" : "unavailable"
+      };
+    await reportBrowserDiagnostics(result);
+    return result;
+  });
+  try { return await proxyRefresh; } finally { proxyRefresh = null; }
+}
+
+// Optional diagnostics deliberately stay read-only. Chrome's password-saving setting
+// says nothing about OS passkey providers or password autofill, and getAll() cannot
+// reliably identify every manager. Never turn these observations into "exclusive".
+const KNOWN_PASSWORD_MANAGERS = new Set([
+  "nngceckbapebfimnlniiiahkandclblb", // Bitwarden
+  "aeblfdkhhhdcdjpifhhbdiojplfjncoa", // 1Password
+  "hdokiejnpimakedhajhdlcegeplioahd", // LastPass
+  "fdjamakpfbbddfjaooikfcpapjohcfmg", // Dashlane
+  "oboonakemofpalcgghocfoadofidjkkk", // KeePassXC
+  "pejdijmoenmkgeppbflobdenhhabjlaj" // iCloud Passwords (Apple Chrome Web Store listing)
+]);
+
+async function getBrowserManagerDiagnostics() {
+  const result = {
+    checked: false, permissionState: "unavailable", passwordSavingEnabled: null,
+    extensionScanState: "not-checked", extensions: []
+  };
+  try {
+    if (!chrome.permissions) return result;
+    const granted = await chrome.permissions.contains({ permissions: ["privacy", "management"] });
+    result.permissionState = granted ? "granted" : "not-granted";
+    if (!granted) return result;
+  } catch (_) { return result; }
+  result.checked = true;
+  try {
+    const setting = await chrome.privacy.services.passwordSavingEnabled.get({});
+    if (typeof setting.value === "boolean") result.passwordSavingEnabled = setting.value;
+  } catch (_) { /* unavailable settings stay unknown */ }
+  try {
+    const extensions = await chrome.management.getAll();
+    result.extensions = extensions.filter((extension) => extension.enabled && extension.id !== chrome.runtime.id
+      && (KNOWN_PASSWORD_MANAGERS.has(extension.id) || (extension.permissions || []).includes("webAuthenticationProxy")))
+      .map(({ name }) => ({ name }));
+    result.extensionScanState = "complete";
+  } catch (_) {
+    result.checked = false;
+    result.extensionScanState = "unavailable";
+  }
+  return result;
+}
+
+// Only observations leave the browser. A report cannot grant permission, change a
+// preference, unlock the vault or claim that every system provider was inspected.
+async function reportBrowserDiagnostics(status, diagnostics) {
+  const result = diagnostics || await getBrowserManagerDiagnostics();
+  const report = {
+    proxyState: status && status.proxyState || "unavailable",
+    permissionState: result.permissionState,
+    passwordSavingEnabled: result.passwordSavingEnabled,
+    extensionScanState: result.extensionScanState,
+    enabledManagers: result.extensions.slice(0, 20).map(({ name }) =>
+      Array.from(String(name).replace(/[\u0000-\u001f\u007f-\u009f]/g, "")).slice(0, 120).join("")
+    ).filter(Boolean)
+  };
+  try {
+    const response = await sendNativeMessageWithPairing({ type: "reportBrowserDiagnostics", report });
+    return !!(response && response.type === "acknowledged");
+  } catch (_) { return false; }
+}
+
+// tabs.create extension pages have sender.tab too. Permit only our own page origin;
+// a content script retains the website's sender.url and cannot open native settings.
+function isMyPassPage(sender) {
+  return !!(sender && sender.id === chrome.runtime.id && typeof sender.url === "string"
+    && sender.url.startsWith(chrome.runtime.getURL("")));
+}
+
+function showPasskeyBadge(text) {
+  if (chrome.action && chrome.action.setBadgeText) chrome.action.setBadgeText({ text }).catch(() => {});
 }
 
 function openPasskeyPopup() {
-  // No user gesture is required, but chrome.action.openPopup() rejects unless a Chrome
-  // window is OS-level focused. In the normal flow the user is on the page that started
-  // the ceremony, so this succeeds; the notification is the backgrounded-Chrome fallback.
+  showPasskeyBadge("KEY");
+  const notify = () => {
+    if (!chrome.notifications) return;
+    Promise.resolve(chrome.notifications.create("mypass-passkey", {
+      type: "basic", iconUrl: "icons/icon48.png", title: "MyPass",
+      message: "Passkey confirmation needed. Open the MyPass extension to continue."
+    })).catch(() => {});
+  };
   if (chrome.action && typeof chrome.action.openPopup === "function") {
-    chrome.action.openPopup().catch(() => {
-      chrome.notifications.create({
-        type: "basic",
-        iconUrl: "icons/icon48.png",
-        title: "MyPass",
-        message: "MyPass passkey confirmation needed"
-      });
-    });
-  }
+    chrome.action.openPopup().catch(notify);
+  } else notify();
 }
 
-// Clears the pending record only when it belongs to this requestId, so rejecting a
-// second concurrent ceremony cannot cancel the first one's bookkeeping.
+// Chrome rejects malformed responseJson without settling the website's request.
+// Keep the watchdog and UI reservation until Chrome acknowledges completion; a
+// native save alone does not mean the browser accepted the credential. Never log
+// responseJson or raw API errors here: they can contain credential material.
 async function completePasskeyRequest(kind, details) {
-  const pending = await readPending();
-  if (pending && pending.requestId === details.requestId) {
-    await clearPending();
-    chrome.alarms.clear(PASSKEY_WATCHDOG_ALARM);
+  const complete = kind === "create"
+    ? (value) => chrome.webAuthenticationProxy.completeCreateRequest(value)
+    : (value) => chrome.webAuthenticationProxy.completeGetRequest(value);
+  let completionError = null;
+  let acknowledged = false;
+  try {
+    await complete(details);
+    acknowledged = true;
+  } catch (_) {
+    completionError = {
+      name: "OperationError",
+      message: kind === "create"
+        ? "The browser could not finish passkey registration. A passkey may already be saved in MyPass. Cancel the website request and retry; check the website before replacing the local key."
+        : "The browser could not finish passkey sign-in. Cancel the website request and try again."
+    };
+    await withPasskeyState(async () => {
+      const pending = await readPending();
+      // Chrome can reject an old completion after canceling its request and
+      // delivering the next ceremony. A stale failure must not cover that UI or
+      // reappear after a cancellation; publish only while we still own the slot.
+      if (!pending || pending.requestId !== details.requestId || pending.kind !== kind) return;
+      await new Promise((resolve) => chrome.storage.session.set({
+        [PASSKEY_FAILURE_KEY]: { requestId: details.requestId, kind, error: completionError }
+      }, resolve));
+    });
+    try {
+      // A DOMException completion needs no credential JSON parsing and explicitly
+      // rejects navigator.credentials.create/get instead of leaving it spinning.
+      await complete({ requestId: details.requestId, error: completionError });
+      acknowledged = true;
+    } catch (_) {
+      // Chrome may have canceled the request, or the proxy may be unavailable.
+      // Keep our watchdog if it is still pending; never claim browser success.
+    }
   }
-  if (kind === "create") {
-    chrome.webAuthenticationProxy.completeCreateRequest(details);
-  } else {
-    chrome.webAuthenticationProxy.completeGetRequest(details);
-  }
+  await withPasskeyState(async () => {
+    const pending = await readPending();
+    if (acknowledged && pending && pending.requestId === details.requestId) {
+      await clearPending();
+      chrome.alarms.clear(PASSKEY_WATCHDOG_ALARM);
+      showPasskeyBadge("");
+    }
+  });
+  return completionError ? { error: completionError } : {};
 }
 
 async function handlePasskeyRequest(kind, requestId, requestDetailsJson) {
-  if (await readPending()) {
-    await completePasskeyRequest(kind, {
-      requestId,
-      error: { name: "AbortError", message: "Another passkey ceremony is already pending" }
-    });
-    return;
-  }
-
   const originUrl = originFromRequestDetails(requestDetailsJson);
   if (!originUrl) {
-    // Fail closed: without a trustworthy origin the app cannot run its domain check.
     await completePasskeyRequest(kind, {
-      requestId,
-      error: passkeyNotAllowedError("Could not determine the ceremony origin")
+      requestId, error: passkeyNotAllowedError("Could not determine the ceremony origin")
     });
     return;
   }
-
-  const messageType = kind === "create" ? "passkeyCreate" : "passkeyGet";
-  const response = await sendNativeMessageWithPairing({ type: messageType, requestId, requestDetailsJson, originUrl });
-
-  if (response && response.error) {
-    await completePasskeyRequest(kind, { requestId, error: response.error });
-    return;
-  }
-
-  if (response && (response.type === "passkeyCreatePending" || response.type === "passkeyGetPending")) {
-    await writePending({
-      kind,
-      requestId,
-      originUrl,
-      rpId: response.rpId,
-      rpName: response.rpName,
-      matches: response.matches || []
+  dispatchingPasskeys.add(requestId);
+  try {
+    // Reserve before the native round trip. All state transitions share a queue with
+    // cancellation/completion so simultaneous sites cannot overwrite each other, and
+    // a late native reply cannot resurrect a ceremony Chrome already canceled.
+    const reserved = await withPasskeyState(async () => {
+      if (await readPending() || cancelledPasskeys.has(requestId)) return false;
+      await new Promise((resolve) => chrome.storage.session.remove([PASSKEY_FAILURE_KEY], resolve));
+      await writePending({ kind, requestId, originUrl, phase: "checking" });
+      chrome.alarms.create(PASSKEY_WATCHDOG_ALARM, { delayInMinutes: PASSKEY_WATCHDOG_MS / 60000 });
+      return true;
     });
-    chrome.alarms.create(PASSKEY_WATCHDOG_ALARM, { delayInMinutes: PASSKEY_WATCHDOG_MS / 60000 });
-    openPasskeyPopup();
-    return;
+    if (!reserved) {
+      if (!cancelledPasskeys.has(requestId)) await completePasskeyRequest(kind, {
+        requestId, error: { name: "AbortError", message: "Another passkey ceremony is already pending" }
+      });
+      return;
+    }
+    const messageType = kind === "create" ? "passkeyCreate" : "passkeyGet";
+    const response = await sendNativeMessageWithPairing({ type: messageType, requestId, requestDetailsJson, originUrl });
+    const stillPending = await withPasskeyState(async () => {
+      const current = await readPending();
+      return !cancelledPasskeys.has(requestId) && current && current.requestId === requestId;
+    });
+    if (!stillPending) {
+      await sendNativeMessageWithPairing({ type: "passkeyCancel", requestId });
+      return;
+    }
+    if (response && response.error) {
+      await completePasskeyRequest(kind, { requestId, error: response.error });
+      return;
+    }
+    if (response && response.type === (kind === "create" ? "passkeyCreatePending" : "passkeyGetPending")) {
+      await withPasskeyState(async () => {
+        const current = await readPending();
+        if (cancelledPasskeys.has(requestId) || !current || current.requestId !== requestId) return;
+        await writePending({ kind, requestId, originUrl, rpId: response.rpId, rpName: response.rpName, matches: response.matches || [] });
+        if (!cancelledPasskeys.has(requestId)) openPasskeyPopup();
+      });
+      return;
+    }
+    const reason = !response ? "MyPass did not respond"
+      : response.type === "locked" ? "MyPass is locked"
+      : response.type === "pairingRequired" ? "MyPass is not paired with this browser"
+      : response.type === "error" ? "MyPass is unavailable"
+      : `Unexpected MyPass response: ${response.type}`;
+    await completePasskeyRequest(kind, { requestId, error: passkeyNotAllowedError(reason) });
+  } finally {
+    dispatchingPasskeys.delete(requestId);
+    cancelledPasskeys.delete(requestId);
   }
-
-  // Every other reply — `locked`, `pairingRequired`, `error`, an unknown type, or no
-  // reply at all — must still complete the request. Falling through here would hang the
-  // ceremony on the page with no watchdog armed, and `locked` is the most likely
-  // real-world reply.
-  const reason = !response ? "MyPass did not respond"
-    : response.type === "locked" ? "MyPass is locked"
-    : response.type === "pairingRequired" ? "MyPass is not paired with this browser"
-    : response.type === "error" ? "MyPass is unavailable"
-    : `Unexpected MyPass response: ${response.type}`;
-  await completePasskeyRequest(kind, { requestId, error: passkeyNotAllowedError(reason) });
 }
 
 // Answers `true` only while enabled AND unlocked; attached-but-locked answers `false`
@@ -470,17 +730,149 @@ async function answerIsUvpaa(requestId) {
 }
 
 async function setPasskeyProxyEnabled(message) {
-  await new Promise((resolve) => chrome.storage.local.set({ [PASSKEY_ENABLED_KEY]: !!message.enabled }, () => resolve()));
-  const response = await sendNativeMessageWithPairing(message);
-  if (message.enabled) {
-    await attachPasskeyProxyIfEligible();
-  } else if (chrome.webAuthenticationProxy) {
-    await chrome.webAuthenticationProxy.detach().catch(() => {});
+  return withProxyOperation(async () => {
+    const response = await sendNativeMessageWithPairing(message);
+    // A failed or refused setting change must not change interception or its cache.
+    if (response && response.type === "passkeyProxyEnabled") {
+      await writePasskeyProxyEnabledCache(response.enabled);
+      if (!response.enabled && chrome.webAuthenticationProxy) {
+        await chrome.webAuthenticationProxy.detach().catch(() => {});
+      } else {
+        const status = await fetchPasskeyProxyStatus();
+        if (status) await syncPasskeyProxyFromStatus(status);
+      }
+    }
+    return response;
+  });
+}
+
+// Address data is domain-independent, so content scripts must never request it.
+// Only our popup can start this two-step flow. A challenged content-script report
+// supplies Chrome's authenticated documentId before any native address is read.
+const addressScans = new Map();
+const addressTargets = new Map();
+const ADDRESS_TARGET_TTL_MS = 120000;
+
+function addressError(code) { return { type: 'error', code }; }
+function isAddressPopup(sender) {
+  return !!(sender && sender.id === chrome.runtime.id
+    && sender.url === chrome.runtime.getURL('popup.html'));
+}
+function activeAddressTab() {
+  return new Promise((resolve) => chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+    if (chrome.runtime.lastError) { resolve(null); return; }
+    const tab = tabs && tabs[0];
+    resolve(tab && typeof tab.id === 'number' && /^https?:\/\//.test(tab.url || '') ? tab : null);
+  }));
+}
+function sendAddressToDocument(target, message) {
+  return new Promise((resolve) => chrome.tabs.sendMessage(target.tabId, message,
+    { frameId: 0, documentId: target.documentId }, (response) => {
+      resolve(chrome.runtime.lastError ? addressError('address_page_changed') : response);
+    }));
+}
+async function prepareAddressFill() {
+  const tab = await activeAddressTab();
+  if (!tab) return addressError('address_no_form');
+  for (const [key, target] of addressTargets) {
+    if (Date.now() - target.at > ADDRESS_TARGET_TTL_MS) addressTargets.delete(key);
   }
-  return response;
+  if (addressTargets.size > 50 || addressScans.size > 10) return addressError('address_retry');
+  const challenge = crypto.randomUUID();
+  return new Promise((resolve) => {
+    const finish = (result) => {
+      clearTimeout(timer);
+      addressScans.delete(challenge);
+      resolve(result);
+    };
+    const timer = setTimeout(() => finish(addressError('address_no_form')), 5000);
+    addressScans.set(challenge, { tabId: tab.id, url: tab.url, finish });
+    chrome.tabs.sendMessage(tab.id, { type: 'queryAddressForm', url: tab.url, challenge },
+      { frameId: 0 }, () => {
+        if (chrome.runtime.lastError) finish(addressError('address_no_form'));
+      });
+  });
+}
+function acceptAddressReport(message, sender) {
+  const scan = addressScans.get(message.challenge);
+  if (!scan || !sender || sender.id !== chrome.runtime.id || !sender.tab
+    || sender.tab.id !== scan.tabId || sender.frameId !== 0 || !sender.documentId
+    || sender.url !== scan.url) return addressError('address_page_changed');
+  const forms = Array.isArray(message.forms) ? message.forms.filter((form) => form
+    && typeof form.id === 'string' && /^\d+$/.test(form.id)
+    && typeof form.label === 'string' && form.label.length <= 80
+    && Number.isInteger(form.fields) && form.fields > 0 && form.fields < 100
+    && typeof form.focused === 'boolean').slice(0, 30) : [];
+  if (!forms.length) {
+    scan.finish(addressError('address_no_form'));
+    return { type: 'ok' };
+  }
+  const target = { tabId: scan.tabId, url: scan.url, documentId: sender.documentId,
+    forms, at: Date.now(), challenge: message.challenge };
+  addressTargets.set(message.challenge, target);
+  scan.finish({ type: 'addressForms', token: message.challenge, url: scan.url, forms });
+  return { type: 'ok' };
+}
+async function fillSelectedAddress(message) {
+  const target = addressTargets.get(message.token);
+  addressTargets.delete(message.token); // never replay a user's confirmation
+  if (!target || Date.now() - target.at > ADDRESS_TARGET_TTL_MS
+    || typeof message.id !== 'string' || !target.forms.some((form) => form.id === message.groupId)) {
+    return addressError('address_page_changed');
+  }
+  const sameTab = (tab) => tab && tab.id === target.tabId && tab.url === target.url;
+  if (!sameTab(await activeAddressTab())) return addressError('address_page_changed');
+  const response = await sendNativeMessageWithPairing({ type: 'fillAddress', id: message.id, url: target.url });
+  if (!response || response.type !== 'address') {
+    if (response && ['locked', 'pairingRequired'].includes(response.type)) return response;
+    return addressError('address_unavailable');
+  }
+  if (!response.address || typeof response.address.id !== 'string'
+    || response.address.id.toLowerCase() !== message.id.toLowerCase()) return addressError('address_unavailable');
+  if (!sameTab(await activeAddressTab())) return addressError('address_page_changed');
+  const result = await sendAddressToDocument(target, { type: 'applyAddress', url: target.url,
+    challenge: target.challenge, groupId: message.groupId, address: response.address });
+  // Never forward arbitrary content-script/native data back to the popup.
+  return result && result.type === 'addressFilled' && Number.isInteger(result.filled) && result.filled > 0
+    ? { type: 'addressFilled', filled: result.filled }
+    : addressError(result && ['address_form_changed', 'address_no_values'].includes(result.code)
+      ? result.code : 'address_page_changed');
 }
 
 function handleRuntimeMessage(message, sender, sendResponse) {
+  if (message && message.type === 'addressFormReport') {
+    sendResponse(acceptAddressReport(message, sender));
+    return true;
+  }
+  if (message && ['prepareAddressFill', 'fillAddress'].includes(message.type)) {
+    if (!isAddressPopup(sender)) {
+      sendResponse(addressError('address_unauthorized'));
+      return true;
+    }
+    const operation = message.type === 'prepareAddressFill' ? prepareAddressFill() : fillSelectedAddress(message);
+    operation.then(sendResponse).catch(() => sendResponse(addressError('address_unavailable')));
+    return true;
+  }
+
+  if (sender && sender.tab && message && ["setPasskeyProxyEnabled", "passkeyCreateConfirm", "passkeyGetApprove", "passkeyCancelUI"].includes(message.type)) return false;
+  if (message && message.type === "openBrowserSettings") {
+    if (!isMyPassPage(sender)) return false;
+    sendNativeMessageWithPairing({ type: "openBrowserSettings" }).then(sendResponse);
+    return true;
+  }
+  if (message && message.type === "getBrowserManagerDiagnostics") {
+    if (sender && sender.tab && !isMyPassPage(sender)) return false;
+    getBrowserManagerDiagnostics().then(async (result) => {
+      const status = await attachPasskeyProxyIfEligible();
+      const reported = await reportBrowserDiagnostics(status, result);
+      sendResponse({ ...result, reported });
+    });
+    return true;
+  }
+  if (message && message.type === "getPasskeyProxyStatus") {
+    attachPasskeyProxyIfEligible().then(sendResponse);
+    return true;
+  }
   if (message && message.type === "openPopupForTotpPicker") {
     if (chrome.action && typeof chrome.action.openPopup === "function") {
       chrome.action.openPopup().catch(() => {});
@@ -513,6 +905,113 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     return false;
   }
 
+  // Extension-page only. A content script must not be able to read generator history.
+  // The list itself is in the vault.
+  if (message && message.type === "getGeneratedPasswordHistory") {
+    if (sender && sender.tab) {
+      sendResponse({ type: "generatedPasswordHistory", entries: [] });
+      return true;
+    }
+    migrateLocalPasswordHistory()
+      .then(() => sendNativeMessageWithPairing({ type: "getGeneratedPasswordHistory" }))
+      .then((response) => {
+        sendResponse(response && response.type ? response : { type: "error", message: "MyPass is unavailable." });
+      })
+      .catch(() => sendResponse({ type: "error", message: "MyPass is unavailable." }));
+    return true;
+  }
+
+  // Random, memorable, and PIN passwords are made in the extension page. Only
+  // that page may write them into history. A content script already gets its
+  // password from generatePassword, which records on its own.
+  if (message && message.type === "recordGeneratedPassword") {
+    if ((sender && sender.tab) || !message.password) {
+      sendResponse({ type: "error" });
+      return true;
+    }
+    migrateLocalPasswordHistory()
+      .then(() => recordVaultPasswordHistory(message.password, message.url || "", message.createdAt || Date.now()))
+      .then((response) => {
+        sendResponse(response && response.type === "ok" ? { type: "ok" } : (response || { type: "error" }));
+      });
+    return true;
+  }
+
+  if (message && message.type === "deleteGeneratedPassword") {
+    if ((sender && sender.tab) || !message.id) {
+      sendResponse({ type: "error" });
+      return true;
+    }
+    sendNativeMessageWithPairing({ type: "deleteGeneratedPassword", id: message.id })
+      .then((response) => {
+        sendResponse(response && response.type === "ok" ? { type: "ok" } : (response || { type: "error" }));
+      })
+      .catch(() => sendResponse({ type: "error" }));
+    return true;
+  }
+
+  // The generator window already shows the password. Autofill types that same
+  // value into the active site. It does not ask the app for a new one.
+  if (message && message.type === "fillGeneratedPassword") {
+    if ((sender && sender.tab) || !message.password) {
+      sendResponse({ type: "error" });
+      return true;
+    }
+    relayFillToActiveTab({ type: "generatedPassword", password: message.password }, message.url, sender);
+    sendResponse({ type: "generatedPasswordFilled" });
+    return true;
+  }
+
+  // The popup opened a tab for a vault row. The new tab's content script claims
+  // this record once it loads, because activeTab does not cover a tab the popup
+  // just created, so the popup cannot push the fill itself.
+  if (message && message.type === "armOpenAndFill") {
+    if (sender && sender.tab) {
+      sendResponse({ type: "error" });
+      return true;
+    }
+    if (typeof message.tabId !== "number" || !message.id || !message.url) {
+      sendResponse({ type: "error" });
+      return true;
+    }
+    chrome.storage.session.set({
+      [PENDING_OPEN_FILL_KEY]: {
+        tabId: message.tabId,
+        id: message.id,
+        url: message.url,
+        at: Date.now()
+      }
+    }, () => sendResponse({ type: "ok" }));
+    return true;
+  }
+
+  if (message && message.type === "claimPendingFill") {
+    if (!sender || !sender.tab || sender.frameId !== 0) {
+      sendResponse({ type: "none" });
+      return true;
+    }
+    chrome.storage.session.get([PENDING_OPEN_FILL_KEY], (stored) => {
+      const pending = stored && stored[PENDING_OPEN_FILL_KEY];
+      if (!pending || pending.tabId !== sender.tab.id || Date.now() - pending.at > PENDING_OPEN_FILL_TTL_MS) {
+        sendResponse({ type: "none" });
+        return;
+      }
+      if (!urlMatch.hostnameMatches(pending.url, message.url)) {
+        sendResponse({ type: "none" });
+        return;
+      }
+      chrome.storage.session.remove([PENDING_OPEN_FILL_KEY], () => {
+        sendNativeMessageWithPairing({ type: "fillCredential", id: pending.id, url: pending.url }).then((response) => {
+          if (response && response.type === "credential") {
+            sendApplyFill(sender.tab.id, response, pending.url);
+          }
+          sendResponse({ type: "ok" });
+        });
+      });
+    });
+    return true;
+  }
+
   if (!message || !knownTypes.includes(message.type)) {
     return false;
   }
@@ -524,21 +1023,44 @@ function handleRuntimeMessage(message, sender, sendResponse) {
 
   if (message.type === "passkeyCreateConfirm" || message.type === "passkeyGetApprove") {
     const kind = message.type === "passkeyCreateConfirm" ? "create" : "get";
-    sendNativeMessageWithPairing(message).then((response) => {
-      if (response && (response.type === "passkeyCreateComplete" || response.type === "passkeyGetComplete")) {
-        return completePasskeyRequest(kind, {
+    const completeType = kind === "create" ? "passkeyCreateComplete" : "passkeyGetComplete";
+    (async () => {
+      const claimed = await withPasskeyState(async () => {
+        const pending = await readPending();
+        if (!pending || pending.requestId !== message.requestId || pending.kind !== kind
+          || pending.phase === "checking" || pending.phase === "completing") return false;
+        await writePending({ ...pending, phase: "completing" });
+        return true;
+      });
+      if (!claimed) return { type: completeType, requestId: message.requestId,
+        error: passkeyNotAllowedError("This passkey request is no longer awaiting confirmation") };
+      const response = await sendNativeMessageWithPairing(message);
+      const pending = await readPending();
+      if (!pending || pending.requestId !== message.requestId || pending.kind !== kind) {
+        return { type: completeType, requestId: message.requestId,
+          error: passkeyNotAllowedError("The website canceled this passkey request. Try again on the website.") };
+      }
+      if (response && response.type === completeType && response.requestId === message.requestId) {
+        const result = await completePasskeyRequest(kind, {
           requestId: message.requestId,
           responseJson: response.responseJson,
           error: response.error
-        }).then(() => sendResponse(response));
+        });
+        return result.error ? { type: completeType, requestId: message.requestId, error: result.error } : response;
       }
       // The app refused (locked, pairing lost, no pending request). Complete the
       // ceremony anyway so the page is not left hanging on a popup that has closed.
-      return completePasskeyRequest(kind, {
+      const error = passkeyNotAllowedError("MyPass could not complete the passkey request. Unlock MyPass and try again on the website.");
+      const result = await completePasskeyRequest(kind, {
         requestId: message.requestId,
-        error: passkeyNotAllowedError("MyPass could not complete the passkey request")
-      }).then(() => sendResponse(response));
-    });
+        error
+      });
+      return { type: completeType, requestId: message.requestId, error: result.error || error };
+    })().catch(async () => {
+      const error = passkeyNotAllowedError("MyPass could not complete the passkey request. Try again on the website.");
+      const result = await completePasskeyRequest(kind, { requestId: message.requestId, error });
+      return { type: completeType, requestId: message.requestId, error: result.error || error };
+    }).then(sendResponse);
     return true;
   }
 
@@ -551,34 +1073,34 @@ function handleRuntimeMessage(message, sender, sendResponse) {
 
   if (message.type === "completePairing") {
     sendPairingCompletion(message).then((response) => {
+      attachPasskeyProxyIfEligible();
       sendResponse(response);
     });
     return true;
   }
 
+  if (message.type === "generatePassword") {
+    const preview = message.preview === true && !(sender && sender.tab);
+    readGeneratorSettings().then((settings) => {
+      // "Use by default for suggestions" replaces the app generator for the
+      // in-page Generate button and the popup's one-click Generate. Smart, and
+      // a generator window asking to preview a smart password, still go to the app.
+      if (!preview && settings.useAsDefault && settings.type !== "smart") {
+        const password = passwordGenerator.generateFromSettings(settings);
+        deliverGeneratedOrFilled(
+          message, sender, sendResponse, { type: "generatedPassword", password: password }, false
+        );
+        return;
+      }
+      sendNativeMessageWithPairing(message).then((response) => {
+        deliverGeneratedOrFilled(message, sender, sendResponse, response, preview);
+      });
+    });
+    return true;
+  }
+
   sendNativeMessageWithPairing(message).then((response) => {
-    if (message.type === "fillCredential" && response && response.type === "credential") {
-      relayFillToActiveTab(response, message.url, sender);
-      sendResponse(stripCredentialSecrets(response));
-      return;
-    }
-    // The popup has no DOM access to the page at all, so a generated password reaching
-    // it has nowhere to go except this same relay fillCredential already uses — hostname
-    // pre-check included. Gated on !sender.tab (a content script's sender always carries
-    // sender.tab; the popup's never does, exactly the signal resolveSenderFillTarget
-    // already keys on) so a content-script-originated generatePassword is never ALSO
-    // relayed here: that script already wrote the password straight into the field the
-    // user clicked (content.js's own setNativeValue fill), and relaying it a second time
-    // would be exactly the "second way to write a value into a page" Task 13 ruled out.
-    if (message.type === "generatePassword" && response && response.type === "generatedPassword" && !sender.tab) {
-      relayFillToActiveTab(response, message.url, sender);
-      // Stripped, exactly like the fillCredential branch above: the secret has gone to
-      // the content script, and the popup branches on this shape rather than on the
-      // presence of a password it should never have been handed.
-      sendResponse(stripCredentialSecrets(response));
-      return;
-    }
-    sendResponse(response);
+    deliverGeneratedOrFilled(message, sender, sendResponse, response, false);
   });
 
   return true; // keep the message channel open for the async sendNativeMessage response
@@ -603,19 +1125,27 @@ if (typeof chrome !== "undefined" && chrome.webAuthenticationProxy) {
   });
 
   chrome.webAuthenticationProxy.onRequestCanceled.addListener((requestId) => {
-    readPending().then((pending) => {
+    if (dispatchingPasskeys.has(requestId)) cancelledPasskeys.add(requestId);
+    withPasskeyState(async () => {
+      const pending = await readPending();
       if (pending && pending.requestId === requestId) {
-        clearPending();
+        await clearPending();
         chrome.alarms.clear(PASSKEY_WATCHDOG_ALARM);
+        showPasskeyBadge("");
       }
     });
     sendNativeMessageWithPairing({ type: "passkeyCancel", requestId }).catch(() => {});
   });
 
   chrome.alarms.onAlarm.addListener((alarm) => {
+    if (alarm.name === PASSKEY_REFRESH_ALARM) {
+      attachPasskeyProxyIfEligible();
+      return;
+    }
     if (alarm.name !== PASSKEY_WATCHDOG_ALARM) return;
     readPending().then((pending) => {
       if (!pending) return;
+      sendNativeMessageWithPairing({ type: "passkeyCancel", requestId: pending.requestId });
       completePasskeyRequest(pending.kind, {
         requestId: pending.requestId,
         error: passkeyNotAllowedError("Timed out waiting for confirmation")
@@ -623,13 +1153,40 @@ if (typeof chrome !== "undefined" && chrome.webAuthenticationProxy) {
     });
   });
 
+  // Alarms survive worker suspension but may be cleared by a browser restart.
+  // Recreate only when absent so frequent worker starts do not postpone the retry.
+  if (chrome.alarms.get) chrome.alarms.get(PASSKEY_REFRESH_ALARM).then((alarm) => {
+    if (!alarm) chrome.alarms.create(PASSKEY_REFRESH_ALARM, { periodInMinutes: 0.5 });
+  });
+  if (chrome.runtime.onStartup) chrome.runtime.onStartup.addListener(attachPasskeyProxyIfEligible);
+  if (chrome.notifications && chrome.notifications.onClicked) {
+    chrome.notifications.onClicked.addListener((id) => {
+      if (id === "mypass-passkey") openPasskeyPopup();
+    });
+  }
   attachPasskeyProxyIfEligible();
+}
+
+if (typeof chrome !== "undefined" && chrome.runtime) {
+  const diagnosticEvents = [];
+  if (chrome.permissions) diagnosticEvents.push(chrome.permissions.onAdded, chrome.permissions.onRemoved);
+  if (chrome.management) diagnosticEvents.push(chrome.management.onEnabled, chrome.management.onDisabled,
+    chrome.management.onInstalled, chrome.management.onUninstalled);
+  if (chrome.privacy && chrome.privacy.services && chrome.privacy.services.passwordSavingEnabled) {
+    diagnosticEvents.push(chrome.privacy.services.passwordSavingEnabled.onChange);
+  }
+  diagnosticEvents.forEach((event) => {
+    if (event) event.addListener(() => { attachPasskeyProxyIfEligible().catch(() => {}); });
+  });
 }
 
 if (typeof module !== "undefined") {
   module.exports = {
     PAIRING_STORAGE_KEY,
     PASSKEY_WATCHDOG_ALARM,
+    PASSKEY_REFRESH_ALARM,
+    getBrowserManagerDiagnostics,
+    reportBrowserDiagnostics,
     PENDING_KEY,
     knownTypes,
     attachPasskeyProxyIfEligible,
@@ -648,7 +1205,7 @@ if (typeof module !== "undefined") {
     detectBrowserName,
     sendPairingCompletion,
     handleRuntimeMessage,
-    hostnameMatches,
+    hostnameMatches: urlMatch.hostnameMatches,
     resolveSenderFillTarget,
     relayFillToActiveTab
   };

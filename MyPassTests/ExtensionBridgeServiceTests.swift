@@ -74,6 +74,68 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         return (service, store, manager)
     }
 
+    private func addAddressFixture() -> KdbxEntry {
+        let entry = AddressEntryEditing.savedEntry(existing: nil, title: "Home", address: ExtensionAddress(
+            fullName: "Ada Example", addressLine1: "12 Example Street", city: "Warsaw", countryCode: "PL", countryName: "Poland"
+        ), favorite: false, notes: "")
+        session.mutate { $0.rootGroup.entries.append(entry) }
+        return entry
+    }
+
+    func testOnlyServedAddressFillResetsIdleTimer() throws {
+        let entry = addAddressFixture()
+        let recorder = SpyAutoLockActivityRecorder()
+        let manager = ExtensionPairingManager(store: InMemoryExtensionPairingStore())
+        let pairing = try XCTUnwrap(manager.completePairing(code: manager.startPairing(browser: "Address test")))
+        let notifying = ExtensionBridgeService(vaultSession: session, pairingManager: manager, autoLockActivityRecorder: recorder)
+        XCTAssertEqual(notifying.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: "https://shop.example", pairing: nil)), .pairingRequired)
+        XCTAssertEqual(recorder.recordActivityCallCount, 0)
+        XCTAssertEqual(notifying.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: "https://shop.example", pairing: pairing)), .address(entry.address))
+        XCTAssertEqual(recorder.recordActivityCallCount, 1)
+        _ = notifying.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: "file:///tmp/form.html", pairing: pairing))
+        XCTAssertEqual(recorder.recordActivityCallCount, 1)
+    }
+
+    func testAddressFillRequiresPairingAndUnlockedVault() {
+        let entry = addAddressFixture()
+        let unpaired = service.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: "https://shop.example", pairing: nil))
+        XCTAssertEqual(unpaired, .pairingRequired)
+        session.lock()
+        XCTAssertEqual(service.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: "https://shop.example", pairing: authorizedPairingSecret)), .locked)
+    }
+
+    func testAddressFillIsGlobalButRejectsNonWebsiteURLsWrongTypesAndDeletedEntries() {
+        let entry = addAddressFixture()
+        for url in ["https://shop.example/checkout", "https://another.example/account"] {
+            XCTAssertEqual(service.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: url, pairing: authorizedPairingSecret)), .address(entry.address))
+        }
+        for url in ["file:///tmp/form.html", "javascript:alert(1)", "chrome://settings", "https:///", "https://user:password@shop.example", "shop.example"] {
+            guard case .error = service.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: url, pairing: authorizedPairingSecret)) else {
+                return XCTFail("Accepted invalid destination: \(url)")
+            }
+        }
+        let loginID = addFixtureEntry(title: "Login", username: "user", password: "secret", url: "https://shop.example")
+        XCTAssertEqual(service.handle(.fillAddress(token: "t", id: loginID.uuidString, url: "https://shop.example", pairing: authorizedPairingSecret)), .error("Address not found"))
+        moveEntryToRecycleBin(entry.uuid)
+        XCTAssertEqual(service.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: "https://shop.example", pairing: authorizedPairingSecret)), .error("Address not found"))
+    }
+
+    func testAddressBrowseIsSummaryOnlyAndNeverAWebsiteCredential() {
+        var entry = addAddressFixture()
+        entry.url = "https://shop.example"
+        session.mutate { EntryPersistence.replaceEntry(entry, in: $0.rootGroup) }
+        guard case .credentialList(let rows) = service.handle(.listEntries(token: "t", category: "addresses", pairing: authorizedPairingSecret)) else {
+            return XCTFail("Expected address list")
+        }
+        XCTAssertEqual(rows.count, 1)
+        XCTAssertEqual(rows.first?.entryType, "Address")
+        XCTAssertEqual(rows.first?.username, "Ada Example")
+        XCTAssertEqual(service.handle(.getCredentials(token: "t", url: "https://shop.example", pairing: authorizedPairingSecret)), .credentialList([]))
+        XCTAssertEqual(service.handle(.fillCredential(token: "t", id: entry.uuid.uuidString, url: "https://shop.example", pairing: authorizedPairingSecret)), .error("entry not found or domain mismatch"))
+        moveEntryToRecycleBin(entry.uuid)
+        XCTAssertEqual(service.handle(.listEntries(token: "t", category: "addresses", pairing: authorizedPairingSecret)), .credentialList([]))
+    }
+
     func testStartPairingReturnsLockedWhenVaultIsLocked() {
         session.lock()
         let (service, _, _) = makeServiceWithPairing()
@@ -149,6 +211,286 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(summaries.count, 1)
         XCTAssertEqual(summaries[0].title, "Example")
         XCTAssertEqual(summaries[0].username, "alice")
+    }
+
+    func testGetFavoritesReturnsOnlyFavoritesWithTheirUrl() {
+        let plain = addFixtureEntry(title: "Plain", username: "pat", password: "pw", url: "https://plain.example")
+        let zebra = addFixtureEntry(title: "zebra", username: "z", password: "pw", url: "https://zebra.example")
+        let alpha = addFixtureEntry(title: "Alpha", username: "a", password: "pw", url: "https://alpha.example")
+        let binned = addFixtureEntry(title: "Binned", username: "b", password: "pw", url: "https://binned.example")
+        let never = addFixtureEntry(title: "Never", username: "n", password: "pw", url: "https://never.example")
+        session.mutate { db in
+            for id in [zebra, alpha, binned, never] {
+                guard let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) else { continue }
+                db.rootGroup.entries[index].isFavorite = true
+            }
+            guard let neverIndex = db.rootGroup.entries.firstIndex(where: { $0.uuid == never }) else { return }
+            db.rootGroup.entries[neverIndex].uriMatchMode = .never
+        }
+        moveEntryToRecycleBin(binned)
+
+        let response = service.handle(.getFavorites(token: "t", pairing: authorizedPairingSecret))
+        guard case .credentialList(let summaries) = response else {
+            return XCTFail("expected credentialList, got \(response)")
+        }
+        XCTAssertEqual(summaries.map(\.title), ["Alpha", "zebra"])
+        XCTAssertEqual(summaries.map(\.username), ["a", "z"])
+        XCTAssertEqual(summaries.map(\.url), ["https://alpha.example", "https://zebra.example"])
+        XCTAssertFalse(summaries.contains { $0.id == plain.uuidString })
+    }
+
+    func testGetFavoritesReturnsPairingRequiredWithoutSecret() {
+        _ = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        let (service, _, _) = makeServiceWithPairing()
+        XCTAssertEqual(service.handle(.getFavorites(token: "t", pairing: nil)), .pairingRequired)
+    }
+
+    func testGetFavoritesReturnsLockedWhenVaultIsLocked() {
+        session.lock()
+        XCTAssertEqual(
+            service.handle(.getFavorites(token: "t", pairing: authorizedPairingSecret)),
+            .locked
+        )
+    }
+
+    func testListEntriesSplitsCategoriesAndSearchFindsTheLogin() {
+        let login = addFixtureEntry(title: "Alpha Mail", username: "ada", password: "pw", url: "https://alpha.example")
+        session.mutate { db in
+            guard let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == login }) else { return }
+            db.rootGroup.entries[index].isFavorite = true
+        }
+        _ = addFixtureEntry(title: "Plain", username: "pat", password: "pw", url: "https://plain.example")
+        let now = Date()
+        var card = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now,
+            history: []
+        )
+        card.title = "Visa"
+        card.entryType = .card
+        var note = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now,
+            history: []
+        )
+        note.title = "Wifi"
+        note.entryType = .notes
+        note.notesBody = "lobby"
+        session.mutate { db in
+            db.rootGroup.entries.append(card)
+            db.rootGroup.entries.append(note)
+        }
+
+        guard case .credentialList(let favorites) = service.handle(.listEntries(token: "t", category: "favorites", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected favorites")
+        }
+        XCTAssertEqual(favorites.map(\.title), ["Alpha Mail"])
+
+        guard case .credentialList(let cards) = service.handle(.listEntries(token: "t", category: "cards", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected cards")
+        }
+        XCTAssertEqual(cards.map(\.title), ["Visa"])
+        XCTAssertEqual(cards.first?.entryType, "Card")
+
+        guard case .credentialList(let notes) = service.handle(.listEntries(token: "t", category: "notes", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected notes")
+        }
+        XCTAssertEqual(notes.map(\.title), ["Wifi"])
+
+        guard case .credentialList(let found) = service.handle(.searchEntries(token: "t", query: "lobby", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected search results")
+        }
+        XCTAssertEqual(found.map(\.title), ["Wifi"])
+
+        XCTAssertEqual(
+            service.handle(.listEntries(token: "t", category: "nope", pairing: authorizedPairingSecret)),
+            .error("unknown category")
+        )
+        XCTAssertEqual(
+            service.handle(.searchEntries(token: "t", query: "   ", pairing: authorizedPairingSecret)),
+            .credentialList([])
+        )
+    }
+
+    func testCreateEntryAddsALoginTheSearchCanFind() {
+        let response = service.handle(.createEntry(
+            token: "t", entryType: "Login", title: "Created", username: "ada", password: "s3cret",
+            url: "https://created.example", cardNumber: "", cardholderName: "", expiry: "",
+            cvv: "", notes: "", favorite: false, match: "", otp: "", pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .entryCreated)
+        guard case .credentialList(let found) = service.handle(.searchEntries(token: "t", query: "Created", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected the new login in search")
+        }
+        XCTAssertEqual(found.map(\.title), ["Created"])
+        XCTAssertEqual(found.first?.username, "ada")
+        XCTAssertEqual(found.first?.url, "https://created.example")
+        guard case .credentialList(let logins) = service.handle(.listEntries(token: "t", category: "logins", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected logins")
+        }
+        XCTAssertTrue(logins.contains { $0.title == "Created" })
+    }
+
+    func testPasskeysCategoryAndMetadataAgreeAndExcludeTrashAndHistory() {
+        let only = addFixtureEntry(title: "A passkey only", username: "alice", password: "", url: "https://example.com")
+        let mixed = addFixtureEntry(title: "B mixed login", username: "bob", password: "pw", url: "https://example.com")
+        let incomplete = addFixtureEntry(title: "C incomplete", username: "carol", password: "pw", url: "https://example.com")
+        let deleted = addFixtureEntry(title: "Deleted", username: "d", password: "", url: "https://example.com")
+        attachPasskey(to: only)
+        attachPasskey(to: mixed)
+        attachPasskey(to: incomplete, credentialId: nil)
+        attachPasskey(to: deleted)
+        moveEntryToRecycleBin(deleted)
+        session.mutate { db in
+            PasswordGeneratorHistoryStore.record(password: "generated", url: "https://example.com", createdAt: Date(), in: &db)
+            let history = db.rootGroup.subgroups.first { PasswordGeneratorHistoryStore.isHistoryGroup($0) }!
+            history.entries[0].passkeyCredentialId = Data([1])
+            history.entries[0].passkeyPrivateKeyPEM = "fixture-key"
+        }
+
+        guard case .credentialList(let passkeys) = service.handle(.listEntries(
+            token: "t", category: "passkeys", pairing: authorizedPairingSecret
+        )) else { return XCTFail("expected passkeys category") }
+        XCTAssertEqual(passkeys.map(\.id), [only.uuidString, mixed.uuidString])
+        XCTAssertTrue(passkeys.allSatisfy(\.hasPasskey))
+        for request in [
+            ExtensionBridgeRequest.listEntries(token: "t", category: "all", pairing: authorizedPairingSecret),
+            .getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret)
+        ] {
+            guard case .credentialList(let entries) = service.handle(request) else { return XCTFail("expected entries") }
+            XCTAssertEqual(entries.first { $0.id == incomplete.uuidString }?.hasPasskey, false)
+            XCTAssertEqual(entries.first { $0.id == only.uuidString }?.hasPasskey, true)
+        }
+    }
+
+    func testPasskeysCategoryRequiresPairingAndUnlockedVault() {
+        XCTAssertEqual(service.handle(.listEntries(token: "t", category: "passkeys", pairing: nil)), .pairingRequired)
+        session.lock()
+        XCTAssertEqual(service.handle(.listEntries(token: "t", category: "passkeys", pairing: authorizedPairingSecret)), .locked)
+    }
+
+    func testCreateEntryRejectsABlankTitle() {
+        XCTAssertEqual(
+            service.handle(.createEntry(
+                token: "t", entryType: "Login", title: "  ", username: "", password: "",
+                url: "", cardNumber: "", cardholderName: "", expiry: "", cvv: "", notes: "",
+                favorite: false, match: "", otp: "", pairing: authorizedPairingSecret
+            )),
+            .error("title required")
+        )
+    }
+
+    func testCreateEntryKeepsFavoriteMatchNotesAndOneTimePassword() {
+        let response = service.handle(.createEntry(
+            token: "t", entryType: "Login", title: "Created", username: "ada", password: "s3cret",
+            url: "https://created.example/login", cardNumber: "", cardholderName: "", expiry: "",
+            cvv: "", notes: "lobby", favorite: true, match: "host", otp: "JBSWY3DPEHPK3PXP",
+            pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .entryCreated)
+        let entry = session.currentDatabase?.rootGroup.entries.first { $0.title == "Created" }
+        XCTAssertEqual(entry?.isFavorite, true)
+        XCTAssertEqual(entry?.uriMatchMode, .host)
+        XCTAssertEqual(entry?.notes, "lobby")
+        XCTAssertEqual(entry?.totpSecretBase32, "JBSWY3DPEHPK3PXP")
+        XCTAssertEqual(entry?.login, "ada")
+
+        guard case .credentialList(let favorites) = service.handle(.getFavorites(token: "t", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected favorites")
+        }
+        XCTAssertTrue(favorites.contains { $0.title == "Created" })
+
+        guard let id = entry?.uuid.uuidString else {
+            return XCTFail("expected the created entry")
+        }
+        guard case .credential(let username, _, let totp) = service.handle(.fillCredential(
+            token: "t", id: id, url: "https://created.example/login", pairing: authorizedPairingSecret
+        )) else {
+            return XCTFail("expected a fill")
+        }
+        XCTAssertEqual(username, "ada")
+        XCTAssertEqual(totp?.count, 6)
+    }
+
+    func testCreateEntryDecodesAnOtpauthSecret() {
+        let response = service.handle(.createEntry(
+            token: "t", entryType: "Login", title: "Otp", username: "ada", password: "s3cret",
+            url: "https://otp.example", cardNumber: "", cardholderName: "", expiry: "",
+            cvv: "", notes: "", favorite: false, match: "nope",
+            otp: "otpauth://totp/Ada?secret=JBSWY3DPEHPK3PXP&issuer=Ada",
+            pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(response, .entryCreated)
+        let entry = session.currentDatabase?.rootGroup.entries.first { $0.title == "Otp" }
+        XCTAssertEqual(entry?.totpSecretBase32, "JBSWY3DPEHPK3PXP")
+        XCTAssertEqual(entry?.uriMatchMode, .registrableDomain)
+    }
+
+    func testCreateEntryNeverModeStaysOutOfFavorites() {
+        XCTAssertEqual(
+            service.handle(.createEntry(
+                token: "t", entryType: "Login", title: "Hidden", username: "ada", password: "s3cret",
+                url: "https://hidden.example", cardNumber: "", cardholderName: "", expiry: "",
+                cvv: "", notes: "", favorite: true, match: "never", otp: "",
+                pairing: authorizedPairingSecret
+            )),
+            .entryCreated
+        )
+        guard case .credentialList(let favorites) = service.handle(.getFavorites(token: "t", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected favorites")
+        }
+        XCTAssertFalse(favorites.contains { $0.title == "Hidden" })
+        guard case .credentialList(let logins) = service.handle(.listEntries(token: "t", category: "logins", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected logins")
+        }
+        XCTAssertTrue(logins.contains { $0.title == "Hidden" })
+    }
+
+    func testCreateEntryLoginTitleFallsBackToTheRegistrableDomain() {
+        XCTAssertEqual(
+            service.handle(.createEntry(
+                token: "t", entryType: "Login", title: "  ", username: "", password: "",
+                url: "https://login.example.com/path", cardNumber: "", cardholderName: "", expiry: "",
+                cvv: "", notes: "", favorite: false, match: "", otp: "",
+                pairing: authorizedPairingSecret
+            )),
+            .entryCreated
+        )
+        XCTAssertTrue(session.currentDatabase?.rootGroup.entries.contains { $0.title == "example.com" } == true)
+    }
+
+    func testCreateEntryCardUsesTheCardholderWhenTheTitleIsBlank() {
+        XCTAssertEqual(
+            service.handle(.createEntry(
+                token: "t", entryType: "Card", title: "", username: "", password: "",
+                url: "", cardNumber: "4242 4242 4242 4242", cardholderName: "Ada Lovelace", expiry: "12/30",
+                cvv: "123", notes: "", favorite: false, match: "", otp: "",
+                pairing: authorizedPairingSecret
+            )),
+            .entryCreated
+        )
+        let entry = session.currentDatabase?.rootGroup.entries.first { $0.title == "Ada Lovelace" }
+        XCTAssertEqual(entry?.entryType, .card)
+        XCTAssertEqual(entry?.cardNumber, "4242424242424242")
+        XCTAssertEqual(entry?.login, "Ada Lovelace")
+        XCTAssertEqual(entry?.expiryDate, "12/30")
+        XCTAssertEqual(entry?.cvv, "123")
+    }
+
+    func testCreateEntryNoteStoresTheBodyAndFavorite() {
+        XCTAssertEqual(
+            service.handle(.createEntry(
+                token: "t", entryType: "Notes", title: "Wifi", username: "", password: "",
+                url: "", cardNumber: "", cardholderName: "", expiry: "",
+                cvv: "", notes: "lobby password", favorite: true, match: "", otp: "",
+                pairing: authorizedPairingSecret
+            )),
+            .entryCreated
+        )
+        let entry = session.currentDatabase?.rootGroup.entries.first { $0.title == "Wifi" }
+        XCTAssertEqual(entry?.entryType, .notes)
+        XCTAssertEqual(entry?.notesBody, "lobby password")
+        XCTAssertEqual(entry?.isFavorite, true)
     }
 
     func testGetCredentialsExcludesNonMatchingDomain() {
@@ -548,14 +890,20 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     /// unchanged. Call sites that vary `originUrl` (localhost fixtures, the no-match fixture)
     /// pass a matching `origin` explicitly, exactly like `background.js` stamps the two
     /// fields from the same source and the app now checks they agree.
-    private func createFixtureRequestJSON(rpId: String = "example.com", origin: String = "https://example.com") -> String {
-        """
+    private func createFixtureRequestJSON(
+        rpId: String = "example.com", origin: String = "https://example.com", excludeCredentials: [Data] = []
+    ) -> String {
+        let excluded = excludeCredentials
+            .map { "{ \"type\": \"public-key\", \"id\": \"\(PasskeyBase64URL.encode($0))\" }" }
+            .joined(separator: ", ")
+        return """
         {
           "challenge": "\(PasskeyBase64URL.encode(Data([1, 2, 3, 4])))",
           "rp": { "id": "\(rpId)", "name": "Example" },
           "user": { "id": "\(PasskeyBase64URL.encode(Data([9, 9])))", "name": "alice", "displayName": "Alice" },
           "pubKeyCredParams": [{ "type": "public-key", "alg": -7 }],
           "attestation": "none",
+          "excludeCredentials": [\(excluded)],
           "extensions": { "remoteDesktopClientOverride": { "origin": "\(origin)" } }
         }
         """
@@ -636,7 +984,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         )
     }
 
-    func testGetCredentialsSetsHasPasskeyTrueWhenPrivateKeyPresent() {
+    func testGetCredentialsSetsHasPasskeyTrueWhenCredentialIDAndPrivateKeyPresent() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         attachPasskey(to: id)
         let response = service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret))
@@ -656,6 +1004,65 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(rpId, "example.com")
         XCTAssertEqual(rpName, "Example")
         XCTAssertTrue(matches.isEmpty)
+    }
+
+    func testExcludedPasskeyIsRevealedOnlyAfterConsentAndNeverReplaced() {
+        let id = addFixtureEntry(title: "Existing", username: "alice", password: "password", url: "https://example.com")
+        let credentialID = Data([0xfb, 0xff, 0x01])
+        attachPasskey(to: id, pem: "original-key", credentialId: credentialID)
+        let request = createFixtureRequestJSON(excludeCredentials: [credentialID])
+        guard case .passkeyCreatePending = service.handle(.passkeyCreate(
+            token: "t", requestId: 70, requestDetailsJson: request,
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        )) else { return XCTFail("page-triggered request must still wait for consent") }
+
+        guard case .passkeyCreateComplete(_, let responseJSON, let error) = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 70, entryId: id.uuidString, replace: true, pairing: authorizedPairingSecret
+        )) else { return XCTFail("expected complete") }
+
+        XCTAssertNil(responseJSON)
+        XCTAssertEqual(error?.name, "InvalidStateError")
+        let entries = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup)
+        XCTAssertEqual(entries.count, 1)
+        XCTAssertEqual(entries.first?.passkeyPrivateKeyPEM, "original-key")
+        XCTAssertEqual(entries.first?.passkeyCredentialId, credentialID)
+        guard case .passkeyCreateComplete(_, _, let retryError) = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 70, entryId: nil, replace: false, pairing: authorizedPairingSecret
+        )) else { return XCTFail("expected complete") }
+        XCTAssertEqual(retryError?.message, "No pending request")
+    }
+
+    func testExcludedPasskeyAddedWhileConfirmationIsOpenPreventsNewCredential() {
+        let credentialID = Data([1, 2, 3])
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 71, requestDetailsJson: createFixtureRequestJSON(excludeCredentials: [credentialID]),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        let id = addFixtureEntry(title: "Arrived from sync", username: "alice", password: "", url: "https://example.com")
+        attachPasskey(to: id, credentialId: credentialID)
+        session.mutate { db in db.rootGroup.entries[0].uriMatchMode = .never }
+
+        guard case .passkeyCreateComplete(_, let responseJSON, let error) = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 71, entryId: nil, replace: false, pairing: authorizedPairingSecret
+        )) else { return XCTFail("expected complete") }
+        XCTAssertNil(responseJSON)
+        XCTAssertEqual(error?.name, "InvalidStateError")
+        XCTAssertEqual(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).count, 1)
+    }
+
+    func testExcludedCredentialForAnotherRPDoesNotBlockRegistration() {
+        let id = addFixtureEntry(title: "Other RP", username: "alice", password: "", url: "https://other.example")
+        attachPasskey(to: id, rpId: "other.example", credentialId: Data([1, 2, 3]))
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: 72, requestDetailsJson: createFixtureRequestJSON(excludeCredentials: [Data([1, 2, 3])]),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, let responseJSON, let error) = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: 72, entryId: nil, replace: false, pairing: authorizedPairingSecret
+        )) else { return XCTFail("expected complete") }
+        XCTAssertNotNil(responseJSON)
+        XCTAssertNil(error)
+        XCTAssertEqual(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).count, 2)
     }
 
     // MARK: - Passkey origin validation
@@ -1306,6 +1713,23 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(recorder.recordActivityCallCount, 0, "background status polling must not reset the idle timer")
     }
 
+    func testAuthorizedPasskeyStatusPollingDoesNotResetIdleOrUnlockTheVault() throws {
+        let recorder = SpyAutoLockActivityRecorder()
+        let manager = ExtensionPairingManager(store: InMemoryExtensionPairingStore())
+        let code = manager.startPairing(browser: "Status test")
+        let pairing = try XCTUnwrap(manager.completePairing(code: code))
+        let notifying = ExtensionBridgeService(
+            vaultSession: session, pairingManager: manager, autoLockActivityRecorder: recorder
+        )
+        XCTAssertEqual(notifying.handle(.getPasskeyProxyStatus(token: "t", pairing: pairing)),
+                       .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true, enabled: true))
+        session.lock()
+        XCTAssertEqual(notifying.handle(.getPasskeyProxyStatus(token: "t", pairing: pairing)),
+                       .passkeyProxyStatus(unlocked: false, paired: true, attachAllowed: false, enabled: true))
+        XCTAssertNil(session.currentDatabase)
+        XCTAssertEqual(recorder.recordActivityCallCount, 0)
+    }
+
     func testGeneratePasswordReturnsLockedWhenVaultIsLocked() {
         session.lock()
         let response = service.handle(.generatePassword(token: "t", domain: "example.com", pairing: authorizedPairingSecret))
@@ -1414,6 +1838,107 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             response,
             .error("Your password generator has no character types enabled. Turn on at least one in Settings and try again.")
         )
+    }
+
+    func testGeneratedPasswordHistoryLivesInTheVaultAndStaysOutOfTheBrowserLists() {
+        let loginID = addFixtureEntry(title: "GitLab", username: "ada", password: "saved", url: "https://gitlab.com/login")
+        let before = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).count
+
+        let recorded = service.handle(.recordGeneratedPassword(
+            token: "t", password: "generated-secret", url: "https://gitlab.com/login",
+            createdAt: 1_700_000_100_000, pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(recorded, .acknowledged)
+
+        let root = session.currentDatabase!.rootGroup
+        XCTAssertEqual(EntrySearch.allEntries(in: root).count, before, "history rows are not vault logins")
+        XCTAssertFalse(EntrySearch.allEntries(in: root).contains(where: { $0.password == "generated-secret" }))
+        let group = root.subgroups.first { PasswordGeneratorHistoryStore.isHistoryGroup($0) }
+        XCTAssertEqual(group?.name, PasswordGeneratorHistoryStore.groupName)
+        XCTAssertEqual(group?.entries.count, 1)
+        XCTAssertEqual(group?.entries.first?.password, "generated-secret")
+        XCTAssertEqual(group?.entries.first?.title, "gitlab.com")
+        XCTAssertEqual(group?.entries.first?.uriMatchMode, .never)
+        XCTAssertEqual(group?.entries.first?.fields.first { $0.key == "Password" }?.isProtected, true)
+        XCTAssertFalse(
+            GroupTreeOperations.selectableGroups(in: root, excludingRecycleBin: nil)
+                .contains { PasswordGeneratorHistoryStore.isHistoryGroup($0) }
+        )
+
+        let matches = service.handle(.getCredentials(
+            token: "t", url: "https://gitlab.com/login", pairing: authorizedPairingSecret
+        ))
+        guard case .credentialList(let credentials) = matches else { return XCTFail("expected credentials") }
+        XCTAssertEqual(credentials.map(\.id), [loginID.uuidString])
+
+        let listed = service.handle(.getGeneratedPasswordHistory(token: "t", pairing: authorizedPairingSecret))
+        guard case .passwordHistory(let items) = listed else { return XCTFail("expected history") }
+        XCTAssertEqual(items.count, 1)
+        XCTAssertEqual(items[0].password, "generated-secret")
+        XCTAssertEqual(items[0].url, "https://gitlab.com/login")
+        XCTAssertEqual(items[0].createdAt, 1_700_000_100_000)
+
+        let older = service.handle(.recordGeneratedPassword(
+            token: "t", password: "older-secret", url: "",
+            createdAt: 1_700_000_000_000, pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(older, .acknowledged)
+        guard case .passwordHistory(let ordered) = service.handle(.getGeneratedPasswordHistory(token: "t", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected history")
+        }
+        XCTAssertEqual(ordered.map(\.password), ["generated-secret", "older-secret"])
+        XCTAssertEqual(ordered[1].createdAt, 1_700_000_000_000)
+    }
+
+    func testGeneratedPasswordHistoryKeepsTheNewestThirtyAndDeleteTombstonesOnlyHistory() {
+        for index in 0..<31 {
+            let response = service.handle(.recordGeneratedPassword(
+                token: "t", password: "pw-\(index)", url: "https://example.com",
+                createdAt: Double(index) * 1000, pairing: authorizedPairingSecret
+            ))
+            XCTAssertEqual(response, .acknowledged)
+        }
+        guard case .passwordHistory(let items) = service.handle(.getGeneratedPasswordHistory(token: "t", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected history")
+        }
+        XCTAssertEqual(items.count, 30)
+        XCTAssertEqual(items.first?.password, "pw-30")
+        XCTAssertFalse(items.contains { $0.password == "pw-0" })
+        let database = session.currentDatabase!
+        let group = database.rootGroup.subgroups.first { PasswordGeneratorHistoryStore.isHistoryGroup($0) }
+        let kept = Set(group?.entries.map(\.uuid) ?? [])
+        XCTAssertTrue(database.deletedObjects.contains { !kept.contains($0.uuid) }, "the oldest row is tombstoned so a sync does not bring it back")
+
+        let loginID = addFixtureEntry(title: "Keep", username: "ada", password: "saved", url: "https://keep.example")
+        let refused = service.handle(.deleteGeneratedPassword(token: "t", id: loginID.uuidString, pairing: authorizedPairingSecret))
+        XCTAssertEqual(refused, .error("entry not found"))
+        XCTAssertTrue(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).contains { $0.uuid == loginID })
+
+        let removed = service.handle(.deleteGeneratedPassword(token: "t", id: items[0].id, pairing: authorizedPairingSecret))
+        XCTAssertEqual(removed, .acknowledged)
+        guard case .passwordHistory(let afterDelete) = service.handle(.getGeneratedPasswordHistory(token: "t", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected history")
+        }
+        XCTAssertFalse(afterDelete.contains { $0.id == items[0].id })
+        XCTAssertTrue(session.currentDatabase!.deletedObjects.contains { $0.uuid.uuidString == items[0].id })
+    }
+
+    func testGeneratedPasswordHistoryRefusesALockedOrUnpairedVault() {
+        let unpaired = service.handle(.recordGeneratedPassword(
+            token: "t", password: "pw", url: "https://example.com", createdAt: nil, pairing: nil
+        ))
+        XCTAssertEqual(unpaired, .pairingRequired)
+        XCTAssertNil(session.currentDatabase?.rootGroup.subgroups.first { PasswordGeneratorHistoryStore.isHistoryGroup($0) })
+
+        let blank = service.handle(.recordGeneratedPassword(
+            token: "t", password: "   ", url: "", createdAt: nil, pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(blank, .error("password required"))
+        XCTAssertNil(session.currentDatabase?.rootGroup.subgroups.first { PasswordGeneratorHistoryStore.isHistoryGroup($0) })
+
+        session.lock()
+        let locked = service.handle(.getGeneratedPasswordHistory(token: "t", pairing: authorizedPairingSecret))
+        XCTAssertEqual(locked, .locked)
     }
 }
 

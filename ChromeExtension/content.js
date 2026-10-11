@@ -11,18 +11,59 @@
   const letterFromTitle = entryVisuals.letterFromTitle;
   const colorForTitle = entryVisuals.colorForTitle;
 
-  // Minimum OTP field score threshold for selection. The weakest intentional OTP signal
-  // (inputmode=numeric + maxlength ∈ [6,7,8]) scores 4. A bare type=text input scores 1
-  // and must not be selected on a login-only page. Score >= 4 ensures only deliberate OTP
-  // candidates are picked.
-  const MIN_OTP_FIELD_SCORE = 4;
-
-  // Minimum username score, applied ONLY on pages with no password field (see
-  // findFillableFields). A bare `<input type="text">` scores 1, so without a floor every
-  // search box and comment field on the web would get a key icon. 3 is the weakest
-  // intentional signal: `name`/`id` matching user|login|email (2) plus the type bonus (1),
-  // or type=email (3+1).
-  const MIN_USERNAME_FIELD_SCORE = 3;
+  // Pure helpers shared with the popup and the service worker live in shared/.
+  // manifest.json loads those files as classic scripts before this one, so the
+  // names are already globals here. Node tests require this file directly and
+  // have no script tags, so the require() branch loads the same modules.
+  // Bindings stay inside this function. A top-level const in this file with
+  // the same name as one of those scripts is a load-time SyntaxError in the
+  // page (see tests/scriptScopes.test.js).
+  //
+  // Read the `mypass*` bags by bare name. They are `var`s in the shared
+  // scripts above, so they live in this extension's content-script scope.
+  // Do not switch this to the page global object: that object is the page,
+  // it has no findLoginForm, and the call throws "is not a function"
+  // (seen on linkedin.com/feed).
+  const shared = typeof require === 'function'
+    ? {
+        urlMatch: require('./shared/url-match.js'),
+        bridgeStatus: require('./shared/bridge-status.js'),
+        base32: require('./shared/base32.js'),
+        formDetection: require('./shared/form-detection.js'),
+        addressForm: require('./shared/address-form.js'),
+        totpDetection: require('./shared/totp-detection.js'),
+      }
+    : {
+        urlMatch: mypassUrlMatch,
+        bridgeStatus: mypassBridgeStatus,
+        base32: mypassBase32,
+        formDetection: mypassFormDetection,
+        addressForm: mypassAddressForm,
+        totpDetection: mypassTotpDetection,
+      };
+  const hostnameMatches = shared.urlMatch.hostnameMatches;
+  const classifyGetCredentialsResponse = shared.bridgeStatus.classifyGetCredentialsResponse;
+  const isBase32Secret = shared.base32.isBase32Secret;
+  const {
+    scoreUsernameLikeness,
+    findBestUsernameInput,
+    scoreOtpLikeness,
+    findOtpField,
+    isFieldVisible,
+    isNewPasswordCandidate,
+    findFillableFields,
+    findLoginForm,
+  } = shared.formDetection;
+  const {
+    detectOtpauthLink,
+    detectOtpauthText,
+    detectManualSetupKey,
+    decodeQrFromImage,
+    detectQrCandidate,
+    detectTotpCandidateWithPriority,
+    shouldShowTotpBanner,
+    forgetDecodedQr,
+  } = shared.totpDetection;
 
   // Which behaviours may run outside the top frame. Stated once, as data, rather than as
   // `window.top === window` scattered through the file: the policy is then testable without
@@ -36,228 +77,13 @@
     totpScan: 'topOnly',
     totpCandidateQuery: 'topOnly',
     newPasswordFieldQuery: 'topOnly',
+    pendingOpenFill: 'topOnly',
   };
 
   function isFeatureEnabledInFrame(feature, isTopFrame) {
     const policy = FRAME_FEATURE_POLICY[feature];
     if (!policy) return false;
     return policy === 'allFrames' || isTopFrame === true;
-  }
-
-  // Text of the <label> associated with `input`, lowercased, or '' if none is found.
-  // Tries input.closest('label') first (wrapped case: <label>Email <input></label>), then
-  // falls back to label[for="<id>"] queried against `scope` — the SAME scope the caller
-  // (findFillableFields) is already using for its other queries, so this never reaches
-  // outside the form/page region the caller has scoped itself to. `scope` is optional:
-  // callers that only have a bare input (e.g. direct unit tests) simply skip the [for]
-  // lookup rather than throwing.
-  function labelTextFor(input, idAttr, scope) {
-    const wrapping = typeof input.closest === 'function' ? input.closest('label') : null;
-    if (wrapping) return (wrapping.textContent || '').toLowerCase();
-    if (idAttr && scope && typeof scope.querySelector === 'function') {
-      const forLabel = scope.querySelector('label[for="' + idAttr + '"]');
-      if (forLabel) return (forLabel.textContent || '').toLowerCase();
-    }
-    return '';
-  }
-
-  function scoreUsernameLikeness(input, scope) {
-    let score = 0;
-    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
-    const name = (input.getAttribute('name') || '').toLowerCase();
-    const idAttr = input.getAttribute('id') || '';
-    const id = idAttr.toLowerCase();
-    const type = (input.getAttribute('type') || 'text').toLowerCase();
-    const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
-    const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
-    const labelText = labelTextFor(input, idAttr, scope);
-
-    if (autocomplete.includes('username')) score += 5;
-    if (type === 'email') score += 3;
-    // name and id keep their original, independent +2 each — a field matching BOTH still
-    // outscores one matching only name, which matters because findBestUsernameInput picks
-    // the single highest scorer among candidates, not just whichever clears the floor.
-    const nameMatches = /user|login|email/.test(name);
-    const idMatches = /user|login|email/.test(id);
-    if (nameMatches) score += 2;
-    if (idMatches) score += 2;
-    // placeholder / aria-label / an associated <label>'s text are weaker hints than name/id
-    // (a placeholder can describe almost anything), so they only contribute when name/id gave
-    // NO signal at all, and only once even if more than one of the three matches — otherwise
-    // a field whose placeholder AND aria-label both say "email" would outscore one whose name
-    // alone says "user", and a field already identified via name/id would get a second,
-    // redundant bonus.
-    // Known trade-off, accepted deliberately: a search box with placeholder="Search by
-    // email" now also matches this pattern when no name/id hint exists. It under-triggers
-    // far less often than the coverage gap this closes (identifier-first login fields hinted
-    // only by placeholder/aria-label/label), and the icon stays inert until clicked.
-    if (!nameMatches && !idMatches) {
-      const hasNewHint = [placeholder, ariaLabel, labelText].some((value) =>
-        /user|login|email/.test(value)
-      );
-      if (hasNewHint) score += 2;
-    }
-    if (type === 'text' || type === 'email') score += 1;
-    return score;
-  }
-
-  function findBestUsernameInput(candidates, scope) {
-    if (candidates.length === 0) return null;
-    let best = candidates[0];
-    let bestScore = scoreUsernameLikeness(best, scope);
-    for (let i = 1; i < candidates.length; i++) {
-      const score = scoreUsernameLikeness(candidates[i], scope);
-      if (score > bestScore) {
-        best = candidates[i];
-        bestScore = score;
-      }
-    }
-    return best;
-  }
-
-  function scoreOtpLikeness(input) {
-    if (!input) return 0;
-    const type = (input.getAttribute('type') || 'text').toLowerCase();
-    const isDisabled = input.getAttribute('disabled') !== null || input.disabled === true;
-    const isReadOnly = input.getAttribute('readonly') !== null || input.readOnly === true;
-    if (type === 'password' || type === 'hidden' || isDisabled || isReadOnly) {
-      return 0;
-    }
-
-    let score = 0;
-    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
-    if (autocomplete === 'one-time-code') {
-      // autocomplete=one-time-code is a decisive browser signal for OTP fields, not stacked
-      // with other bonuses. Scores 10 alone, not 11 (avoiding +1 type bonus).
-      return 10;
-    }
-
-    const nameOrId = `${input.getAttribute('name') || ''} ${input.getAttribute('id') || ''}`.toLowerCase();
-    if (/otp|totp|2fa|two.?factor|verification.?code|auth.?code|security.?code/.test(nameOrId)) {
-      score += 6;
-    }
-
-    const inputMode = (input.getAttribute('inputmode') || '').toLowerCase();
-    const maxLength = parseInt(input.getAttribute('maxlength') || '', 10);
-    if (inputMode === 'numeric' && [6, 7, 8].includes(maxLength)) {
-      score += 4;
-    }
-
-    if (type === 'tel' || type === 'text') {
-      score += 1;
-    }
-
-    return score;
-  }
-
-  function findOtpField(root) {
-    const scope = root || document;
-    const candidates = Array.from(scope.querySelectorAll('input, textarea'));
-    let best = null;
-    let bestScore = 0;
-    for (const candidate of candidates) {
-      if (candidate.offsetParent === null) continue;
-      const score = scoreOtpLikeness(candidate);
-      if (score > bestScore) {
-        bestScore = score;
-        best = candidate;
-      }
-    }
-    return bestScore >= MIN_OTP_FIELD_SCORE ? best : null;
-  }
-
-  function isFieldVisible(input) {
-    if (!input) return false;
-    if (input.offsetParent === null) return false;
-    const disabled = input.getAttribute('disabled') !== null || input.disabled === true;
-    const readOnly = input.getAttribute('readonly') !== null || input.readOnly === true;
-    return !disabled && !readOnly;
-  }
-
-  // A password field's autocomplete attribute is a decisive signal when present — the
-  // same trust level scoreOtpLikeness already gives autocomplete=one-time-code. When it
-  // is absent, fall back to field count and position:
-  //   - exactly two unhinted password fields is the signup shape ("new password" +
-  //     "confirm password"): both count as new-password.
-  //   - three or more unhinted password fields is treated as a change-password form
-  //     ("current password", "new password", "confirm new password"): everything
-  //     except the first counts as new-password, because the first field in that
-  //     layout is overwhelmingly the box holding the user's existing password.
-  //     Marking it new-password would offer to generate over the exact field this
-  //     classification exists to protect.
-  //   - a single unhinted password field is a login field, not new-password.
-  // This gives up correct classification for the rare page that stacks three or more
-  // password fields without following either the signup or change-password
-  // convention (for example two confirm fields after a first field that is not the
-  // current password). That is an acceptable loss: failing there only withholds the
-  // "Generate password" button on an unusual layout, whereas failing the other way —
-  // as the plain "two or more" rule this replaces did — offers to overwrite a real
-  // credential in the ordinary change-password case, which is the outcome this
-  // classification exists to prevent.
-  function isNewPasswordCandidate(input, allPasswordInputs) {
-    const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
-    if (autocomplete === 'new-password') return true;
-    if (autocomplete === 'current-password') return false;
-    if (allPasswordInputs.length === 2) return true;
-    if (allPasswordInputs.length >= 3) return allPasswordInputs.indexOf(input) > 0;
-    return false;
-  }
-
-  // Returns every field the inline icon may attach to. Deliberately looser than the old
-  // findLoginForm: a password field no longer has to sit inside a <form>, and a username
-  // field is emitted even when no password field exists, so identifier-first login screens
-  // (username on step 1, password on step 2) are covered.
-  function findFillableFields(root) {
-    const scope = root || document;
-    const fields = [];
-
-    const passwords = Array.from(scope.querySelectorAll('input[type="password"]')).filter(isFieldVisible);
-    for (const password of passwords) {
-      fields.push({ input: password, kind: 'password', isNewPassword: isNewPasswordCandidate(password, passwords) });
-    }
-
-    const formScope = (passwords[0] && passwords[0].closest && passwords[0].closest('form')) || scope;
-    const usernameCandidates = Array.from(
-      formScope.querySelectorAll('input[type="text"], input[type="email"], input[autocomplete*="username"]')
-    ).filter(isFieldVisible);
-    const username = findBestUsernameInput(usernameCandidates, formScope);
-    // The score floor applies ONLY when there is no password field on the page. When a
-    // password field IS present, its presence is itself strong evidence that the nearby text
-    // input is the username, so today's floor-free behaviour is kept — otherwise a bare
-    // `<input type="text">` login form would silently lose username autofill, which would be
-    // a regression of applyFill. Without a password field there is no such evidence, and the
-    // identifier-first relaxation above would otherwise put an icon on every search box.
-    if (username && (passwords.length > 0 || scoreUsernameLikeness(username, formScope) >= MIN_USERNAME_FIELD_SCORE)) {
-      fields.push({ input: username, kind: 'username' });
-    }
-
-    // An OTP input is type=text or type=tel, so it also satisfies the username selector
-    // above and can win findBestUsernameInput on a 2FA-only page. Classify it as otp and
-    // drop the duplicate rather than letting one element carry two icons.
-    const otp = findOtpField(scope);
-    if (otp) {
-      const duplicate = fields.findIndex((field) => field.input === otp);
-      if (duplicate >= 0) fields.splice(duplicate, 1);
-      fields.push({ input: otp, kind: 'otp' });
-    }
-
-    return fields;
-  }
-
-  // Kept for applyFill's existing contract. Rebuilt on findFillableFields so the two
-  // cannot drift apart. `form` is now nullable: a password field outside any <form> used
-  // to make this return null, which meant applyFill silently did nothing on such pages.
-  function findLoginForm(root) {
-    const fields = findFillableFields(root || document);
-    const passwordField = fields.find((field) => field.kind === 'password');
-    if (!passwordField) return null;
-    const usernameField = fields.find((field) => field.kind === 'username');
-    const form = passwordField.input.closest ? passwordField.input.closest('form') : null;
-    return {
-      form,
-      passwordInput: passwordField.input,
-      usernameInput: usernameField ? usernameField.input : null,
-    };
   }
 
   // Which fields an applyFill message writes into. Extracted from the message listener
@@ -322,153 +148,6 @@
     if (!target || !target.input) return false;
     if (target.input.isConnected !== true) return false;
     return (now - target.at) <= ttlMs;
-  }
-
-  const OTPAUTH_REGEX = /otpauth:\/\/totp\/[^\s"'<>]+/i;
-  const BASE32_REGEX = /^[A-Z2-7]{16,128}$/;
-  const MANUAL_KEY_LABEL_REGEX = /secret|manual|setup key|authenticator/i;
-
-  function detectOtpauthLink(root) {
-    const scope = root || document;
-    const links = Array.from(scope.querySelectorAll('a[href]'));
-    for (const link of links) {
-      const href = link.getAttribute('href') || '';
-      const match = href.match(OTPAUTH_REGEX);
-      if (match) return match[0];
-    }
-    return null;
-  }
-
-  function detectOtpauthText(root) {
-    const scope = root || document;
-    const body = scope.body || scope;
-    if (!body) return null;
-    const text = body.textContent || '';
-    const match = text.match(OTPAUTH_REGEX);
-    return match ? match[0] : null;
-  }
-
-  function normalizeBase32Candidate(raw) {
-    return (raw || '').replace(/\s+/g, '').toUpperCase();
-  }
-
-  function isBase32Secret(candidate) {
-    return BASE32_REGEX.test(normalizeBase32Candidate(candidate));
-  }
-
-  // A plain sliding window over every token (including surrounding label words) is unsafe:
-  // concatenating enough ordinary sentence words (e.g. "Your"+"manual"+"setup"+"key" ->
-  // "YOURMANUALSETUPKEY") can accidentally satisfy the base32 alphabet+length check before
-  // the real key is ever reached. Real setup keys are rendered in caps (e.g. "JBSW Y3DP EHPK
-  // 3PXP"), so restrict the window to maximal runs of tokens that are already all
-  // uppercase letters/digits as written, which excludes ordinary lowercase/mixed-case words.
-  const CAPS_TOKEN_REGEX = /^[A-Z0-9]+$/;
-
-  function detectManualSetupKey(root) {
-    const scope = root || document;
-    const body = scope.body || scope;
-    if (!body) return null;
-    const text = (body.textContent || '').replace(/\s+/g, ' ');
-    if (!MANUAL_KEY_LABEL_REGEX.test(text)) return null;
-    const tokens = text.split(' ').filter(Boolean);
-    let i = 0;
-    while (i < tokens.length) {
-      if (!CAPS_TOKEN_REGEX.test(tokens[i])) {
-        i += 1;
-        continue;
-      }
-      let runEnd = i;
-      while (runEnd < tokens.length && CAPS_TOKEN_REGEX.test(tokens[runEnd])) runEnd += 1;
-      for (let start = i; start < runEnd; start += 1) {
-        for (let span = 1; span <= 8 && start + span <= runEnd; span += 1) {
-          const candidate = tokens.slice(start, start + span).join('');
-          if (isBase32Secret(candidate)) {
-            return normalizeBase32Candidate(candidate);
-          }
-        }
-      }
-      i = runEnd;
-    }
-    return null;
-  }
-
-  // Per-image QR decode memoization. detectQrCandidate re-scans every <img> on the page on
-  // each debounced mutation sweep (~400ms), and the jsQR decode — not the DOM walk — is the
-  // expensive part. Keyed on the image element itself (a WeakMap, so a removed <img> is
-  // simply forgotten rather than pinned in memory) plus a content key so an SPA that reuses
-  // the same <img> node for a different picture (a src swap) still gets a fresh decode
-  // instead of a stale cached result. `naturalWidth`/`naturalHeight` are folded into the key
-  // for the same reason: some sites redraw the same URL at a different size.
-  const qrDecodeCache = new WeakMap();
-
-  function qrImageCacheKey(imgEl) {
-    return (imgEl.currentSrc || imgEl.src) + '|' + imgEl.naturalWidth + 'x' + imgEl.naturalHeight;
-  }
-
-  function decodeQrFromImage(imgEl) {
-    try {
-      if (!imgEl.complete || !imgEl.naturalWidth) return null;
-      const key = qrImageCacheKey(imgEl);
-      const cached = qrDecodeCache.get(imgEl);
-      if (cached && cached.key === key) return cached.result;
-      const canvas = document.createElement('canvas');
-      canvas.width = imgEl.naturalWidth;
-      canvas.height = imgEl.naturalHeight;
-      const ctx = canvas.getContext('2d');
-      ctx.drawImage(imgEl, 0, 0);
-      const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-      const result = typeof jsQR === 'function' ? jsQR(imageData.data, imageData.width, imageData.height) : null;
-      const decoded = result ? result.data : null;
-      qrDecodeCache.set(imgEl, { key, result: decoded });
-      return decoded;
-    } catch (error) {
-      // getImageData throws on a CORS-tainted canvas (cross-origin image) —
-      // skip rather than treat as a hard failure. Not cached: a CORS failure is about the
-      // canvas/context, not the image's content, so nothing here is safe to remember.
-      return null;
-    }
-  }
-
-  function detectQrCandidate(root) {
-    const scope = root || document;
-    const images = Array.from(scope.querySelectorAll('img'));
-    for (const img of images) {
-      if ((img.naturalWidth || 0) < 40 || (img.naturalHeight || 0) < 40) continue;
-      const decoded = decodeQrFromImage(img);
-      if (decoded && OTPAUTH_REGEX.test(decoded)) {
-        return decoded.match(OTPAUTH_REGEX)[0];
-      }
-    }
-    return null;
-  }
-
-  function detectTotpCandidateWithPriority(root) {
-    const link = detectOtpauthLink(root);
-    if (link) return { candidate: link, priority: 1 };
-    const text = detectOtpauthText(root);
-    if (text) return { candidate: text, priority: 2 };
-    const qr = detectQrCandidate(root);
-    if (qr) return { candidate: qr, priority: 3 };
-    const manual = detectManualSetupKey(root);
-    if (manual) return { candidate: manual, priority: 4 };
-    return null;
-  }
-
-  function shouldShowTotpBanner(detected, state) {
-    if (!detected) return false;
-    if (state.vaultLocked) return false;
-    if (!state.totpBannerDismissed) return true;
-    return detected.priority < state.totpBannerDismissed.priority;
-  }
-
-  // Mirrors popup.js's classifyGetCredentialsResponse — kept as a separate local copy
-  // since content.js and popup.js are independent scripts with no shared module.
-  function classifyGetCredentialsResponse(response) {
-    if (!response || response.type === 'error') return 'error';
-    if (response.type === 'locked') return 'locked';
-    if (response.type === 'pairingRequired') return 'pairingRequired';
-    if (response.type === 'credentialList') return 'credentialList';
-    return 'unknown';
   }
 
   // Panel state is a function of the connection state and the field kind, never of which
@@ -713,23 +392,12 @@
         // endpoint, an animated/refreshing QR) — decodeQrFromImage's cache would otherwise
         // hand back the stale verdict from before this load, defeating the whole point of
         // rescanning. Drop this image's cache entry so the upcoming sweep decodes fresh.
-        qrDecodeCache.delete(event.target);
+        forgetDecodedQr(event.target);
         scheduleSweep();
       };
       document.addEventListener('load', totpImageLoadListener, true);
     }
     return observer;
-  }
-
-  function hostnameMatches(messageUrl, pageUrl) {
-    if (!messageUrl) return false;
-    try {
-      const messageHost = new URL(messageUrl).hostname.toLowerCase();
-      const pageHost = new URL(pageUrl).hostname.toLowerCase();
-      return messageHost === pageHost;
-    } catch (e) {
-      return false;
-    }
   }
 
   function setNativeValue(input, value) {
@@ -775,17 +443,22 @@
   // require-trusted-types-for 'script' CSP directive throw on any innerHTML assignment,
   // and those are exactly the sites this feature most needs to work on.
   const SVG_NS = 'http://www.w3.org/2000/svg';
+  // Upright green key silhouette from icons/icon128.png, retaining the round head,
+  // high-set hole, and right-facing teeth at small sizes. A DOM-built path works with
+  // Trusted Types and does not expose a chrome-extension asset URL to the page.
   const KEY_ICON_PATH_D =
-    'M10.5 1a4.5 4.5 0 0 0-4.3 5.9L1 12.1V15h2.9l.6-.6v-1.3h1.3l.9-.9v-1.3h1.3l1.2-1.2A4.5 4.5 0 1 0 10.5 1zm1.4 3.6a1 1 0 1 1 1.4-1.4 1 1 0 0 1-1.4 1.4z';
+    'M20 60.5a30 30 0 1 1 24 0V66l6 7-7 7 7 8-7 7 7 9-15 17q-3 3-6 0l-7-7q-2-2-2-6Z' +
+    'M32 13a8 8 0 1 0 0 16a8 8 0 1 0 0-16Z';
 
   function buildKeyGlyph(doc) {
     const svg = doc.createElementNS(SVG_NS, 'svg');
-    svg.setAttribute('viewBox', '0 0 16 16');
-    svg.setAttribute('width', '14');
-    svg.setAttribute('height', '14');
+    svg.setAttribute('viewBox', '0 0 64 128');
+    svg.setAttribute('width', '12');
+    svg.setAttribute('height', '24');
     svg.setAttribute('aria-hidden', 'true');
     const path = doc.createElementNS(SVG_NS, 'path');
     path.setAttribute('fill', 'currentColor');
+    path.setAttribute('fill-rule', 'evenodd');
     path.setAttribute('d', KEY_ICON_PATH_D);
     svg.appendChild(path);
     return svg;
@@ -793,9 +466,14 @@
 
   const ICON_HOST_STYLE =
     ':host{all:initial}' +
-    'button{all:unset;cursor:pointer;display:flex;align-items:center;justify-content:center;' +
-    'width:20px;height:20px;border-radius:4px;color:#6b7280;opacity:0.65;}' +
-    'button:hover,button:focus-visible{opacity:1;background:rgba(127,127,127,0.15);}';
+    'button{all:unset;box-sizing:border-box;cursor:pointer;display:flex;align-items:center;' +
+    'justify-content:center;width:100%;height:100%;border-radius:6px;color:#73b359;}' +
+    'svg{display:block;flex:none;max-height:calc(100% - 4px);pointer-events:none;}' +
+    'button:hover{background:rgba(115,179,89,0.14);}' +
+    'button:focus-visible{outline:2px solid #007aff;outline-offset:1px;background:rgba(115,179,89,0.14);}' +
+    '@media(prefers-color-scheme:dark){button:hover{background:rgba(115,179,89,0.24);}}' +
+    '@media(forced-colors:active){button{color:ButtonText;}' +
+    'button:hover{color:HighlightText;background:Highlight;}button:focus-visible{outline-color:Highlight;}}';
 
   // The panel is a list surface, not a 20x20 glyph button, so it needs its own stylesheet:
   // handing it ICON_HOST_STYLE rendered every row as a 20x20 box with overflowing text on a
@@ -875,6 +553,7 @@
     const button = doc.createElement('button');
     button.setAttribute('type', 'button');
     button.setAttribute('aria-label', 'Fill from MyPass');
+    button.setAttribute('title', 'Fill from MyPass');
     button.appendChild(buildKeyGlyph(doc));
     shadow.appendChild(button);
     return { host, shadow, button };
@@ -891,15 +570,78 @@
 
   // Writes to the overlay host only. The page's own input is never given padding, a
   // wrapper, or any attribute — that is the whole reason for the overlay approach.
-  function positionHostToField(host, rect, viewport) {
+  function positionHostToField(host, rect, viewport, obstacles = [], clipRect = null) {
     const scrollX = viewport && typeof viewport.scrollX === 'number' ? viewport.scrollX : 0;
     const scrollY = viewport && typeof viewport.scrollY === 'number' ? viewport.scrollY : 0;
-    const size = 20;
+    const size = Math.min(28, rect.height - 4);
     const inset = 6;
-    // important: see the comment in buildIconHost — same page-CSS threat applies here.
+    const top = rect.top + (rect.height - size) / 2;
+    let left = rect.left + rect.width - size - inset;
+    // A site's reveal/clear control may overlay the same end of the input. Reserve its
+    // actual bounds instead of a fixed password-field offset, which wastes space on sites
+    // with no reveal control. Right-to-left ordering also handles adjacent controls.
+    obstacles.slice().sort((a, b) => b.left - a.left).forEach((obstacle) => {
+      if (obstacle.width <= 0 || obstacle.height <= 0) return;
+      if (obstacle.top >= top + size || obstacle.top + obstacle.height <= top) return;
+      if (obstacle.left < left + size + 4 && obstacle.left + obstacle.width > left - 4) {
+        left = obstacle.left - size - 4;
+      }
+    });
+    // Tiny fields have no room for both typing and a useful button. The toolbar popup
+    // remains available; never grow a button beyond the input or cover most of its text.
+    const insideClip = !clipRect || (left >= clipRect.left && top >= clipRect.top &&
+      left + size <= clipRect.right && top + size <= clipRect.bottom);
+    const fits = size >= 20 && left - rect.left >= 36 && insideClip;
+    host.style.setProperty('display', fits ? 'block' : 'none', 'important');
     host.style.setProperty('position', 'absolute', 'important');
-    host.style.setProperty('top', String(rect.top + scrollY + (rect.height - size) / 2) + 'px', 'important');
-    host.style.setProperty('left', String(rect.left + scrollX + rect.width - size - inset) + 'px', 'important');
+    host.style.setProperty('width', String(size) + 'px', 'important');
+    host.style.setProperty('height', String(size) + 'px', 'important');
+    host.style.setProperty('top', String(top + scrollY) + 'px', 'important');
+    host.style.setProperty('left', String(left + scrollX) + 'px', 'important');
+  }
+
+  function fieldClipRect(input, viewport) {
+    const clip = { left: 0, top: 0, right: viewport.innerWidth, bottom: viewport.innerHeight };
+    const doc = input.ownerDocument;
+    // Hosts live under body, so they do not inherit a field's overflow clipping. Intersect
+    // every ancestor scrollport per axis and require the whole button to remain inside it:
+    // a partially clipped field must not leave a clickable logo over neighbouring content.
+    // Root/body overflow is propagated to the viewport, whose bounds are already included.
+    for (let ancestor = input.parentElement;
+      ancestor && ancestor !== doc.body && ancestor !== doc.documentElement;
+      ancestor = ancestor.parentElement) {
+      const style = viewport.getComputedStyle(ancestor);
+      const clipsX = /^(auto|scroll|hidden|clip)$/.test(style.overflowX);
+      const clipsY = /^(auto|scroll|hidden|clip)$/.test(style.overflowY);
+      if (!clipsX && !clipsY) continue;
+      const rect = ancestor.getBoundingClientRect();
+      // Client bounds exclude borders and scrollbars. Scale those offsets with the box
+      // when a site transforms it, keeping all comparisons in viewport coordinates.
+      const scaleX = ancestor.offsetWidth ? rect.width / ancestor.offsetWidth : 1;
+      const scaleY = ancestor.offsetHeight ? rect.height / ancestor.offsetHeight : 1;
+      if (clipsX) {
+        clip.left = Math.max(clip.left, rect.left + ancestor.clientLeft * scaleX);
+        clip.right = Math.min(clip.right, rect.left + (ancestor.clientLeft + ancestor.clientWidth) * scaleX);
+      }
+      if (clipsY) {
+        clip.top = Math.max(clip.top, rect.top + ancestor.clientTop * scaleY);
+        clip.bottom = Math.min(clip.bottom, rect.top + (ancestor.clientTop + ancestor.clientHeight) * scaleY);
+      }
+    }
+    return clip;
+  }
+
+  function fieldControlRects(input) {
+    // Limit inspection to the field's wrapper: controls elsewhere in a form must not
+    // change its alignment. SVGs inside a button inherit the button's measured bounds.
+    const wrapper = input.parentElement;
+    if (!wrapper) return [];
+    return Array.from(wrapper.querySelectorAll('button, [role="button"], a[href]'))
+      .filter((control) => {
+        const style = input.ownerDocument.defaultView.getComputedStyle(control);
+        return style.visibility !== 'hidden' && style.display !== 'none';
+      })
+      .map((control) => control.getBoundingClientRect());
   }
 
   const PANEL_MESSAGES = {
@@ -1201,7 +943,7 @@
         // important for the same reason as buildIconHost/positionHostToField: a plain
         // assignment here would silently drop the !important flag those set initially.
         record.host.style.setProperty('display', offscreen ? 'none' : 'block', 'important');
-        if (!offscreen) positionHostToField(record.host, rect, window);
+        if (!offscreen) positionHostToField(record.host, rect, window, fieldControlRects(input), fieldClipRect(input, window));
       });
     }
 
@@ -1224,7 +966,7 @@
       });
       // Position synchronously before the first paint so the icon never flashes at the
       // body origin and then jumps into place on the next rAF.
-      positionHostToField(host, input.getBoundingClientRect(), window);
+      positionHostToField(host, input.getBoundingClientRect(), window, fieldControlRects(input), fieldClipRect(input, window));
       document.body.appendChild(host);
       attachedIcons.set(input, { host });
 
@@ -1239,6 +981,7 @@
       for (const field of findFillableFields(document)) {
         attachIconTo(field.input, field.kind, field.isNewPassword);
       }
+      scheduleSync();
     }
 
     // The single ticker driving every ring in the currently-open panel. Kept outside
@@ -1317,7 +1060,7 @@
         });
         if (kind === 'password' && isNewPassword) {
           const generateRow = buildGeneratePasswordRow(document, trustedClickHandler(() => {
-            sendRuntimeMessage({ type: 'generatePassword', domain: location.hostname }, (genResponse) => {
+            sendRuntimeMessage({ type: 'generatePassword', domain: location.hostname, url: location.href }, (genResponse) => {
               // Superseded by a later open, or cancelled by a close, while the request
               // was in flight — same staleness guard the credential fetch above uses, so
               // a delayed response never mutates a panel that is no longer the open one.
@@ -1375,7 +1118,33 @@
       });
     }
 
+    let addressSnapshot = null;
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      if (message.type === 'queryAddressForm') {
+        if (window.top !== window || message.url !== location.href) return;
+        const groups = shared.addressForm.collect(document);
+        addressSnapshot = { challenge: message.challenge, url: location.href, groups, at: Date.now() };
+        // The background obtains documentId from Chrome's authenticated sender,
+        // not from a value supplied by the page or the popup.
+        chrome.runtime.sendMessage({ type: 'addressFormReport', challenge: message.challenge,
+          forms: shared.addressForm.describe(groups, document) }, () => { void chrome.runtime.lastError; });
+        sendResponse({ type: 'ok' });
+        return;
+      }
+      if (message.type === 'applyAddress') {
+        const snapshot = addressSnapshot;
+        addressSnapshot = null; // one explicit selection can fill only once
+        if (window.top !== window || !snapshot || snapshot.challenge !== message.challenge
+          || snapshot.url !== location.href || message.url !== location.href
+          || Date.now() - snapshot.at > 120000 || !message.address) {
+          sendResponse({ type: 'error', code: 'address_form_changed' });
+          return;
+        }
+        sendResponse(shared.addressForm.apply(document, snapshot.groups, message.groupId,
+          message.address, shared.addressForm.setNativeAddressValue, () => snapshot.url === location.href));
+        return;
+      }
+
       if (message.type === 'queryTotpCandidate') {
         // Only the top frame replies, or the popup sees multiple frames' responses race —
         // no sendResponse at all here, not a "false" response, so the popup keeps waiting
@@ -1428,6 +1197,20 @@
     }
     attachIcons();
 
+    // A vault row click opens this tab, then asks the app for the login. The popup
+    // cannot message a tab it just created (activeTab covers only the tab that was
+    // current when the icon was clicked), so this page claims the fill itself.
+    // One retry covers the race where document_idle beats the popup's arm message.
+    function claimPendingOpenFill(attempt) {
+      if (!runsHere('pendingOpenFill')) return;
+      sendRuntimeMessage({ type: 'claimPendingFill', url: location.href }, (response) => {
+        if (response && response.type === 'none' && attempt < 1) {
+          setTimeout(() => claimPendingOpenFill(attempt + 1), 700);
+        }
+      });
+    }
+    claimPendingOpenFill(0);
+
     window.addEventListener('scroll', scheduleSync, { capture: true, passive: true });
     window.addEventListener('resize', scheduleSync, { passive: true });
 
@@ -1477,7 +1260,7 @@
       isTrustedActivation, handleIconActivate, handleEntrySelect, trustedClickHandler,
       buildTotpCandidateQueryResponse, buildNewPasswordFieldQueryResponse, buildGeneratePasswordRow,
       classifyGeneratePasswordResponse, showGeneratePasswordMessage, showTotpSaveBanner, showSaveBanner,
-      KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField,
+      KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField, fieldControlRects, fieldClipRect,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
       FRAME_FEATURE_POLICY, isFeatureEnabledInFrame, buildMutationSweep, observeTotpCandidates,

@@ -83,6 +83,13 @@ final class ExtensionPairingManager {
         return store.containsSecret(matching: secret)
     }
 
+    /// Resolve report ownership from the authenticated secret, never a client-supplied ID.
+    func authorizedBrowser(pairing: String?) -> PairedBrowser? {
+        guard let secret = pairing, store.containsSecret(matching: secret) else { return nil }
+        let hash = sha256Hex(of: secret)
+        return store.list().first { $0.secretHash == hash }
+    }
+
     private func clearChallenge() {
         activeCode = nil
         expiry = nil

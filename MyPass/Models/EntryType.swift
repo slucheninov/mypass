@@ -6,6 +6,7 @@ import Foundation
 /// automatically and correctly treated as Login with no migration step.
 enum EntryType: String {
     case login = "Login"
+    case address = "Address"
     case card = "Card"
     case notes = "Notes"
 }
