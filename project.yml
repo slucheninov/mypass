@@ -31,11 +31,14 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mypass.app
         CODE_SIGN_ENTITLEMENTS: MyPass/MyPass.entitlements
-        MARKETING_VERSION: "0.1.0"
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
     info:
       path: MyPass/Info.plist
       properties:
+        CFBundleShortVersionString: "$(MARKETING_VERSION)"
+        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSFaceIDUsageDescription: "MyPass uses Touch ID to quickly unlock your password vault."
         LSApplicationCategoryType: public.app-category.utilities
   ChromeHost:
@@ -50,7 +53,8 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.mypass.chromehost
         CODE_SIGN_ENTITLEMENTS: ChromeHost/ChromeHost.entitlements
-        MARKETING_VERSION: "0.1.0"
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "2"
   MyPassTests:
     type: bundle.unit-test
     platform: macOS

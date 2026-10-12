@@ -139,6 +139,17 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         let data = try JSONEncoder().encode(response)
         XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
         XCTAssertNil(try jsonObject(from: data)["totp"])
+        XCTAssertNil(try jsonObject(from: data)["urls"])
+    }
+
+    func testCredentialRoundTripsSavedWebsites() throws {
+        let response = ExtensionBridgeResponse.credential(
+            username: "alice", password: "s3cret", totp: nil, urls: ["https://example.com", "https://example.org"]
+        )
+        let data = try JSONEncoder().encode(response)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeResponse.self, from: data), response)
+        let urls = try XCTUnwrap(try jsonObject(from: data)["urls"] as? [String])
+        XCTAssertEqual(urls, ["https://example.com", "https://example.org"])
     }
 
     func testSaveProposalAcceptedRoundTrips() throws {
@@ -223,6 +234,28 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
         XCTAssertEqual(notNeeded["type"] as? String, "unlockNotNeeded")
     }
 
+    func testOpenAppRoundTripsAndStaysAvailableWhileLocked() throws {
+        let request = ExtensionBridgeRequest.openApp(token: "tok", pairing: "pair-secret")
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
+        let json = try jsonObject(from: data)
+        XCTAssertEqual(json["type"] as? String, "openApp")
+        XCTAssertEqual(json["token"] as? String, "tok")
+        XCTAssertEqual(json["pairing"] as? String, "pair-secret")
+        XCTAssertTrue(request.isAnswerableWhileLocked)
+        XCTAssertFalse(request.resetsAutoLockTimer)
+    }
+
+    func testLockVaultRoundTrips() throws {
+        let request = ExtensionBridgeRequest.lockVault(token: "tok", pairing: "pair-secret")
+        let data = try JSONEncoder().encode(request)
+        XCTAssertEqual(try JSONDecoder().decode(ExtensionBridgeRequest.self, from: data), request)
+        let json = try jsonObject(from: data)
+        XCTAssertEqual(json["type"] as? String, "lockVault")
+        XCTAssertEqual(json["token"] as? String, "tok")
+        XCTAssertEqual(json["pairing"] as? String, "pair-secret")
+    }
+
     func testOnlyRequestUnlockAndPasskeyProxyStatusAreAnswerableWhileLocked() {
         XCTAssertTrue(ExtensionBridgeRequest.requestUnlock(token: "t", pairing: nil).isAnswerableWhileLocked)
         // `getPasskeyProxyStatus` exists specifically to report lock state, so answering
@@ -243,6 +276,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
             .fillCredential(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .getTotp(token: "t", id: "e", url: "https://example.com", pairing: nil),
             .proposeSaveLogin(token: "t", url: "https://example.com", username: "u", password: "p", pairing: nil),
+            .addEntryIdentifier(token: "t", id: "e", url: "https://example.com", value: "+380", fieldKey: "Phone", pairing: nil),
             .proposeSaveTotp(token: "t", url: "https://example.com", otpauthOrSecret: "secret", entryId: nil, pairing: nil),
             .startPairing(token: "t", browser: nil),
             .completePairing(token: "t", code: "123456"),
@@ -255,6 +289,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
             .recordGeneratedPassword(token: "t", password: "pw", url: "https://example.com", createdAt: nil, pairing: nil),
             .getGeneratedPasswordHistory(token: "t", pairing: nil),
             .deleteGeneratedPassword(token: "t", id: "e", pairing: nil),
+            .lockVault(token: "t", pairing: nil),
         ]
         for request in gated {
             XCTAssertFalse(request.isAnswerableWhileLocked, "\(request) must stay behind the locked gate")
@@ -281,6 +316,7 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
                 url: "https://ada.example", cardNumber: "", cardholderName: "", expiry: "",
                 cvv: "", notes: "", favorite: false, match: "", otp: "", pairing: nil
             ),
+            .addEntryIdentifier(token: "t", id: "e", url: "https://example.com", value: "+380", fieldKey: "Phone", pairing: nil),
             .recordGeneratedPassword(token: "t", password: "pw", url: "https://example.com", createdAt: nil, pairing: nil),
             .getGeneratedPasswordHistory(token: "t", pairing: nil),
             .deleteGeneratedPassword(token: "t", id: "e", pairing: nil),
@@ -305,6 +341,8 @@ final class ExtensionBridgeMessagesTests: XCTestCase {
             .startPairing(token: "t", browser: nil),
             .completePairing(token: "t", code: "123456"),
             .passkeyCancel(token: "t", requestId: 1, pairing: nil),
+            .lockVault(token: "t", pairing: nil),
+            .openApp(token: "t", pairing: nil),
         ]
         for request in nonResetting {
             XCTAssertFalse(request.resetsAutoLockTimer, "\(request) must not reset the idle auto-lock timer")

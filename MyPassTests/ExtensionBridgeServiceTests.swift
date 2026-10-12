@@ -403,7 +403,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         guard let id = entry?.uuid.uuidString else {
             return XCTFail("expected the created entry")
         }
-        guard case .credential(let username, _, let totp) = service.handle(.fillCredential(
+        guard case .credential(let username, _, let totp, _) = service.handle(.fillCredential(
             token: "t", id: id, url: "https://created.example/login", pairing: authorizedPairingSecret
         )) else {
             return XCTFail("expected a fill")
@@ -518,7 +518,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     func testFillCredentialReturnsPasswordForMatchingEntry() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
-        XCTAssertEqual(response, .credential(username: "alice", password: "s3cret", totp: nil))
+        XCTAssertEqual(response, .credential(username: "alice", password: "s3cret", totp: nil, urls: ["https://example.com"]))
     }
 
     func testFillCredentialTouchesAccessForMatchingEntry() {
@@ -537,7 +537,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             }
         }
         let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
-        guard case .credential(_, _, let totp) = response else {
+        guard case .credential(_, _, let totp, _) = response else {
             return XCTFail("expected credential response, got \(response)")
         }
         let code = try XCTUnwrap(totp, "expected a live TOTP code, got nil")
@@ -549,7 +549,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     func testFillCredentialReturnsNilTotpWhenEntryHasNoSecret() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         let response = service.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: authorizedPairingSecret))
-        guard case .credential(_, _, let totp) = response else {
+        guard case .credential(_, _, let totp, _) = response else {
             return XCTFail("expected credential response, got \(response)")
         }
         XCTAssertNil(totp)
@@ -772,6 +772,32 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         clock = clock.addingTimeInterval(0.5) // still inside the debounce window
 
         XCTAssertEqual(debounced.handle(.requestUnlock(token: "t", pairing: authorizedPairingSecret)), .unlockNotNeeded)
+    }
+
+    func testLockVaultLocksTheUnlockedSessionAndRefusesASecondCall() {
+        XCTAssertNotNil(session.currentDatabase)
+        XCTAssertEqual(service.handle(.lockVault(token: "t", pairing: nil)), .pairingRequired)
+        XCTAssertNotNil(session.currentDatabase)
+
+        XCTAssertEqual(service.handle(.lockVault(token: "t", pairing: authorizedPairingSecret)), .acknowledged)
+        XCTAssertNil(session.currentDatabase)
+        XCTAssertEqual(service.handle(.getCredentials(token: "t", url: "https://example.com", pairing: authorizedPairingSecret)), .locked)
+        XCTAssertEqual(service.handle(.lockVault(token: "t", pairing: authorizedPairingSecret)), .locked)
+    }
+
+    func testOpenAppFrontsTheWindowWhileLockedAndUnlocked() {
+        var opened = 0
+        service.onOpenAppRequested = { opened += 1 }
+        XCTAssertEqual(service.handle(.openApp(token: "t", pairing: nil)), .pairingRequired)
+        XCTAssertEqual(opened, 0)
+
+        XCTAssertEqual(service.handle(.openApp(token: "t", pairing: authorizedPairingSecret)), .acknowledged)
+        XCTAssertEqual(opened, 1)
+        XCTAssertNotNil(session.currentDatabase, "opening the app does not lock or unlock the vault")
+
+        session.lock()
+        XCTAssertEqual(service.handle(.openApp(token: "t", pairing: authorizedPairingSecret)), .acknowledged)
+        XCTAssertEqual(opened, 2)
     }
 
     func testOtherRequestsStillReturnLockedWhenVaultIsLocked() {
@@ -1939,6 +1965,88 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         session.lock()
         let locked = service.handle(.getGeneratedPasswordHistory(token: "t", pairing: authorizedPairingSecret))
         XCTAssertEqual(locked, .locked)
+    }
+
+    func testAddEntryIdentifierKeepsTheOldLoginAndStoresTheNewValue() throws {
+        let id = addFixtureEntry(title: "Yasno", username: "ada@example.com", password: "s3cret", url: "https://yasno.ua")
+        session.mutate { db in
+            guard let index = db.rootGroup.entries.firstIndex(where: { $0.uuid == id }) else { return }
+            db.rootGroup.entries[index].setFieldValue("secret-answer", forKey: "Security question", isProtected: true)
+        }
+
+        guard case .credentialList(let before) = service.handle(.getCredentials(token: "t", url: "https://yasno.ua/login", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected credentials")
+        }
+        XCTAssertEqual(before.first?.identifiers, [])
+
+        let added = service.handle(.addEntryIdentifier(
+            token: "t", id: id.uuidString, url: "https://yasno.ua/login",
+            value: " +38 066 183 74 99 ", fieldKey: "Phone", pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(added, .acknowledged)
+        let stored = try XCTUnwrap(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == id })
+        XCTAssertEqual(stored.login, "ada@example.com")
+        XCTAssertEqual(stored.fieldValue(forKey: "Phone"), "+38 066 183 74 99")
+        XCTAssertEqual(stored.password, "s3cret")
+
+        guard case .credentialList(let after) = service.handle(.getCredentials(token: "t", url: "https://yasno.ua/login", pairing: authorizedPairingSecret)) else {
+            return XCTFail("expected credentials")
+        }
+        XCTAssertEqual(after.first?.identifiers, ["+38 066 183 74 99"])
+
+        let duplicate = service.handle(.addEntryIdentifier(
+            token: "t", id: id.uuidString, url: "https://yasno.ua/login",
+            value: "+380661837499", fieldKey: "Phone", pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(duplicate, .acknowledged)
+        let stillOne = try XCTUnwrap(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == id })
+        XCTAssertEqual(stillOne.additionalFields.filter { $0.key.hasPrefix("Phone") }.count, 1)
+
+        let second = service.handle(.addEntryIdentifier(
+            token: "t", id: id.uuidString, url: "https://yasno.ua/login",
+            value: "+380671112233", fieldKey: "Phone", pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(second, .acknowledged)
+        let twoPhones = try XCTUnwrap(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == id })
+        XCTAssertEqual(twoPhones.fieldValue(forKey: "Phone 2"), "+380671112233")
+    }
+
+    func testAddEntryIdentifierFillsAnEmptyLoginAndRefusesTheWrongItem() throws {
+        let empty = addFixtureEntry(title: "Yasno", username: "", password: "s3cret", url: "https://yasno.ua")
+        let filled = service.handle(.addEntryIdentifier(
+            token: "t", id: empty.uuidString, url: "https://yasno.ua",
+            value: "+38 066 183 74 99", fieldKey: "Phone", pairing: authorizedPairingSecret
+        ))
+        XCTAssertEqual(filled, .acknowledged)
+        let stored = try XCTUnwrap(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == empty })
+        XCTAssertEqual(stored.login, "+38 066 183 74 99")
+        XCTAssertTrue(stored.additionalFields.isEmpty)
+
+        XCTAssertEqual(
+            service.handle(.addEntryIdentifier(
+                token: "t", id: empty.uuidString, url: "https://other.example",
+                value: "bob@example.com", fieldKey: "Email", pairing: authorizedPairingSecret
+            )),
+            .error("entry not found or domain mismatch")
+        )
+        XCTAssertEqual(
+            service.handle(.addEntryIdentifier(
+                token: "t", id: empty.uuidString, url: "https://yasno.ua",
+                value: "bob@example.com", fieldKey: "Email", pairing: nil
+            )),
+            .pairingRequired
+        )
+        let afterRefusal = try XCTUnwrap(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == empty })
+        XCTAssertEqual(afterRefusal.login, "+38 066 183 74 99")
+        XCTAssertTrue(afterRefusal.additionalFields.isEmpty)
+        session.lock()
+        XCTAssertEqual(
+            service.handle(.addEntryIdentifier(
+                token: "t", id: empty.uuidString, url: "https://yasno.ua",
+                value: "bob@example.com", fieldKey: "Email", pairing: authorizedPairingSecret
+            )),
+            .locked
+        )
     }
 }
 

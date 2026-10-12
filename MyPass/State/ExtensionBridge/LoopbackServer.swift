@@ -193,10 +193,13 @@ final class LoopbackServer {
         case .fillCredential(let token, _, _, _): return token
         case .getTotp(let token, _, _, _): return token
         case .proposeSaveLogin(let token, _, _, _, _): return token
+        case .addEntryIdentifier(let token, _, _, _, _, _): return token
         case .proposeSaveTotp(let token, _, _, _, _): return token
         case .startPairing(let token, _): return token
         case .completePairing(let token, _): return token
         case .requestUnlock(let token, _): return token
+        case .lockVault(let token, _): return token
+        case .openApp(let token, _): return token
         case .openBrowserSettings(let token, _): return token
         case .reportBrowserDiagnostics(let token, _, _): return token
         case .getPasskeyProxyStatus(let token, _): return token

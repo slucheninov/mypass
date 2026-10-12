@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html>
+<html data-theme="system">
 <head>
   <meta charset="utf-8">
   <title>Password generator</title>
@@ -10,8 +10,8 @@
       position: relative;
       overflow: hidden;
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      color: #1d1d1f;
-      background: #fff;
+      color: var(--mp-text);
+      background: var(--mp-bg);
       display: flex;
       flex-direction: column;
     }
@@ -27,7 +27,7 @@
       z-index: 5;
       display: flex;
       flex-direction: column;
-      background: #fff;
+      background: var(--mp-bg);
       transform: translateX(100%);
       transition: transform 0.24s ease;
     }
@@ -108,18 +108,18 @@
     }
     .pw-digit { color: #007aff; }
     .pw-symbol { color: #e85d4c; }
-    .pw-letter { color: #1d1d1f; }
+    .pw-letter { color: var(--mp-text); }
     .strength {
       height: 4px;
       margin: 8px 0 4px;
-      background: #ececef;
+      background: var(--mp-hairline);
       border-radius: 2px;
       overflow: hidden;
     }
     #strength-fill { height: 100%; width: 0; background: #e5484d; }
     .hint, .generator-error {
       margin: 8px 0 0;
-      color: #6e6e73;
+      color: var(--mp-secondary);
       font-size: 13px;
       line-height: 1.35;
     }
@@ -129,7 +129,7 @@
       align-items: center;
       gap: 12px;
       min-height: 48px;
-      border-top: 1px solid #ececef;
+      border-top: 1px solid var(--mp-hairline);
       margin-top: 8px;
       padding-top: 8px;
     }
@@ -139,7 +139,7 @@
       box-sizing: border-box;
       height: var(--mp-control-height, 32px);
       border: 1px solid var(--mp-line, #d2d2d7);
-      background: #fff;
+      background: var(--mp-bg);
       border-radius: var(--mp-control-radius, 8px);
       font: inherit;
       font-size: var(--mp-control-font, 13px);
@@ -155,7 +155,7 @@
       top: calc(100% + 4px);
       z-index: 3;
       min-width: 230px;
-      background: #fff;
+      background: var(--mp-bg);
       border: 1px solid #e5e5e7;
       border-radius: 12px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
@@ -178,7 +178,7 @@
       margin-left: auto;
       color: #007aff;
     }
-    .type-option:hover { background: #f5f5f7; }
+    .type-option:hover { background: var(--mp-fill); }
     .slider-row input[type="range"] { flex: 1; margin-left: auto; }
     .slider-row input[type="number"] {
       width: 52px;
@@ -192,7 +192,7 @@
     select#memorable-separator {
       margin-left: auto;
       border: 1px solid #d2d2d7;
-      background: #fff;
+      background: var(--mp-bg);
       border-radius: 8px;
       font: inherit;
       font-size: 14px;
@@ -214,7 +214,7 @@
       height: 22px;
       top: 2px;
       left: 2px;
-      background: #fff;
+      background: var(--mp-bg);
       border-radius: 50%;
       box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
     }
@@ -227,7 +227,7 @@
       gap: 8px;
       margin-top: 8px;
       border: 0;
-      border-top: 1px solid #ececef;
+      border-top: 1px solid var(--mp-hairline);
       background: transparent;
       color: #8e8e93;
       font-size: 14px;
@@ -260,7 +260,7 @@
       padding: 10px 12px;
       margin-bottom: 8px;
     }
-    .history-row:hover, .history-row.menu-open { background: #ececef; }
+    .history-row:hover, .history-row.menu-open { background: var(--mp-hairline); }
     .history-top { display: flex; align-items: flex-start; gap: 8px; }
     .history-title {
       flex: 1;
@@ -284,20 +284,20 @@
       font: inherit;
       cursor: pointer;
     }
-    .history-show { font-weight: 700; font-size: 14px; color: #1d1d1f; }
+    .history-show { font-weight: 700; font-size: 14px; color: var(--mp-text); }
     .history-menu-btn {
       width: 28px;
       height: 28px;
       border-radius: 6px;
       background: #d8d8de;
-      color: #1d1d1f;
+      color: var(--mp-text);
     }
     .history-menu {
       position: absolute;
       right: 8px;
       top: 40px;
       z-index: 2;
-      background: #fff;
+      background: var(--mp-bg);
       border-radius: 12px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.16);
       padding: 4px;
@@ -311,7 +311,7 @@
       border-radius: 8px;
       font-size: 14px;
     }
-    .history-menu button:hover { background: #f5f5f7; }
+    .history-menu button:hover { background: var(--mp-fill); }
     .history-secret {
       margin-top: 4px;
       color: #8e8e93;
@@ -418,6 +418,8 @@
       <div id="history-list"></div>
     </main>
   </section>
+  <script src="shared/appearance-settings.js"></script>
+  <script src="shared/theme.js"></script>
   <script src="shared/password-generator.js"></script>
   <script src="generator.js"></script>
 </body>

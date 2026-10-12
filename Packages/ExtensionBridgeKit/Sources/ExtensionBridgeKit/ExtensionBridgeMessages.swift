@@ -38,10 +38,19 @@ public enum ExtensionBridgeRequest: Equatable {
     case fillCredential(token: String, id: String, url: String, pairing: String?)
     case getTotp(token: String, id: String, url: String, pairing: String?)
     case proposeSaveLogin(token: String, url: String, username: String, password: String, pairing: String?)
+    /// Writes a page identifier onto an existing item for this URL. An empty login
+    /// becomes the username. A login that is already set is left in place and the
+    /// value is stored as a custom field named by `fieldKey` (`Phone`, `Email`, or `Login`).
+    case addEntryIdentifier(token: String, id: String, url: String, value: String, fieldKey: String, pairing: String?)
     case proposeSaveTotp(token: String, url: String, otpauthOrSecret: String, entryId: String?, pairing: String?)
     case startPairing(token: String, browser: String?)
     case completePairing(token: String, code: String)
     case requestUnlock(token: String, pairing: String?)
+    /// Locks the unlocked vault. The service worker accepts this only from the popup.
+    case lockVault(token: String, pairing: String?)
+    /// Brings the MyPass window forward, locked or unlocked. The service worker
+    /// accepts this only from the popup, so a page cannot steal focus.
+    case openApp(token: String, pairing: String?)
     case openBrowserSettings(token: String, pairing: String?)
     case reportBrowserDiagnostics(token: String, report: BrowserDiagnosticsReport, pairing: String?)
     case getPasskeyProxyStatus(token: String, pairing: String?)
@@ -63,7 +72,7 @@ public enum ExtensionBridgeRequest: Equatable {
 
 extension ExtensionBridgeRequest: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, token, url, id, username, password, pairing, browser, code, otpauthOrSecret, entryId
+        case type, token, url, id, username, password, pairing, browser, code, otpauthOrSecret, entryId, value, fieldKey
         case enabled, requestId, requestDetailsJson, originUrl, replace, domain
         case category, query, entryType, title, cardNumber, cardholderName, expiry, cvv, notes
         case favorite, match, otp, createdAt, report
@@ -131,6 +140,15 @@ extension ExtensionBridgeRequest: Codable {
             let password = try container.decode(String.self, forKey: .password)
             let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
             self = .proposeSaveLogin(token: token, url: url, username: username, password: password, pairing: pairing)
+        case "addEntryIdentifier":
+            self = .addEntryIdentifier(
+                token: token,
+                id: try container.decode(String.self, forKey: .id),
+                url: try container.decode(String.self, forKey: .url),
+                value: try container.decode(String.self, forKey: .value),
+                fieldKey: try container.decode(String.self, forKey: .fieldKey),
+                pairing: try container.decodeIfPresent(String.self, forKey: .pairing)
+            )
         case "proposeSaveTotp":
             let url = try container.decode(String.self, forKey: .url)
             let otpauthOrSecret = try container.decode(String.self, forKey: .otpauthOrSecret)
@@ -146,6 +164,10 @@ extension ExtensionBridgeRequest: Codable {
         case "requestUnlock":
             let pairing = try container.decodeIfPresent(String.self, forKey: .pairing)
             self = .requestUnlock(token: token, pairing: pairing)
+        case "lockVault":
+            self = .lockVault(token: token, pairing: try container.decodeIfPresent(String.self, forKey: .pairing))
+        case "openApp":
+            self = .openApp(token: token, pairing: try container.decodeIfPresent(String.self, forKey: .pairing))
         case "openBrowserSettings":
             self = .openBrowserSettings(token: token, pairing: try container.decodeIfPresent(String.self, forKey: .pairing))
         case "reportBrowserDiagnostics":
@@ -286,6 +308,14 @@ extension ExtensionBridgeRequest: Codable {
             try container.encode(username, forKey: .username)
             try container.encode(password, forKey: .password)
             try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .addEntryIdentifier(let token, let id, let url, let value, let fieldKey, let pairing):
+            try container.encode("addEntryIdentifier", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encode(id, forKey: .id)
+            try container.encode(url, forKey: .url)
+            try container.encode(value, forKey: .value)
+            try container.encode(fieldKey, forKey: .fieldKey)
+            try container.encodeIfPresent(pairing, forKey: .pairing)
         case .proposeSaveTotp(let token, let url, let otpauthOrSecret, let entryId, let pairing):
             try container.encode("proposeSaveTotp", forKey: .type)
             try container.encode(token, forKey: .token)
@@ -303,6 +333,14 @@ extension ExtensionBridgeRequest: Codable {
             try container.encode(code, forKey: .code)
         case .requestUnlock(let token, let pairing):
             try container.encode("requestUnlock", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .lockVault(let token, let pairing):
+            try container.encode("lockVault", forKey: .type)
+            try container.encode(token, forKey: .token)
+            try container.encodeIfPresent(pairing, forKey: .pairing)
+        case .openApp(let token, let pairing):
+            try container.encode("openApp", forKey: .type)
             try container.encode(token, forKey: .token)
             try container.encodeIfPresent(pairing, forKey: .pairing)
         case .openBrowserSettings(let token, let pairing):
@@ -393,10 +431,10 @@ public extension ExtensionBridgeRequest {
             return true
         // Exists specifically to report lock state to the extension's proxy-attach
         // lifecycle. Answering it with a blanket `.locked` would make it useless.
-        case .getPasskeyProxyStatus, .openBrowserSettings, .reportBrowserDiagnostics:
+        case .getPasskeyProxyStatus, .openBrowserSettings, .reportBrowserDiagnostics, .openApp:
             return true
-        case .getCredentials, .getFavorites, .listEntries, .searchEntries, .createEntry, .fillAddress, .fillCredential, .getTotp,
-             .proposeSaveLogin, .proposeSaveTotp, .startPairing, .completePairing,
+        case .getCredentials, .getFavorites, .listEntries, .searchEntries, .createEntry, .addEntryIdentifier, .fillAddress, .fillCredential, .getTotp,
+             .proposeSaveLogin, .proposeSaveTotp, .startPairing, .completePairing, .lockVault,
              .setPasskeyProxyEnabled, .passkeyCreate, .passkeyCreateConfirm, .passkeyGet, .passkeyGetApprove, .passkeyCancel,
              .generatePassword, .recordGeneratedPassword, .getGeneratedPasswordHistory, .deleteGeneratedPassword:
             return false
@@ -434,7 +472,7 @@ public extension ExtensionBridgeRequest {
         // own timing.
         case .fillAddress, .fillCredential, .getTotp, .proposeSaveLogin, .proposeSaveTotp,
              .passkeyCreateConfirm, .passkeyGetApprove, .requestUnlock, .generatePassword,
-             .getFavorites, .listEntries, .searchEntries, .createEntry,
+             .getFavorites, .listEntries, .searchEntries, .createEntry, .addEntryIdentifier,
              .recordGeneratedPassword, .getGeneratedPasswordHistory, .deleteGeneratedPassword:
             return true
         // Page-triggerable, no user gesture required: `content.js`'s automatic
@@ -445,8 +483,10 @@ public extension ExtensionBridgeRequest {
             return false
         // Can all fire without the user acting: status polling, the app-side toggle
         // mirrored from Settings, and the pairing handshake driven by the browser side.
+        // `lockVault` is a popup gesture, but its job is to lock, so it must not
+        // record activity and keep the idle timer alive.
         case .getPasskeyProxyStatus, .setPasskeyProxyEnabled, .startPairing, .completePairing, .passkeyCancel,
-             .openBrowserSettings, .reportBrowserDiagnostics:
+             .openBrowserSettings, .reportBrowserDiagnostics, .lockVault, .openApp:
             return false
         }
     }
@@ -465,10 +505,13 @@ public struct ExtensionCredentialSummary: Codable, Equatable {
     public let url: String?
     /// Login, Address, Card, or Notes. Omitted on site-match rows.
     public let entryType: String?
+    /// Non-protected custom field values. The popup compares a value typed on the
+    /// page with these and with `username`. Protected fields are not included.
+    public let identifiers: [String]
 
     public init(
         id: String, title: String, username: String, hasTotp: Bool, hasPasskey: Bool,
-        url: String? = nil, entryType: String? = nil
+        url: String? = nil, entryType: String? = nil, identifiers: [String] = []
     ) {
         self.id = id
         self.title = title
@@ -477,10 +520,11 @@ public struct ExtensionCredentialSummary: Codable, Equatable {
         self.hasPasskey = hasPasskey
         self.url = url
         self.entryType = entryType
+        self.identifiers = identifiers
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, title, username, hasTotp, hasPasskey, url, entryType
+        case id, title, username, hasTotp, hasPasskey, url, entryType, identifiers
     }
 
     public init(from decoder: Decoder) throws {
@@ -492,6 +536,7 @@ public struct ExtensionCredentialSummary: Codable, Equatable {
         hasPasskey = try container.decode(Bool.self, forKey: .hasPasskey)
         url = try container.decodeIfPresent(String.self, forKey: .url)
         entryType = try container.decodeIfPresent(String.self, forKey: .entryType)
+        identifiers = try container.decodeIfPresent([String].self, forKey: .identifiers) ?? []
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -503,6 +548,9 @@ public struct ExtensionCredentialSummary: Codable, Equatable {
         try container.encode(hasPasskey, forKey: .hasPasskey)
         try container.encodeIfPresent(url, forKey: .url)
         try container.encodeIfPresent(entryType, forKey: .entryType)
+        if !identifiers.isEmpty {
+            try container.encode(identifiers, forKey: .identifiers)
+        }
     }
 }
 
@@ -544,7 +592,10 @@ public enum ExtensionBridgeResponse: Equatable {
     case paired(secret: String)
     case credentialList([ExtensionCredentialSummary])
     case address(ExtensionAddress)
-    case credential(username: String, password: String, totp: String?)
+    /// `urls` are the item's saved websites. The extension uses them only to
+    /// decide whether a later paste or copy is still on one of those sites.
+    /// Omitted on the wire when empty so older callers stay valid.
+    case credential(username: String, password: String, totp: String?, urls: [String] = [])
     case totp(code: String)
     case saveProposalAccepted
     case unlockPresented
@@ -568,7 +619,7 @@ public enum ExtensionBridgeResponse: Equatable {
 
 extension ExtensionBridgeResponse: Codable {
     private enum CodingKeys: String, CodingKey {
-        case type, credentials, username, password, totp, message, secret, code
+        case type, credentials, username, password, totp, urls, message, secret, code
         case unlocked, paired, attachAllowed, enabled, requestId, rpId, rpName, matches, responseJson, error
         case entries, address
     }
@@ -595,7 +646,8 @@ extension ExtensionBridgeResponse: Codable {
             let username = try container.decode(String.self, forKey: .username)
             let password = try container.decode(String.self, forKey: .password)
             let totp = try container.decodeIfPresent(String.self, forKey: .totp)
-            self = .credential(username: username, password: password, totp: totp)
+            let urls = try container.decodeIfPresent([String].self, forKey: .urls) ?? []
+            self = .credential(username: username, password: password, totp: totp, urls: urls)
         case "totp":
             let code = try container.decode(String.self, forKey: .code)
             self = .totp(code: code)
@@ -680,11 +732,14 @@ extension ExtensionBridgeResponse: Codable {
         case .address(let address):
             try container.encode("address", forKey: .type)
             try container.encode(address, forKey: .address)
-        case .credential(let username, let password, let totp):
+        case .credential(let username, let password, let totp, let urls):
             try container.encode("credential", forKey: .type)
             try container.encode(username, forKey: .username)
             try container.encode(password, forKey: .password)
             try container.encodeIfPresent(totp, forKey: .totp)
+            if !urls.isEmpty {
+                try container.encode(urls, forKey: .urls)
+            }
         case .totp(let code):
             try container.encode("totp", forKey: .type)
             try container.encode(code, forKey: .code)

@@ -35,6 +35,8 @@ let completedGet = null;
 let completedIsUvpaa = null;
 let popupOpened = 0;
 let notified = 0;
+let lastNotificationId = null;
+let notificationClickListener = null;
 let openPopupResult = () => Promise.resolve();
 let canceledListener;
 let alarmListener;
@@ -68,7 +70,10 @@ global.chrome = {
     completeIsUvpaaRequest: (details) => { completedIsUvpaa = details; }
   },
   action: { openPopup: () => { popupOpened += 1; return openPopupResult(); } },
-  notifications: { create: () => { notified += 1; } },
+  notifications: {
+    create: (id) => { notified += 1; lastNotificationId = id; },
+    onClicked: { addListener: (listener) => { notificationClickListener = listener; } }
+  },
   tabs: { query: (_opts, cb) => cb([{ url: 'https://example.com' }]) }
 };
 
@@ -101,7 +106,9 @@ function resetState() {
   completedIsUvpaa = null;
   popupOpened = 0;
   notified = 0;
+  lastNotificationId = null;
   localStore.passkeyProxyEnabled = true;
+  delete localStore.mypassNotificationSettings;
   openPopupResult = () => Promise.resolve();
   nativeResponder = () => ({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: true, enabled: true });
 }
@@ -135,6 +142,9 @@ const detailsFor = (origin) => JSON.stringify({
 });
 
 (async () => {
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.strictEqual(notified, 0, 'a worker that starts while the vault is already unlocked stays quiet');
+
   // --- attach gating (app-authoritative: every status fetch resyncs the cache) --------
   resetState();
   await attachPasskeyProxyIfEligible();
@@ -536,7 +546,54 @@ const detailsFor = (origin) => JSON.stringify({
   alarmListener({ name: PASSKEY_REFRESH_ALARM });
   await new Promise((resolve) => setImmediate(resolve));
   assert.strictEqual(attachCalled, true);
+  assert.strictEqual(popupOpened, 0, 'an unlock probe does not open the popup');
+  assert.strictEqual(notified, 1, 'a lock then unlock posts one notification');
+  assert.strictEqual(lastNotificationId, 'mypass-unlocked');
   assert.ok(sentNativeMessages.every((message) => ['getPasskeyProxyStatus', 'reportBrowserDiagnostics'].includes(message.type)));
+
+  resetState();
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', enabled: true, paired: true, unlocked: false, attachAllowed: false });
+  await attachPasskeyProxyIfEligible();
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', enabled: true, paired: true, unlocked: true, attachAllowed: true });
+  await attachPasskeyProxyIfEligible();
+  assert.strictEqual(notified, 1);
+  assert.strictEqual(lastNotificationId, 'mypass-unlocked');
+  await attachPasskeyProxyIfEligible();
+  assert.strictEqual(notified, 1, 'staying unlocked does not notify again');
+  nativeResponder = () => ({ type: 'error' });
+  await attachPasskeyProxyIfEligible();
+  nativeResponder = () => ({ type: 'pairingRequired' });
+  await attachPasskeyProxyIfEligible();
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', enabled: true, paired: true, unlocked: true, attachAllowed: true });
+  await attachPasskeyProxyIfEligible();
+  assert.strictEqual(notified, 1, 'an error between two unlock readings is not a lock');
+  localStore.mypassNotificationSettings = { passkeyConfirmation: true, vaultUnlocked: false };
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', enabled: true, paired: true, unlocked: false, attachAllowed: false });
+  await attachPasskeyProxyIfEligible();
+  nativeResponder = () => ({ type: 'passkeyProxyStatus', enabled: true, paired: true, unlocked: true, attachAllowed: true });
+  notified = 0;
+  await attachPasskeyProxyIfEligible();
+  assert.strictEqual(notified, 0, 'the unlock switch can turn the notification off');
+  assert.strictEqual(popupOpened, 0);
+  delete localStore.mypassNotificationSettings;
+
+  resetState();
+  localStore.mypassNotificationSettings = { passkeyConfirmation: false, vaultUnlocked: true };
+  openPopupResult = () => Promise.reject(new Error('kOpenPopupInactiveWindow'));
+  nativeResponder = () => ({ type: 'passkeyGetPending', requestId: 11, rpId: 'example.com', matches: [] });
+  await handlePasskeyRequest('get', 11, detailsFor('https://example.com'));
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.strictEqual(popupOpened, 1, 'the passkey switch does not skip the popup');
+  assert.strictEqual(notified, 0, 'the passkey switch can turn the fallback notification off');
+  delete localStore.mypassNotificationSettings;
+
+  resetState();
+  openPopupResult = () => Promise.reject(new Error('kOpenPopupInactiveWindow'));
+  const openedBeforeClick = popupOpened;
+  notificationClickListener('mypass-unlocked');
+  await new Promise((resolve) => setTimeout(resolve, 0));
+  assert.strictEqual(popupOpened, openedBeforeClick + 1);
+  assert.strictEqual(notified, 0, 'clicking the unlock notification does not post another one');
 
   // A refused setting mutation cannot detach the proxy or rewrite the mirror.
   resetState();

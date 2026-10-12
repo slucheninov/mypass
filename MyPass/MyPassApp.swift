@@ -274,6 +274,11 @@ struct MyPassApp: App {
                 NotificationCenter.default.post(name: .requestDeviceUnlockPrompt, object: nil)
             }
         }
+        extensionBridgeService.onOpenAppRequested = {
+            DispatchQueue.main.async {
+                MainWindowActivator.request()
+            }
+        }
 
         // Best-effort cleanup of the pre-2026-07-28 Touch ID enrollment, which stored a
         // derived key under a fixed "master" account. Safe to call even if nothing is stored.

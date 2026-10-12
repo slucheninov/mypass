@@ -32,6 +32,9 @@
         formDetection: require('./shared/form-detection.js'),
         addressForm: require('./shared/address-form.js'),
         totpDetection: require('./shared/totp-detection.js'),
+        pageIdentifier: require('./shared/page-identifier.js'),
+        securityWatch: require('./shared/security-watch.js'),
+        autofillSettings: require('./shared/autofill-settings.js'),
       }
     : {
         urlMatch: mypassUrlMatch,
@@ -40,8 +43,12 @@
         formDetection: mypassFormDetection,
         addressForm: mypassAddressForm,
         totpDetection: mypassTotpDetection,
+        pageIdentifier: mypassPageIdentifier,
+        securityWatch: mypassSecurityWatch,
+        autofillSettings: mypassAutofillSettings,
       };
   const hostnameMatches = shared.urlMatch.hostnameMatches;
+  const securityWatch = shared.securityWatch;
   const classifyGetCredentialsResponse = shared.bridgeStatus.classifyGetCredentialsResponse;
   const isBase32Secret = shared.base32.isBase32Secret;
   const {
@@ -77,6 +84,7 @@
     totpScan: 'topOnly',
     totpCandidateQuery: 'topOnly',
     newPasswordFieldQuery: 'topOnly',
+    pageIdentifierQuery: 'topOnly',
     pendingOpenFill: 'topOnly',
   };
 
@@ -153,14 +161,15 @@
   // Panel state is a function of the connection state and the field kind, never of which
   // element was clicked. Extracted as a pure function for the same reason Stage 6 extracted
   // choosePasskeyPanel: routing is the part worth testing, and a DOM makes it untestable.
-  function chooseInlinePanel(response, fieldKind) {
+  function chooseInlinePanel(response, fieldKind, settings) {
     const kind = classifyGetCredentialsResponse(response);
     if (kind === 'locked') return { panel: 'locked', entries: [] };
     if (kind === 'pairingRequired') return { panel: 'pairingRequired', entries: [] };
     if (kind !== 'credentialList') return { panel: 'unavailable', entries: [] };
 
     const all = response.credentials || [];
-    const entries = fieldKind === 'otp' ? all.filter((entry) => entry.hasTotp) : all;
+    const matched = fieldKind === 'otp' ? all.filter((entry) => entry.hasTotp) : all;
+    const entries = shared.autofillSettings.filterSuggestionEntries(matched, settings);
     return entries.length === 0 ? { panel: 'empty', entries: [] } : { panel: 'entries', entries };
   }
 
@@ -339,11 +348,13 @@
   // the browser-only wiring below passes attachIcons so newly-inserted fields get an
   // icon on the same debounce that re-checks for TOTP candidates. The frame gating itself
   // lives in buildMutationSweep above, where it can be exercised with spies instead of a DOM.
-  function observeTotpCandidates(state, onMutation, isTopFrame) {
+  function observeTotpCandidates(state, onMutation, isTopFrame, offerSave) {
     const notifyMutation = typeof onMutation === 'function' ? onMutation : () => {};
+    const mayOfferSave = typeof offerSave === 'function' ? offerSave : () => true;
     const sweep = buildMutationSweep({
       onAttachIcons: notifyMutation,
       onScanForBanner: () => {
+        if (!mayOfferSave()) return;
         const detected = detectTotpCandidateWithPriority(document);
         if (shouldShowTotpBanner(detected, state)) {
           showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
@@ -865,6 +876,10 @@
       totpBannerShown: false,
       totpBannerDismissed: null,
     };
+    // Defaults match today's page until chrome.storage answers. Icons wait for
+    // that answer so a saved "off" does not flash an icon first.
+    let pageAutofillSettings = shared.autofillSettings.defaultAutofillSettings();
+    let autofillSettingsReady = false;
 
     function requestCredentials() {
       sendRuntimeMessage({ type: 'getCredentials', url: location.href }, (response) => {
@@ -977,7 +992,15 @@
     }
 
     function attachIcons() {
+      if (!autofillSettingsReady) return;
       pruneDetachedIcons();
+      if (!pageAutofillSettings.showFieldIcon) {
+        attachedIcons.forEach((record, input) => {
+          if (openPanel && openPanel.input === input) closePanel();
+          releaseIcon(input, record);
+        });
+        return;
+      }
       for (const field of findFillableFields(document)) {
         attachIconTo(field.input, field.kind, field.isNewPassword);
       }
@@ -1039,7 +1062,7 @@
       sendRuntimeMessage({ type: 'getCredentials', url: location.href }, (response) => {
         // Superseded by a later open, or cancelled by a close, while we were waiting.
         if (requestId !== panelRequestId) return;
-        const routed = chooseInlinePanel(response, kind);
+        const routed = chooseInlinePanel(response, kind, pageAutofillSettings);
         // Handle for manual verification only (RUN.md) — never used as logic. Identity
         // against `host` is what closePanel/isOwnHost actually rely on. The panel is a
         // list, not a button, so it gets the bare scaffolding — no icon glyph inside it.
@@ -1107,6 +1130,7 @@
       loginForm.form.addEventListener('submit', () => {
         if (
           runsHere('saveBanner') &&
+          pageAutofillSettings.offerSaveLogin &&
           !state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0
         ) {
           const username = loginForm.usernameInput ? loginForm.usernameInput.value : '';
@@ -1122,7 +1146,7 @@
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
       if (message.type === 'queryAddressForm') {
         if (window.top !== window || message.url !== location.href) return;
-        const groups = shared.addressForm.collect(document);
+        const groups = pageAutofillSettings.showAddresses ? shared.addressForm.collect(document) : [];
         addressSnapshot = { challenge: message.challenge, url: location.href, groups, at: Date.now() };
         // The background obtains documentId from Chrome's authenticated sender,
         // not from a value supplied by the page or the popup.
@@ -1158,6 +1182,14 @@
         sendResponse(buildNewPasswordFieldQueryResponse(document));
         return;
       }
+      if (message.type === 'queryPageIdentifier') {
+        if (!runsHere('pageIdentifierQuery')) return;
+        const found = shared.pageIdentifier.readPageIdentifier(document, {
+          isFieldVisible, findOtpField, scoreUsernameLikeness
+        });
+        sendResponse(found || { value: '', kind: '' });
+        return;
+      }
       if (message.type === 'applyFill') {
         // Consumed before the origin guard, not after: a rejected message must still clear
         // the target, or a hostname-mismatched applyFill would leave the clicked field armed
@@ -1178,11 +1210,20 @@
         if (usernameInput && message.username) {
           setNativeValue(usernameInput, message.username);
         }
+        let wrotePassword = false;
         if (passwordInput && message.password) {
           setNativeValue(passwordInput, message.password);
+          wrotePassword = true;
         }
         if (message.totp && otpInput) {
           setNativeValue(otpInput, message.totp);
+        }
+        // Opt-in only. click() is not a trusted user click; some sites ignore it.
+        // A generated password (fillTarget newPassword) and a code-only fill do not submit.
+        if (wrotePassword) {
+          shared.autofillSettings.maybeSubmitFilledLogin(
+            passwordInput, pageAutofillSettings, true, message.fillTarget
+          );
         }
       }
     });
@@ -1195,7 +1236,44 @@
       requestCredentials();
       attachSubmitListener(loginForm);
     }
-    attachIcons();
+    function scanTotpBanner() {
+      if (!runsHere('totpScan') || !pageAutofillSettings.offerSaveTotp) return;
+      const detected = detectTotpCandidateWithPriority(document);
+      if (shouldShowTotpBanner(detected, state)) {
+        showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+      }
+    }
+
+    function loadPageAutofillSettings() {
+      const key = shared.autofillSettings.AUTOFILL_SETTINGS_KEY;
+      const apply = (value) => {
+        pageAutofillSettings = shared.autofillSettings.normalizeAutofillSettings(value);
+        autofillSettingsReady = true;
+        attachIcons();
+        scanTotpBanner();
+      };
+      const storage = chrome.storage && chrome.storage.local;
+      if (!storage || typeof storage.get !== 'function') {
+        apply(null);
+        return;
+      }
+      storage.get([key], (stored) => {
+        if (chrome.runtime && chrome.runtime.lastError) {
+          apply(null);
+          return;
+        }
+        apply(stored && stored[key]);
+      });
+      if (chrome.storage.onChanged && typeof chrome.storage.onChanged.addListener === 'function') {
+        chrome.storage.onChanged.addListener((changes, area) => {
+          if (area !== 'local' || !changes[key]) return;
+          pageAutofillSettings = shared.autofillSettings.normalizeAutofillSettings(changes[key].newValue);
+          if (!autofillSettingsReady) return;
+          attachIcons();
+        });
+      }
+    }
+    loadPageAutofillSettings();
 
     // A vault row click opens this tab, then asks the app for the login. The popup
     // cannot message a tab it just created (activeTab covers only the tab that was
@@ -1238,13 +1316,72 @@
       if (event.key === 'Escape') closePanel();
     }, true);
 
-    if (runsHere('totpScan')) {
-      const detected = detectTotpCandidateWithPriority(document);
-      if (shouldShowTotpBanner(detected, state)) {
-        showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+    // A trusted paste or copy of a login MyPass just filled, on a site that is
+    // not saved with that item. The text goes to the service worker for the
+    // comparison. The page only sees the warning, never the stored secret.
+    let securityWarningEl = null;
+    function showSecurityWarning(action) {
+      const message = action === 'paste'
+        ? 'This site is not saved with this MyPass password.'
+        : 'This site is not saved with this MyPass login.';
+      if (securityWarningEl && securityWarningEl.isConnected) {
+        securityWarningEl.firstChild.textContent = message;
+        return;
       }
+      const banner = document.createElement('div');
+      banner.setAttribute('role', 'status');
+      banner.style.cssText =
+        'position:fixed;bottom:16px;left:16px;right:16px;z-index:2147483647;background:#fff7ed;' +
+        'color:#9a3412;padding:12px 14px;border-radius:8px;border:1px solid #fdba74;' +
+        'font-family:sans-serif;font-size:13px;line-height:1.35;box-shadow:0 2px 8px rgba(0,0,0,0.18);' +
+        'display:flex;align-items:center;gap:8px;';
+      const text = document.createElement('span');
+      text.textContent = message;
+      text.style.cssText = 'flex:1;';
+      const closeButton = document.createElement('button');
+      closeButton.type = 'button';
+      closeButton.textContent = 'Dismiss';
+      closeButton.style.cssText = 'cursor:pointer;border:0;background:#9a3412;color:#fff;border-radius:6px;padding:4px 8px;';
+      closeButton.addEventListener('click', trustedClickHandler(() => {
+        banner.remove();
+        securityWarningEl = null;
+      }));
+      banner.appendChild(text);
+      banner.appendChild(closeButton);
+      (document.body || document.documentElement).appendChild(banner);
+      securityWarningEl = banner;
     }
-    mutationObserver = observeTotpCandidates(state, attachIcons, IS_TOP_FRAME);
+    function reportSecurityUse(action, text, event) {
+      if (!isTrustedActivation(event)) return;
+      if (typeof text !== 'string' || text.length < securityWatch.SECURITY_MATCH_MIN_LENGTH) return;
+      sendRuntimeMessage({
+        type: 'checkSecurityUse',
+        action: action,
+        text: text.slice(0, 500),
+        url: location.href
+      }, (result) => {
+        if (result && result.warn === true) showSecurityWarning(action);
+      });
+    }
+    document.addEventListener('paste', (event) => {
+      const data = event.clipboardData && event.clipboardData.getData('text/plain');
+      reportSecurityUse('paste', data || '', event);
+    }, true);
+    document.addEventListener('copy', (event) => {
+      const target = event.target;
+      const selection = window.getSelection ? String(window.getSelection()) : '';
+      const text = securityWatch.textFromCopyTarget(
+        target && target.value,
+        target && target.selectionStart,
+        target && target.selectionEnd,
+        selection
+      );
+      reportSecurityUse('copy', text, event);
+    }, true);
+
+    mutationObserver = observeTotpCandidates(
+      state, attachIcons, IS_TOP_FRAME, () => autofillSettingsReady && pageAutofillSettings.offerSaveTotp
+    );
   }
 
   if (typeof module !== 'undefined') {

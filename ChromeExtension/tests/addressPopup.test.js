@@ -103,4 +103,19 @@ click(row());
 assert.ok(chooser()[0].textContent.includes('No supported address form'));
 assert.equal(buttons().length, 1, 'no form does not offer a dead fill button');
 assert.ok(!sent.some((message) => message.type === 'fillCredential' || message.type === 'armOpenAndFill'));
+
+const originalGet = chrome.storage.local.get;
+chrome.storage.local.get = (keys, cb) => {
+  const stored = { mypassAutofillSettings: { showAddresses: false } };
+  const result = {};
+  if (Array.isArray(keys)) keys.forEach((name) => { if (stored[name] !== undefined) result[name] = stored[name]; });
+  cb(result);
+};
+const sentBefore = sent.length;
+selectAddresses();
+click(row());
+assert.equal(sent.length, sentBefore + 1, 'a hidden address suggestion does not inspect the form');
+assert.equal(sent.at(-1).type, 'listEntries');
+assert.ok(chooser()[0].textContent.includes('Autofill and save'));
+chrome.storage.local.get = originalGet;
 console.log('addressPopup.test.js: explicit destination/form confirmation, trusted actions, focus and errors OK');

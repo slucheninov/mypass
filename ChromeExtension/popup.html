@@ -1,18 +1,24 @@
 <!DOCTYPE html>
-<html>
+<html data-theme="system">
 <head>
   <meta charset="utf-8">
   <title>MyPass</title>
   <link rel="stylesheet" href="shared/ui.css">
   <style>
+    html {
+      width: 400px;
+    }
     body {
       font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-      width: 340px;
+      width: 400px;
       margin: 0;
-      padding: 18px 16px;
+      padding: 16px;
       box-sizing: border-box;
-      color: #1d1d1f;
-      background: #fff;
+      color: var(--mp-text);
+      background: var(--mp-bg);
+    }
+    #panel-shell {
+      position: relative;
     }
     .brand-key {
       display: block;
@@ -31,14 +37,14 @@
     }
     p.panel-helper {
       font-size: 13px;
-      color: #6e6e73;
+      color: var(--mp-secondary);
       margin: 0 0 12px;
       line-height: 1.35;
     }
     p.list-header {
       font-size: 13px;
       font-weight: 600;
-      color: #1d1d1f;
+      color: var(--mp-text);
       margin: 0 0 8px;
     }
     .btn-primary,
@@ -63,9 +69,9 @@
       border-color: #007aff;
     }
     .btn-secondary {
-      background: #f5f5f7;
-      color: #1d1d1f;
-      border-color: #d2d2d7;
+      background: var(--mp-fill);
+      color: var(--mp-text);
+      border-color: var(--mp-line);
       margin-left: 8px;
     }
     .btn-row {
@@ -85,7 +91,7 @@
       cursor: pointer;
     }
     li.credential-row:hover {
-      background: #f5f5f7;
+      background: var(--mp-fill);
     }
     .letter-avatar {
       width: 36px;
@@ -113,12 +119,33 @@
     }
     .credential-username {
       font-size: 12px;
-      color: #6e6e73;
+      color: var(--mp-secondary);
       line-height: 1.25;
       margin-top: 2px;
       overflow: hidden;
       text-overflow: ellipsis;
       white-space: nowrap;
+    }
+    li.credential-row-unsaved {
+      background: var(--mp-accent-soft);
+    }
+    .identifier-offer {
+      margin: 4px 6px 10px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--mp-accent-soft);
+    }
+    .identifier-offer p {
+      margin: 0 0 8px;
+      line-height: 1.4;
+    }
+    .identifier-offer-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .identifier-offer .btn-secondary {
+      margin-left: 0;
     }
     .totp-circle {
       position: relative;
@@ -166,7 +193,7 @@
     #code-hint {
       margin: 0 0 6px;
       font-size: 12px;
-      color: #6e6e73;
+      color: var(--mp-secondary);
     }
     #code-input {
       width: 100%;
@@ -183,17 +210,17 @@
     #open-mypass-helper {
       margin: 8px 0 0;
       font-size: 12px;
-      color: #6e6e73;
+      color: var(--mp-secondary);
     }
     #add-totp-section {
       margin-top: 16px;
       padding-top: 12px;
-      border-top: 1px solid #e5e5e7;
+      border-top: 1px solid var(--mp-hairline);
     }
     #add-totp-hint {
       margin: 0 0 6px;
       font-size: 12px;
-      color: #6e6e73;
+      color: var(--mp-secondary);
     }
     #totp-paste-input {
       width: 100%;
@@ -216,7 +243,7 @@
       margin: 12px 0 20px;
       font-size: 13px;
     }
-    .passkey-fields dt { color: #6e6e73; }
+    .passkey-fields dt { color: var(--mp-secondary); }
     .passkey-fields dd { margin: 0; overflow-wrap: anywhere; word-break: normal; }
     .passkey-summary:empty { display: none; }
     #passkey-picker-list {
@@ -224,23 +251,163 @@
       margin: 0 0 8px;
       padding: 0;
     }
-    #passkey-settings-footer {
-      margin-top: 16px;
-      padding-top: 12px;
-      border-top: 1px solid #e5e5e7;
+    #popup-menu {
+      box-sizing: border-box;
+      background: var(--mp-bg);
+      margin: -16px;
+      padding: 16px;
+      max-height: 560px;
+      overflow: auto;
     }
-    #open-settings-btn,
-    #settings-back-btn {
+    /* The open menu replaces the page, so the popup height follows that page. */
+    #panel-shell:has(#popup-menu:not([hidden])) > :not(#popup-menu) {
+      display: none !important;
+    }
+    .popup-menu-row,
+    .popup-menu-back {
+      display: flex;
+      align-items: center;
+      width: 100%;
+      box-sizing: border-box;
+      min-height: 40px;
+      text-align: left;
+      border: 0;
+      background: transparent;
+      color: var(--mp-text);
+      font: inherit;
+      font-size: 14px;
+      font-weight: 500;
+      padding: 8px 10px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .popup-menu-back {
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+    .popup-menu-row:hover,
+    .popup-menu-back:hover,
+    .popup-menu-row:focus-visible,
+    .popup-menu-back:focus-visible {
+      background: var(--mp-fill);
+      outline: none;
+    }
+    .popup-menu-row {
+      gap: 10px;
+    }
+    .popup-menu-icon {
+      width: 18px;
+      height: 18px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      color: var(--mp-text);
+    }
+    .popup-menu-icon svg {
+      display: block;
+    }
+    .popup-menu-icon-tile {
+      width: 22px;
+      height: 22px;
+      border-radius: 6px;
+      color: #fff;
+    }
+    .popup-menu-icon-general { background: #4c9aff; }
+    .popup-menu-icon-security { background: #f5a623; }
+    .popup-menu-icon-autofill { background: #34c759; }
+    .popup-menu-icon-notifications { background: #ff6b8a; }
+    .popup-menu-icon-appearance { background: #af52de; }
+    .popup-menu-icon-about { background: #007aff; }
+    .popup-menu-drill::after {
+      content: "›";
+      margin-left: auto;
+      color: var(--mp-muted);
+      font-size: 18px;
+      line-height: 1;
+    }
+    .popup-menu-section {
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 8px;
+      padding: 4px 10px 0;
+    }
+    .popup-menu-section .btn-secondary {
+      width: 100%;
       margin-left: 0;
     }
-    #settings-panel label {
+    .security-heading {
+      font-size: 13px;
+      font-weight: 600;
+      margin: 8px 0 0;
+    }
+    .security-row {
       display: flex;
       align-items: flex-start;
-      gap: 8px;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 10px 0 0;
+      border-top: 1px solid var(--mp-hairline);
+    }
+    .security-copy {
+      min-width: 0;
+    }
+    .security-copy strong {
+      display: block;
       font-size: 13px;
+      font-weight: 600;
+      line-height: 1.3;
+    }
+    .security-copy p {
+      margin: 2px 0 0;
+      font-size: 12px;
+      color: var(--mp-secondary);
       line-height: 1.35;
-      margin: 0 0 12px;
+    }
+    .security-switch {
+      position: relative;
+      width: 40px;
+      height: 24px;
+      flex-shrink: 0;
+      margin-top: 1px;
+    }
+    .security-switch input {
+      opacity: 0;
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      position: absolute;
+      inset: 0;
       cursor: pointer;
+    }
+    .security-switch span {
+      position: absolute;
+      inset: 0;
+      background: var(--mp-line);
+      border-radius: 999px;
+      pointer-events: none;
+    }
+    .security-switch span::after {
+      content: "";
+      position: absolute;
+      width: 20px;
+      height: 20px;
+      left: 2px;
+      top: 2px;
+      background: #fff;
+      border-radius: 50%;
+    }
+    .security-switch input:checked + span {
+      background: #34c759;
+    }
+    .security-switch input:checked + span::after {
+      transform: translateX(16px);
+    }
+    #lock-vault-error {
+      color: #c00;
+      font-size: 12px;
+      margin: 8px 10px 0;
     }
     #browser-chrome {
       margin: 0 0 10px;
@@ -260,6 +427,8 @@
       padding: 0 10px;
       border: 1px solid var(--mp-line, #d2d2d7);
       border-radius: var(--mp-control-radius, 8px);
+      background: var(--mp-control-bg);
+      color: var(--mp-text);
       outline: none;
     }
     .icon-btn {
@@ -267,9 +436,9 @@
       width: var(--mp-control-height, 32px);
       height: var(--mp-control-height, 32px);
       border-radius: var(--mp-control-radius, 8px);
-      border: 1px solid #d2d2d7;
-      background: #fff;
-      color: #1d1d1f;
+      border: 1px solid var(--mp-line);
+      background: var(--mp-control-bg);
+      color: var(--mp-text);
       display: flex;
       align-items: center;
       justify-content: center;
@@ -309,8 +478,8 @@
       left: 0;
       right: 0;
       margin-top: 4px;
-      background: #fff;
-      border: 1px solid #e5e5e7;
+      background: var(--mp-bg);
+      border: 1px solid var(--mp-hairline);
       border-radius: 10px;
       box-shadow: 0 8px 24px rgba(0, 0, 0, 0.12);
       padding: 4px;
@@ -334,7 +503,7 @@
       cursor: pointer;
     }
     .category-option:hover {
-      background: #f5f5f7;
+      background: var(--mp-fill);
     }
     .add-entry-option {
       display: flex;
@@ -346,7 +515,7 @@
       text-align: left;
       border: 0;
       background: transparent;
-      color: #1d1d1f;
+      color: var(--mp-text);
       font-size: 14px;
       font-weight: 500;
       padding: 4px 8px;
@@ -388,8 +557,53 @@
     .address-fill-option { width: 100%; margin-left: 0; box-sizing: border-box; text-align: left; }
     .address-fill-back { align-self: flex-start; margin-top: 8px; margin-left: 0; }
     #list {
-      max-height: 280px;
+      max-height: 360px;
       overflow: auto;
+    }
+    #panel-shell:has(#locked-panel:not([hidden])),
+    #panel-shell:has(#app-unavailable-panel:not([hidden])) {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+    }
+    #panel-shell:has(#locked-panel:not([hidden])) #browser-chrome,
+    #panel-shell:has(#app-unavailable-panel:not([hidden])) #browser-chrome,
+    #panel-shell:has(#pairing-panel:not([hidden])) #browser-chrome {
+      width: 100%;
+      margin: 0 0 16px;
+    }
+    #panel-shell:has(#locked-panel:not([hidden])) .browser-tools,
+    #panel-shell:has(#app-unavailable-panel:not([hidden])) .browser-tools,
+    #panel-shell:has(#pairing-panel:not([hidden])) .browser-tools {
+      justify-content: center;
+    }
+    #locked-panel:not([hidden]),
+    #app-unavailable-panel:not([hidden]) {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      text-align: center;
+    }
+    #locked-panel .panel-title,
+    #locked-panel .panel-helper,
+    #app-unavailable-panel .panel-helper {
+      text-align: center;
+    }
+    #locked-actions,
+    #app-unavailable-actions {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    #locked-actions .btn-secondary,
+    #app-unavailable-actions .btn-secondary {
+      margin-left: 0;
+    }
+    #open-mypass-helper {
+      flex-basis: 100%;
+      text-align: center;
     }
 
     .totp-badge {
@@ -412,8 +626,37 @@
     }
     p.passkey-detail {
       font-size: 11px;
-      color: #86868b;
+      color: var(--mp-muted);
       margin: -6px 0 12px;
+    }
+    .appearance-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      min-height: 36px;
+      font-size: 13px;
+      font-weight: 600;
+    }
+    .appearance-row select,
+    .appearance-row kbd {
+      font-weight: 500;
+      font-size: 12px;
+      font-family: inherit;
+      color: var(--mp-text);
+      background: var(--mp-fill);
+      border: 1px solid var(--mp-line);
+      border-radius: 8px;
+      padding: 4px 8px;
+    }
+    .appearance-link {
+      border: 0;
+      padding: 0;
+      background: transparent;
+      color: #007aff;
+      font: inherit;
+      font-size: 13px;
+      cursor: pointer;
     }
     [hidden] {
       display: none !important;
@@ -424,6 +667,11 @@
   <div id="panel-shell">
     <div id="browser-chrome" hidden>
       <div class="browser-tools">
+        <button id="popup-menu-btn" type="button" class="icon-btn" aria-label="MyPass menu" aria-expanded="false" aria-controls="popup-menu">
+          <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
+            <path fill="currentColor" fill-rule="evenodd" d="M19.14 12.94a7.5 7.5 0 0 0 .06-.94 7.5 7.5 0 0 0-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94L14.39 2.7a.5.5 0 0 0-.49-.42h-3.8a.5.5 0 0 0-.49.42l-.36 2.54a7.2 7.2 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.5 7.5 0 0 0-.06.94c0 .31.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.22 1.13-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/>
+          </svg>
+        </button>
         <input id="vault-search" type="search" placeholder="Search" autocomplete="off">
         <button id="open-generator-btn" type="button" class="icon-btn" aria-label="Password generator">
           <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true">
@@ -438,22 +686,24 @@
         <button id="add-entry-btn" type="button" class="icon-btn" aria-label="Add item">+</button>
         <div id="add-entry-menu" hidden></div>
       </div>
-      <div class="category-wrap">
+      <div id="category-wrap" class="category-wrap">
         <button id="category-btn" type="button">Favorites</button>
         <div id="category-menu" hidden></div>
       </div>
     </div>
 
     <section id="locked-panel" hidden>
-      <img class="brand-key" src="icons/icon32.png" width="32" height="32" alt="">
+      <img class="brand-key" src="icons/icon128.png" width="32" height="32" alt="">
       <h1 class="panel-title" id="locked-title"></h1>
       <p class="panel-helper" id="locked-helper"></p>
-      <button id="locked-unlock-btn" type="button" class="btn-primary" hidden>Unlock MyPass</button>
-      <button id="locked-retry-btn" type="button" class="btn-secondary">Retry</button>
+      <div id="locked-actions">
+        <button id="locked-unlock-btn" type="button" class="btn-primary" hidden>Unlock MyPass</button>
+        <button id="locked-retry-btn" type="button" class="btn-secondary">Retry</button>
+      </div>
     </section>
 
     <section id="app-unavailable-panel" hidden>
-      <img class="brand-key" src="icons/icon32.png" width="32" height="32" alt="">
+      <img class="brand-key" src="icons/icon128.png" width="32" height="32" alt="">
       <p class="panel-helper" id="app-unavailable-status"></p>
       <div id="app-unavailable-actions">
         <button id="retry-btn" type="button" class="btn-primary">Retry</button>
@@ -469,6 +719,10 @@
     <section id="list-panel" hidden>
       <p class="list-header" id="list-header" hidden></p>
       <p id="site-passkey-hint" class="panel-helper" hidden></p>
+      <div id="identifier-offer" class="identifier-offer" hidden>
+        <p id="identifier-offer-text"></p>
+        <div id="identifier-offer-actions" class="identifier-offer-actions"></div>
+      </div>
       <ul id="list"></ul>
     </section>
 
@@ -547,16 +801,218 @@
       <p id="passkey-proxy-status" class="panel-helper"></p>
       <p id="browser-manager-status" class="panel-helper"></p>
     </aside>
-    <div id="passkey-settings-footer" hidden>
-      <button id="open-settings-btn" type="button" class="btn-secondary">MyPass settings</button>
-      <button id="check-browser-managers-btn" type="button" class="btn-secondary">Check this browser</button>
-      <p id="settings-open-error" class="panel-helper" role="status" hidden></p>
+    <div id="popup-menu" hidden>
+      <div id="popup-menu-root">
+        <button id="lock-vault-btn" type="button" class="popup-menu-row"><span class="popup-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm3 8H9V7a3 3 0 0 1 6 0v3z"/></svg></span>Lock MyPass</button>
+        <button id="popup-menu-settings-btn" type="button" class="popup-menu-row popup-menu-drill"><span class="popup-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" fill-rule="evenodd" d="M19.14 12.94a7.5 7.5 0 0 0 .06-.94 7.5 7.5 0 0 0-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94L14.39 2.7a.5.5 0 0 0-.49-.42h-3.8a.5.5 0 0 0-.49.42l-.36 2.54a7.2 7.2 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.5 7.5 0 0 0-.06.94c0 .31.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.22 1.13-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg></span>Settings</button>
+        <button id="popup-menu-help-btn" type="button" class="popup-menu-row popup-menu-drill"><span class="popup-menu-icon" aria-hidden="true"><svg viewBox="0 0 24 24" width="18" height="18"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm.1 15.4a1.25 1.25 0 1 1 0-2.5 1.25 1.25 0 0 1 0 2.5zM14.2 8.3c0 1.1-.55 1.75-1.6 2.4-.65.42-.9.75-.9 1.3v.4h-1.7v-.55c0-1.1.5-1.75 1.55-2.4.6-.4 1-.75 1-1.25 0-.65-.52-1.1-1.25-1.1-.8 0-1.32.48-1.42 1.2l-1.68-.3c.25-1.7 1.6-2.7 3.2-2.7 1.9 0 3.2 1.2 3.2 3z"/></svg></span>Help</button>
+        <p id="lock-vault-error" class="panel-helper" role="status" hidden></p>
+      </div>
+      <div id="popup-menu-settings" hidden>
+        <button id="popup-menu-settings-back" type="button" class="popup-menu-back">‹ Settings</button>
+        <button id="popup-menu-open-general" type="button" class="popup-menu-row popup-menu-drill"><span class="popup-menu-icon popup-menu-icon-tile popup-menu-icon-general" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" fill-rule="evenodd" d="M19.14 12.94a7.5 7.5 0 0 0 .06-.94 7.5 7.5 0 0 0-.06-.94l2.03-1.58a.5.5 0 0 0 .12-.64l-1.92-3.32a.5.5 0 0 0-.6-.22l-2.39.96a7.2 7.2 0 0 0-1.63-.94L14.39 2.7a.5.5 0 0 0-.49-.42h-3.8a.5.5 0 0 0-.49.42l-.36 2.54a7.2 7.2 0 0 0-1.63.94l-2.39-.96a.5.5 0 0 0-.6.22L2.71 8.84a.5.5 0 0 0 .12.64l2.03 1.58a7.5 7.5 0 0 0-.06.94c0 .31.02.63.06.94l-2.03 1.58a.5.5 0 0 0-.12.64l1.92 3.32a.5.5 0 0 0 .6.22l2.39-.96c.5.4 1.05.72 1.63.94l.36 2.54a.5.5 0 0 0 .49.42h3.8a.5.5 0 0 0 .49-.42l.36-2.54c.58-.22 1.13-.54 1.63-.94l2.39.96a.5.5 0 0 0 .6-.22l1.92-3.32a.5.5 0 0 0-.12-.64l-2.03-1.58zM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7z"/></svg></span>General</button>
+        <button id="popup-menu-open-security" type="button" class="popup-menu-row popup-menu-drill"><span class="popup-menu-icon popup-menu-icon-tile popup-menu-icon-security" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2a5 5 0 0 0-5 5v3H6a2 2 0 0 0-2 2v8a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-8a2 2 0 0 0-2-2h-1V7a5 5 0 0 0-5-5zm3 8H9V7a3 3 0 0 1 6 0v3z"/></svg></span>Security</button>
+        <button id="popup-menu-open-autofill" type="button" class="popup-menu-row popup-menu-drill"><span class="popup-menu-icon popup-menu-icon-tile popup-menu-icon-autofill" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M4 3h16a2 2 0 0 1 2 2v3H2V5a2 2 0 0 1 2-2zm18 7v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-9h20zM6 14h7v2H6v-2z"/></svg></span>Autofill and save</button>
+        <button id="popup-menu-open-notifications" type="button" class="popup-menu-row popup-menu-drill"><span class="popup-menu-icon popup-menu-icon-tile popup-menu-icon-notifications" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 22a2.2 2.2 0 0 0 2.15-1.8h-4.3A2.2 2.2 0 0 0 12 22zm7-6.2V11a7 7 0 0 0-5.2-6.75V3.3a1.8 1.8 0 0 0-3.6 0v.95A7 7 0 0 0 5 11v4.8L3.2 17.6v1.2h17.6v-1.2L19 15.8z"/></svg></span>Notifications</button>
+        <button id="popup-menu-open-appearance" type="button" class="popup-menu-row popup-menu-drill"><span class="popup-menu-icon popup-menu-icon-tile popup-menu-icon-appearance" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M3 17.25V21h3.75L17.81 9.94l-3.75-3.75L3 17.25zM20.71 7.04a1 1 0 0 0 0-1.41l-2.34-2.34a1 1 0 0 0-1.41 0l-1.83 1.83 3.75 3.75 1.83-1.83z"/></svg></span>Appearance and shortcuts</button>
+        <button id="popup-menu-open-about" type="button" class="popup-menu-row popup-menu-drill"><span class="popup-menu-icon popup-menu-icon-tile popup-menu-icon-about" aria-hidden="true"><svg viewBox="0 0 24 24" width="14" height="14"><path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20zm1 15h-2v-6h2v6zm0-8h-2V7h2v2z"/></svg></span>About</button>
+      </div>
+      <div id="popup-menu-general" hidden>
+        <button id="popup-menu-general-back" type="button" class="popup-menu-back">‹ General</button>
+        <div class="popup-menu-section">
+          <p class="panel-helper">Check this browser for other password managers, or open the MyPass app settings.</p>
+          <button id="check-browser-managers-btn" type="button" class="btn-secondary">Check this browser</button>
+          <button id="open-settings-btn" type="button" class="btn-secondary">MyPass settings</button>
+          <p id="settings-open-error" class="panel-helper" role="status" hidden></p>
+        </div>
+      </div>
+      <div id="popup-menu-security" hidden>
+        <button id="popup-menu-security-back" type="button" class="popup-menu-back">‹ Security</button>
+        <div class="popup-menu-section">
+          <p class="panel-helper">Review security settings in the MyPass app.</p>
+          <button id="open-mypass-app-btn" type="button" class="btn-secondary">Open MyPass</button>
+          <p id="open-mypass-app-error" class="panel-helper" role="status" hidden></p>
+          <p class="security-heading">Phishing prevention</p>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Warn when pasting on an unrecognized website</strong>
+              <p>Show a warning when a saved password is pasted on a site that is not saved with that item.</p>
+            </span>
+            <span class="security-switch">
+              <input id="warn-unrecognized-paste" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Warn when copying on an unrecognized website</strong>
+              <p>Show a warning when a saved login or password is copied on a site that is not saved with that item.</p>
+            </span>
+            <span class="security-switch">
+              <input id="warn-unrecognized-copy" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div id="popup-menu-autofill" hidden>
+        <button id="popup-menu-autofill-back" type="button" class="popup-menu-back">‹ Autofill and save</button>
+        <div class="popup-menu-section">
+          <p class="panel-helper">These settings stay in this browser. Passkeys follow the switch in the MyPass app.</p>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Offer to save new logins</strong>
+              <p>Ask to save a login after you submit a form on a site that has no saved item.</p>
+            </span>
+            <span class="security-switch">
+              <input id="offer-save-login" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Offer to save a 2FA code</strong>
+              <p>Ask to save a code when a site shows a setup key.</p>
+            </span>
+            <span class="security-switch">
+              <input id="offer-save-totp" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Show the MyPass icon in fields</strong>
+              <p>Put the icon in username, password, and one-time code fields.</p>
+            </span>
+            <span class="security-switch">
+              <input id="show-field-icon" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Sign in after filling</strong>
+              <p>Click the form's sign-in button after MyPass fills a login and password. A generated password is not submitted.</p>
+            </span>
+            <span class="security-switch">
+              <input id="autofill-auto-submit" type="checkbox">
+              <span></span>
+            </span>
+          </label>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Offer to sign in with a passkey</strong>
+              <p>Uses the passkey switch in the MyPass app. Unlock MyPass to change it.</p>
+            </span>
+            <span class="security-switch">
+              <input id="autofill-passkey-signin" type="checkbox">
+              <span></span>
+            </span>
+          </label>
+          <p id="autofill-passkey-error" class="panel-helper" role="status" hidden></p>
+          <p class="security-heading">Suggestions</p>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Show logins</strong>
+              <p>Include saved logins in the menu on a field.</p>
+            </span>
+            <span class="security-switch">
+              <input id="suggest-logins" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Show cards</strong>
+              <p>Include saved cards in the menu on a field.</p>
+            </span>
+            <span class="security-switch">
+              <input id="suggest-cards" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Show addresses</strong>
+              <p>Include saved addresses when you fill a form from the popup.</p>
+            </span>
+            <span class="security-switch">
+              <input id="suggest-addresses" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div id="popup-menu-help" hidden>
+        <button id="popup-menu-help-back" type="button" class="popup-menu-back">‹ Help</button>
+        <p class="panel-helper">MyPass keeps the vault on this Mac. Unlock, pair this browser, and change vault settings in the app. This menu only covers the extension in this browser profile.</p>
+      </div>
+      <div id="popup-menu-notifications" hidden>
+        <button id="popup-menu-notifications-back" type="button" class="popup-menu-back">‹ Notifications</button>
+        <div class="popup-menu-section">
+          <p class="panel-helper">These notifications stay in this browser.</p>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Notify when a passkey needs confirmation</strong>
+              <p>Show a system notification when Chrome is in the background and a site asks MyPass to confirm a passkey.</p>
+            </span>
+            <span class="security-switch">
+              <input id="notify-passkey-confirmation" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+          <label class="security-row">
+            <span class="security-copy">
+              <strong>Notify when MyPass is unlocked</strong>
+              <p>Show a system notification when the vault changes from locked to unlocked.</p>
+            </span>
+            <span class="security-switch">
+              <input id="notify-vault-unlocked" type="checkbox" checked>
+              <span></span>
+            </span>
+          </label>
+        </div>
+      </div>
+      <div id="popup-menu-placeholder" hidden>
+        <button id="popup-menu-placeholder-back" type="button" class="popup-menu-back">‹ Settings</button>
+        <p id="popup-menu-placeholder-text" class="panel-helper">No options in this section yet.</p>
+      </div>
+      <div id="popup-menu-appearance" hidden>
+        <button id="popup-menu-appearance-back" type="button" class="popup-menu-back">‹ Appearance and shortcuts</button>
+        <div class="popup-menu-section">
+          <p class="panel-helper">Theme and shortcuts stay in this browser.</p>
+          <label class="appearance-row">
+            <span>Theme</span>
+            <select id="appearance-theme">
+              <option value="system" selected>Match system</option>
+              <option value="light">Light</option>
+              <option value="dark">Dark</option>
+            </select>
+          </label>
+          <p class="security-heading">Shortcuts</p>
+          <div class="appearance-row">
+            <span>Open MyPass</span>
+            <kbd id="shortcut-open">Not set</kbd>
+          </div>
+          <div class="appearance-row">
+            <span>Lock MyPass</span>
+            <kbd id="shortcut-lock">Not set</kbd>
+          </div>
+          <p class="panel-helper">Change shortcuts on the <button id="open-shortcut-settings" type="button" class="appearance-link">Chrome shortcuts page</button>.</p>
+        </div>
+      </div>
     </div>
   </div>
   <script src="shared/entry-visuals.js"></script>
   <script src="shared/bridge-status.js"></script>
   <script src="shared/base32.js"></script>
   <script src="shared/passkey-sites.js"></script>
+  <script src="shared/page-identifier.js"></script>
+  <script src="shared/security-watch.js"></script>
+  <script src="shared/autofill-settings.js"></script>
+  <script src="shared/notification-settings.js"></script>
+  <script src="shared/appearance-settings.js"></script>
+  <script src="shared/theme.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

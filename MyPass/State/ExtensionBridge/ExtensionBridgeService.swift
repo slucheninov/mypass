@@ -45,6 +45,9 @@ final class ExtensionBridgeService {
     /// forward and re-trigger the Touch ID prompt. The service itself never unlocks
     /// anything — presenting the unlock UI is the app layer's job.
     var onUnlockRequested: (() -> Void)?
+    /// Fired for `.openApp`. Wired in `MyPassApp` to front the main window
+    /// without presenting the Touch ID prompt. Works while locked.
+    var onOpenAppRequested: (() -> Void)?
     var onBrowserSettingsRequested: (() -> Void)?
 
     init(
@@ -85,14 +88,44 @@ final class ExtensionBridgeService {
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
     }
 
+    /// Same rule as the extension: ignore spaces and case.
+    private static func normalizedIdentifier(_ value: String) -> String {
+        String(value.lowercased().filter { !$0.isWhitespace })
+    }
+
+    private static func entryContainsIdentifier(_ entry: KdbxEntry, _ needle: String) -> Bool {
+        let values = [entry.login] + entry.additionalFields.map(\.value)
+        return values.contains { normalizedIdentifier($0) == needle }
+    }
+
+    private static func nextIdentifierKey(_ base: String, on entry: KdbxEntry) -> String {
+        let keys = Set(entry.fields.map(\.key))
+        if !keys.contains(base) { return base }
+        var index = 2
+        while keys.contains("\(base) \(index)") { index += 1 }
+        return "\(base) \(index)"
+    }
+
     private func summary(for entry: KdbxEntry) -> ExtensionCredentialSummary {
         ExtensionCredentialSummary(
             id: entry.uuid.uuidString,
             title: entry.title,
             username: entry.login,
             hasTotp: entry.totpSecretBase32?.isEmpty == false,
-            hasPasskey: entry.hasPasskey
+            hasPasskey: entry.hasPasskey,
+            identifiers: publicIdentifiers(for: entry)
         )
+    }
+
+    /// Custom field values the extension may compare against a page identifier.
+    /// Protected values stay in the app; the add request still treats them as
+    /// already stored so a second copy is not written.
+    private func publicIdentifiers(for entry: KdbxEntry) -> [String] {
+        entry.additionalFields.compactMap { field in
+            let trimmed = field.value.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !field.isProtected, !trimmed.isEmpty else { return nil }
+            return trimmed
+        }
     }
 
     /// Same fields as `summary(for:)`, plus the saved URL and entry type so a
@@ -105,7 +138,8 @@ final class ExtensionBridgeService {
             hasTotp: entry.totpSecretBase32?.isEmpty == false,
             hasPasskey: entry.hasPasskey,
             url: entry.url.isEmpty ? nil : entry.url,
-            entryType: entry.entryType.rawValue
+            entryType: entry.entryType.rawValue,
+            identifiers: publicIdentifiers(for: entry)
         )
     }
 
@@ -406,7 +440,7 @@ final class ExtensionBridgeService {
             }
             onCredentialFilled?(entry.uuid)
             vaultSession?.touchAccess(entryID: entry.uuid)
-            return .credential(username: entry.login, password: entry.password, totp: liveTotp)
+            return .credential(username: entry.login, password: entry.password, totp: liveTotp, urls: entry.urls)
 
         case .getTotp(_, let id, let url, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {
@@ -426,6 +460,43 @@ final class ExtensionBridgeService {
             // Deliberately no `onCredentialFilled?` / `vaultSession?.touchAccess` here:
             // fetching a live code for on-demand display is not a "fill" event.
             return .totp(code: code)
+
+        case .addEntryIdentifier(_, let id, let url, let value, let fieldKey, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            guard let session = vaultSession, session.currentDatabase != nil else {
+                return .locked
+            }
+            let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+            let allowedKeys: Set<String> = ["Phone", "Email", "Login"]
+            guard !Self.normalizedIdentifier(trimmed).isEmpty,
+                  trimmed.count <= 200,
+                  trimmed.unicodeScalars.allSatisfy({ !CharacterSet.controlCharacters.contains($0) }),
+                  allowedKeys.contains(fieldKey) else {
+                return .error("identifier required")
+            }
+            guard let database = session.currentDatabase else {
+                return .locked
+            }
+            let matches = matchingEntries(forURL: url, in: database)
+            guard var entry = matches.first(where: { $0.uuid.uuidString == id }) else {
+                return .error("entry not found or domain mismatch")
+            }
+            let needle = Self.normalizedIdentifier(trimmed)
+            if Self.entryContainsIdentifier(entry, needle) {
+                return .acknowledged
+            }
+            if entry.login.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                entry.login = trimmed
+            } else {
+                entry.setFieldValue(trimmed, forKey: Self.nextIdentifierKey(fieldKey, on: entry), isProtected: false)
+            }
+            entry.lastModificationTime = Date()
+            session.mutate { database in
+                EntryPersistence.replaceEntry(entry, in: database.rootGroup)
+            }
+            return .acknowledged
 
         case .proposeSaveLogin(_, let url, let username, let password, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {
@@ -451,6 +522,20 @@ final class ExtensionBridgeService {
             }
             onTotpSaveProposal?(url, otpauthOrSecret, resolvedEntryID)
             return .saveProposalAccepted
+
+        case .lockVault(_, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            vaultSession?.lock()
+            return .acknowledged
+
+        case .openApp(_, let pairing):
+            guard pairingManager.isAuthorized(pairing: pairing) else {
+                return .pairingRequired
+            }
+            onOpenAppRequested?()
+            return .acknowledged
 
         case .requestUnlock(_, let pairing):
             // Order is load-bearing — see the design spec's "Order of checks".

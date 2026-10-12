@@ -118,9 +118,15 @@ assert.strictEqual(contentGroup.get('findFillableFields'), 'shared/form-detectio
 assert.strictEqual(contentGroup.get('detectManualSetupKey'), 'shared/totp-detection.js');
 assert.ok(![...contentGroup.values()].includes('content.js'), 'content.js must not add top-level names; it is an IIFE after the shared scripts');
 
-// background-loader.js importScripts url-match.js, password-generator.js, and then
-// background.js into one worker global, so their top-level names must not overlap.
-assertDisjoint('service worker', ['shared/url-match.js', 'shared/password-generator.js', 'background.js']);
+// background-loader.js importScripts the shared helpers and then background.js
+// into one worker global, so their top-level names must not overlap.
+assertDisjoint('service worker', [
+  'shared/url-match.js',
+  'shared/password-generator.js',
+  'shared/security-watch.js',
+  'shared/notification-settings.js',
+  'background.js'
+]);
 
 function scriptSources(html) {
   const sources = [];

@@ -1,7 +1,7 @@
 const NATIVE_HOST_NAME = "com.mypass.chromehost";
 const PAIRING_STORAGE_KEY = "pairingSecret";
 const knownTypes = [
-  "getCredentials", "getFavorites", "listEntries", "searchEntries", "createEntry",
+  "getCredentials", "getFavorites", "listEntries", "searchEntries", "createEntry", "addEntryIdentifier",
   "fillCredential", "getTotp", "proposeSaveLogin", "proposeSaveTotp",
   "startPairing", "completePairing", "requestUnlock",
   "getPasskeyProxyStatus", "setPasskeyProxyEnabled", "passkeyCreateConfirm", "passkeyGetApprove",
@@ -12,6 +12,9 @@ const PASSKEY_WATCHDOG_MS = 120000;
 const PASSKEY_WATCHDOG_ALARM = "passkeyCeremonyWatchdog";
 const PASSKEY_REFRESH_ALARM = "passkeyProxyRefresh";
 let proxyRefresh = null;
+// Last boolean unlock reading in this worker. null means none yet, so the
+// first poll after a worker start does not count as an unlock.
+let vaultWasUnlocked = null;
 let passkeyStateQueue = Promise.resolve();
 let proxyOperationQueue = Promise.resolve();
 
@@ -124,6 +127,19 @@ const urlMatch = typeof require === 'function'
 const passwordGenerator = typeof require === 'function'
   ? require('./shared/password-generator.js')
   : globalThis;
+
+// security-watch.js is importScripts'd before this file. The bag name stays
+// unqualified: a second top-level const of a function from that file would
+// collide with the var the classic script already declared.
+const securityWatch = typeof require === 'function'
+  ? require('./shared/security-watch.js')
+  : mypassSecurityWatch;
+
+// notification-settings.js is importScripts'd before this file. The bag name
+// stays unqualified so it does not collide with the var that script declared.
+const notificationSettings = typeof require === 'function'
+  ? require('./shared/notification-settings.js')
+  : mypassNotificationSettings;
 
 // Pure decision function so the branch selection is unit-testable without a chrome.tabs
 // mock. `manifest.json` grants only `activeTab` (no `host_permissions`), and Chrome only
@@ -248,10 +264,75 @@ function readGeneratorSettings() {
   });
 }
 
+function readSecuritySettings() {
+  return new Promise((resolve) => {
+    const fallback = securityWatch.defaultSecuritySettings();
+    if (!chrome.storage || !chrome.storage.local) {
+      resolve(fallback);
+      return;
+    }
+    chrome.storage.local.get([securityWatch.SECURITY_SETTINGS_KEY], (stored) => {
+      resolve(securityWatch.normalizeSecuritySettings(stored && stored[securityWatch.SECURITY_SETTINGS_KEY]));
+    });
+  });
+}
+
+function readNotificationSettings() {
+  return new Promise((resolve) => {
+    const fallback = notificationSettings.defaultNotificationSettings();
+    if (!chrome.storage || !chrome.storage.local) {
+      resolve(fallback);
+      return;
+    }
+    chrome.storage.local.get([notificationSettings.NOTIFICATION_SETTINGS_KEY], (stored) => {
+      resolve(notificationSettings.normalizeNotificationSettings(
+        stored && stored[notificationSettings.NOTIFICATION_SETTINGS_KEY]
+      ));
+    });
+  });
+}
+
+function readSecurityWatches() {
+  return new Promise((resolve) => {
+    if (!chrome.storage || !chrome.storage.session) {
+      resolve([]);
+      return;
+    }
+    chrome.storage.session.get([securityWatch.SECURITY_WATCH_KEY], (stored) => {
+      const watches = stored && stored[securityWatch.SECURITY_WATCH_KEY];
+      resolve(Array.isArray(watches) ? watches : []);
+    });
+  });
+}
+
+function writeSecurityWatches(watches) {
+  return new Promise((resolve) => {
+    if (!chrome.storage || !chrome.storage.session) {
+      resolve();
+      return;
+    }
+    const area = chrome.storage.session;
+    const done = () => resolve();
+    if (!watches || !watches.length) {
+      area.remove([securityWatch.SECURITY_WATCH_KEY], done);
+      return;
+    }
+    area.set({ [securityWatch.SECURITY_WATCH_KEY]: watches }, done);
+  });
+}
+
+function noteFilledCredential(response, requestUrl) {
+  return readSecurityWatches().then((watches) => {
+    return writeSecurityWatches(securityWatch.rememberFilledCredential(watches, response, requestUrl, Date.now()));
+  });
+}
+
 function deliverGeneratedOrFilled(message, sender, sendResponse, response, preview) {
   const recorded = response && response.type === "generatedPassword"
     ? rememberGeneratedPassword(response.password, (message && message.url) || "")
-    : Promise.resolve();
+    : message && message.type === "fillCredential" && response && response.type === "credential"
+      ? noteFilledCredential(response, message.url)
+      : Promise.resolve();
   recorded.then(() => {
     if (message.type === "fillCredential" && response && response.type === "credential") {
       relayFillToActiveTab(response, message.url, sender);
@@ -475,7 +556,19 @@ function writePasskeyProxyEnabledCache(enabled) {
 // known status. Every status fetch — not just the popup toggle — must resync both the
 // cache and the actual attach/detach state, or the app's Settings toggle only takes
 // effect after the next service-worker restart (the bug this closes).
+async function observeVaultUnlock(status) {
+  const decision = notificationSettings.noteVaultUnlock(vaultWasUnlocked, status && status.unlocked);
+  vaultWasUnlocked = decision.previous;
+  if (!decision.notify) return;
+  try {
+    const settings = await readNotificationSettings();
+    if (!settings.vaultUnlocked) return;
+    showBasicNotification("mypass-unlocked", "MyPass is unlocked.");
+  } catch (_) {}
+}
+
 async function syncPasskeyProxyFromStatus(status) {
+  await observeVaultUnlock(status);
   const result = { ...status, proxyState: "unavailable" };
   if (!chrome.webAuthenticationProxy || status.enabled === undefined) return result;
   await writePasskeyProxyEnabledCache(status.enabled);
@@ -573,7 +666,8 @@ async function reportBrowserDiagnostics(status, diagnostics) {
   };
   try {
     const response = await sendNativeMessageWithPairing({ type: "reportBrowserDiagnostics", report });
-    return !!(response && response.type === "acknowledged");
+    // The app encodes ExtensionBridgeResponse.acknowledged as {"type":"ok"}.
+    return !!(response && response.type === "ok");
   } catch (_) { return false; }
 }
 
@@ -588,14 +682,28 @@ function showPasskeyBadge(text) {
   if (chrome.action && chrome.action.setBadgeText) chrome.action.setBadgeText({ text }).catch(() => {});
 }
 
+function showBasicNotification(id, message) {
+  if (!chrome.notifications || typeof chrome.notifications.create !== "function") return;
+  try {
+    Promise.resolve(chrome.notifications.create(id, {
+      type: "basic",
+      iconUrl: "icons/icon48.png",
+      title: "MyPass",
+      message
+    })).catch(() => {});
+  } catch (_) {}
+}
+
 function openPasskeyPopup() {
   showPasskeyBadge("KEY");
   const notify = () => {
-    if (!chrome.notifications) return;
-    Promise.resolve(chrome.notifications.create("mypass-passkey", {
-      type: "basic", iconUrl: "icons/icon48.png", title: "MyPass",
-      message: "Passkey confirmation needed. Open the MyPass extension to continue."
-    })).catch(() => {});
+    readNotificationSettings().then((settings) => {
+      if (!settings.passkeyConfirmation) return;
+      showBasicNotification(
+        "mypass-passkey",
+        "Passkey confirmation needed. Open the MyPass extension to continue."
+      );
+    }).catch(() => {});
   };
   if (chrome.action && typeof chrome.action.openPopup === "function") {
     chrome.action.openPopup().catch(notify);
@@ -860,6 +968,40 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     sendNativeMessageWithPairing({ type: "openBrowserSettings" }).then(sendResponse);
     return true;
   }
+  // Popup gesture only. A content script and the browser-check page cannot lock the vault.
+  if (message && message.type === "lockVault") {
+    if (!isAddressPopup(sender)) return false;
+    sendNativeMessageWithPairing({ type: "lockVault" }).then((response) => {
+      const cleared = response && (response.type === "ok" || response.type === "locked")
+        ? writeSecurityWatches([])
+        : Promise.resolve();
+      cleared.then(() => sendResponse(response));
+    });
+    return true;
+  }
+  // Popup gesture only. A page must not be able to pull the vault window forward.
+  if (message && message.type === "openApp") {
+    if (!isAddressPopup(sender)) return false;
+    sendNativeMessageWithPairing({ type: "openApp" }).then(sendResponse);
+    return true;
+  }
+  // The pasted or copied text stays inside the extension. The reply is only
+  // whether to warn. sender.url is the page, so the message cannot name a
+  // different host. Not added to knownTypes: the native app must not receive it.
+  if (message && message.type === "checkSecurityUse") {
+    if (!sender || !sender.tab || !sender.url) return false;
+    if (!urlMatch.hostnameMatches(message.url, sender.url)) {
+      sendResponse({ warn: false });
+      return true;
+    }
+    const action = message.action === "paste" || message.action === "copy" ? message.action : "";
+    const text = typeof message.text === "string" ? message.text : "";
+    Promise.all([readSecuritySettings(), readSecurityWatches()]).then(([settings, watches]) => {
+      const result = securityWatch.evaluateSecurityUse(settings, watches, action, text, sender.url, Date.now());
+      return writeSecurityWatches(result.watches).then(() => sendResponse({ warn: result.warn === true }));
+    });
+    return true;
+  }
   if (message && message.type === "getBrowserManagerDiagnostics") {
     if (sender && sender.tab && !isMyPassPage(sender)) return false;
     getBrowserManagerDiagnostics().then(async (result) => {
@@ -1002,10 +1144,15 @@ function handleRuntimeMessage(message, sender, sendResponse) {
       }
       chrome.storage.session.remove([PENDING_OPEN_FILL_KEY], () => {
         sendNativeMessageWithPairing({ type: "fillCredential", id: pending.id, url: pending.url }).then((response) => {
-          if (response && response.type === "credential") {
-            sendApplyFill(sender.tab.id, response, pending.url);
-          }
-          sendResponse({ type: "ok" });
+          const noted = response && response.type === "credential"
+            ? noteFilledCredential(response, pending.url)
+            : Promise.resolve();
+          noted.then(() => {
+            if (response && response.type === "credential") {
+              sendApplyFill(sender.tab.id, response, pending.url);
+            }
+            sendResponse({ type: "ok" });
+          });
         });
       });
     });
@@ -1162,6 +1309,11 @@ if (typeof chrome !== "undefined" && chrome.webAuthenticationProxy) {
   if (chrome.notifications && chrome.notifications.onClicked) {
     chrome.notifications.onClicked.addListener((id) => {
       if (id === "mypass-passkey") openPasskeyPopup();
+      // Opening the popup is enough. A failed open must not post the notification again,
+      // and this click must not ask the app to come forward.
+      else if (id === "mypass-unlocked" && chrome.action && typeof chrome.action.openPopup === "function") {
+        chrome.action.openPopup().catch(() => {});
+      }
     });
   }
   attachPasskeyProxyIfEligible();
@@ -1177,6 +1329,25 @@ if (typeof chrome !== "undefined" && chrome.runtime) {
   }
   diagnosticEvents.forEach((event) => {
     if (event) event.addListener(() => { attachPasskeyProxyIfEligible().catch(() => {}); });
+  });
+}
+
+// A keyboard command is a user gesture in this extension, not a page message.
+// The page-facing lockVault handler stays limited to popup.html.
+function lockVaultFromCommand() {
+  sendNativeMessageWithPairing({ type: "lockVault" }).then((response) => {
+    if (!(response && (response.type === "ok" || response.type === "locked"))) return;
+    writeSecurityWatches([]).then(() => {
+      if (chrome.storage && chrome.storage.session) {
+        chrome.storage.session.set({ vaultLockedNotice: Date.now() });
+      }
+    });
+  }).catch(() => {});
+}
+
+if (typeof chrome !== "undefined" && chrome.commands && chrome.commands.onCommand) {
+  chrome.commands.onCommand.addListener((command) => {
+    if (command === "lock-vault") lockVaultFromCommand();
   });
 }
 
@@ -1205,6 +1376,7 @@ if (typeof module !== "undefined") {
     detectBrowserName,
     sendPairingCompletion,
     handleRuntimeMessage,
+    noteFilledCredential,
     hostnameMatches: urlMatch.hostnameMatches,
     resolveSenderFillTarget,
     relayFillToActiveTab

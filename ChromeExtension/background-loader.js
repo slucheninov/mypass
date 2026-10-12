@@ -9,4 +9,6 @@
 // the shared helper is loaded there with require().
 importScripts('shared/url-match.js');
 importScripts('shared/password-generator.js');
+importScripts('shared/security-watch.js');
+importScripts('shared/notification-settings.js');
 importScripts('background.js');

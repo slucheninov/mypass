@@ -84,6 +84,9 @@ if (typeof document !== 'undefined') {
   notesEditor.hidden = entryType !== 'Notes';
 
   if (entryType === 'Login' && params.get('url')) loginUrl.value = params.get('url');
+  if (entryType === 'Login' && params.get('username')) {
+    document.getElementById('login-username').value = params.get('username');
+  }
 
   function titleValue() {
     if (entryType === 'Notes') return notesTitle.value;

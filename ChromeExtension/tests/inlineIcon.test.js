@@ -763,6 +763,11 @@ assert.strictEqual(
   false,
   'only one frame may answer the popup, or responses collide'
 );
+assert.strictEqual(
+  isFeatureEnabledInFrame('pageIdentifierQuery', false),
+  false,
+  'only the top frame reports the page identifier'
+);
 
 // Fail closed: a feature nobody gave a policy to must NOT start running in ad frames.
 assert.strictEqual(
