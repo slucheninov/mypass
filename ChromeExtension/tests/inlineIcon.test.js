@@ -23,10 +23,16 @@ function fakeScope(inputs, labels = {}) {
       // findOtpField's selector — unfiltered, exercised on every findFillableFields/
       // findLoginForm call below since both call findOtpField internally.
       if (selector === 'input, textarea') return inputs;
-      // the username selector
+      // Address-field probe used to keep a checkout phone out of login fill.
+      if (selector.indexOf('street-address') !== -1) {
+        return inputs.filter((i) => /street-address|address-line|address-level|postal-code/.test(i.getAttribute('autocomplete') || ''));
+      }
+      // the username selector, including phone login fields
       return inputs.filter((i) => {
         const t = i.getAttribute('type');
-        return t === 'text' || t === 'email' || (i.getAttribute('autocomplete') || '').includes('username');
+        const inputMode = (i.getAttribute('inputmode') || '').toLowerCase();
+        return t === 'text' || t === 'email' || t === 'tel' || inputMode === 'tel'
+          || (i.getAttribute('autocomplete') || '').includes('username');
       });
     },
     querySelector: (selector) => {
@@ -39,7 +45,7 @@ function fakeScope(inputs, labels = {}) {
   };
 }
 
-const { isFieldVisible, findFillableFields, findLoginForm } = require('../content.js');
+const { isFieldVisible, findFillableFields, findLoginForm, resolveApplyFillTargets } = require('../content.js');
 
 // isFieldVisible
 assert.strictEqual(isFieldVisible(fakeInput({ type: 'text' })), true, 'plain visible input is fillable');
@@ -130,6 +136,32 @@ assert.deepStrictEqual(
   'placeholder="Search" alone still gets NO field — a key icon must not appear in every search box'
 );
 
+// Phone-first login, the YASNO shape: one telephone field, no password on this step.
+const yasnoPhone = fakeInput({ type: 'tel', placeholder: 'Номер телефону' });
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([yasnoPhone]))),
+  ['username'],
+  'a phone field with placeholder "Номер телефону" is the login on an identifier-first page'
+);
+assert.deepStrictEqual(
+  findFillableFields(fakeScope([fakeInput({ type: 'tel' })])),
+  [],
+  'a bare type=tel with no phone hint and no password gets no login field'
+);
+const billingPhone = fakeInput({ type: 'tel', autocomplete: 'billing tel', placeholder: 'Phone' });
+const street = fakeInput({ type: 'text', autocomplete: 'street-address' });
+assert.deepStrictEqual(
+  findFillableFields(fakeScope([billingPhone, street])),
+  [],
+  'a billing phone next to a street field is address fill, not a login'
+);
+const otpTel = fakeInput({ type: 'tel', autocomplete: 'one-time-code' });
+assert.deepStrictEqual(
+  kinds(findFillableFields(fakeScope([otpTel]))),
+  ['otp'],
+  'a type=tel one-time code stays an OTP field'
+);
+
 // An OTP field also matches the username selector — OTP must win, and the field
 // must appear exactly once.
 const otp = fakeInput({ type: 'text', autocomplete: 'one-time-code' });
@@ -185,6 +217,19 @@ assert.notStrictEqual(withUsername.usernameInput, withUsername.passwordInput, 'p
 
 global.document = originalDocument;
 console.log('inlineIcon.test.js: findLoginForm OK');
+
+// Popup fill on a phone-only step. findLoginForm stays null without a password, and
+// that used to make applyFill write nothing after the number had been saved.
+{
+  const phone = fakeInput({ type: 'tel', placeholder: 'Номер телефону' });
+  const filled = resolveApplyFillTargets(
+    { type: 'applyFill', username: '+38 066 183 74 99' },
+    null,
+    fakeScope([phone])
+  );
+  assert.strictEqual(filled.usernameInput, phone, 'popup fill writes the saved phone into the telephone field');
+  assert.strictEqual(filled.passwordInput, null, 'a phone-only step has no password field');
+}
 
 const { chooseInlinePanel } = require('../content.js');
 

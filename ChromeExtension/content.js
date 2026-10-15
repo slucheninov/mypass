@@ -115,7 +115,9 @@
   //     to be the new-password field. When no new-password field is found this fills
   //     NOTHING — never the first password field — because the safe failure for a
   //     generated password is to go nowhere.
-  //  3. Everything else: the popup's ordinary credential fill, unchanged.
+  //  3. Everything else: the popup's ordinary credential fill. A page with a password
+  //     still goes through findLoginForm. A phone- or email-only first step has no
+  //     password, so the username field from findFillableFields is filled instead.
   function resolveApplyFillTargets(message, target, root) {
     if (target) return resolveFillTargets(target);
 
@@ -127,9 +129,13 @@
       return { usernameInput: null, passwordInput: field ? field.input : null, otpInput: null };
     }
 
+    // findLoginForm requires a password field, so a phone-only or email-only first
+    // step (no password yet) used to resolve to nothing and the popup wrote nowhere.
+    // The username field findFillableFields already recognized is the fill target.
     const loginForm = findLoginForm(scope);
+    const usernameField = findFillableFields(scope).find((field) => field.kind === 'username');
     return {
-      usernameInput: loginForm ? loginForm.usernameInput : null,
+      usernameInput: (loginForm && loginForm.usernameInput) || (usernameField ? usernameField.input : null),
       passwordInput: loginForm ? loginForm.passwordInput : null,
       otpInput: findOtpField(scope),
     };
@@ -412,9 +418,18 @@
   }
 
   function setNativeValue(input, value) {
-    input.value = value;
-    input.dispatchEvent(new Event('input', { bubbles: true }));
-    input.dispatchEvent(new Event('change', { bubbles: true }));
+    // Write through the platform setter. Assigning `input.value` updates the DOM node
+    // but a controlled field (React and similar) keeps its own tracker and paints the
+    // empty string back, so the phone the user just saved never appears.
+    const view = input.ownerDocument && input.ownerDocument.defaultView;
+    const prototypes = view && { INPUT: view.HTMLInputElement, TEXTAREA: view.HTMLTextAreaElement };
+    const constructor = prototypes && prototypes[input.tagName];
+    const setter = constructor && Object.getOwnPropertyDescriptor(constructor.prototype, 'value');
+    if (setter && setter.set) setter.set.call(input, value);
+    else input.value = value;
+    const EventCtor = (view && view.Event) || Event;
+    input.dispatchEvent(new EventCtor('input', { bubbles: true }));
+    input.dispatchEvent(new EventCtor('change', { bubbles: true }));
   }
 
   function showSaveBanner(url, username, password, state) {

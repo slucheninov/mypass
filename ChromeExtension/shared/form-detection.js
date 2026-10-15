@@ -37,6 +37,51 @@ function labelTextFor(input, idAttr, scope) {
   return '';
 }
 
+// Same phone signals page-identifier.js uses when offering to save a typed number.
+// `\btel\b` matches "tel" and "tel-national" without matching "intel" or "hotel".
+function mentionsPhone(value) {
+  const text = String(value || '').toLowerCase();
+  return /phone|mobile|телефон|мобільн|номер\s*телеф/.test(text) || /\btel\b/.test(text);
+}
+
+function isShippingOrBillingAutocomplete(autocomplete) {
+  return /(^|\s)(shipping|billing)(\s|$)/.test(autocomplete);
+}
+
+function autocompleteHasTelToken(autocomplete) {
+  return autocomplete.split(/\s+/).some((token) => token === 'tel' || token.startsWith('tel-'));
+}
+
+// A checkout phone is filled by address autofill. Login fill must not take it.
+const ADDRESS_FIELD_SELECTOR = [
+  'input[autocomplete*="street-address" i]',
+  'input[autocomplete*="address-line" i]',
+  'input[autocomplete*="address-level" i]',
+  'input[autocomplete*="postal-code" i]',
+  'textarea[autocomplete*="street-address" i]'
+].join(', ');
+
+function scopeHasAddressField(scope) {
+  if (!scope || typeof scope.querySelectorAll !== 'function') return false;
+  const found = scope.querySelectorAll(ADDRESS_FIELD_SELECTOR);
+  return !!(found && found.length);
+}
+
+function isAddressContactField(input, scope) {
+  const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
+  if (isShippingOrBillingAutocomplete(autocomplete)) return true;
+  const type = (input.getAttribute('type') || '').toLowerCase();
+  const inputMode = (input.getAttribute('inputmode') || '').toLowerCase();
+  const looksLikePhone = type === 'tel' || inputMode === 'tel'
+    || mentionsPhone(autocomplete)
+    || mentionsPhone(input.getAttribute('name'))
+    || mentionsPhone(input.getAttribute('placeholder'))
+    || mentionsPhone(input.getAttribute('aria-label'));
+  if (!looksLikePhone) return false;
+  const form = input.closest && input.closest('form');
+  return scopeHasAddressField(form || scope);
+}
+
 function scoreUsernameLikeness(input, scope) {
   let score = 0;
   const autocomplete = (input.getAttribute('autocomplete') || '').toLowerCase();
@@ -44,17 +89,25 @@ function scoreUsernameLikeness(input, scope) {
   const idAttr = input.getAttribute('id') || '';
   const id = idAttr.toLowerCase();
   const type = (input.getAttribute('type') || 'text').toLowerCase();
+  const inputMode = (input.getAttribute('inputmode') || '').toLowerCase();
   const placeholder = (input.getAttribute('placeholder') || '').toLowerCase();
   const ariaLabel = (input.getAttribute('aria-label') || '').toLowerCase();
   const labelText = labelTextFor(input, idAttr, scope);
 
+  // shipping/billing contact fields belong to address autofill.
+  if (isShippingOrBillingAutocomplete(autocomplete)) return 0;
+
   if (autocomplete.includes('username')) score += 5;
+  if (autocompleteHasTelToken(autocomplete)) score += 5;
   if (type === 'email') score += 3;
+  // inputmode=tel is an explicit phone field. A bare type=tel is not: SMS codes use
+  // type=tel with no other phone hint, and those must stay under the identifier floor.
+  if (inputMode === 'tel') score += 3;
   // name and id keep their original, independent +2 each — a field matching BOTH still
   // outscores one matching only name, which matters because findBestUsernameInput picks
   // the single highest scorer among candidates, not just whichever clears the floor.
-  const nameMatches = /user|login|email/.test(name);
-  const idMatches = /user|login|email/.test(id);
+  const nameMatches = /user|login|email/.test(name) || mentionsPhone(name);
+  const idMatches = /user|login|email/.test(id) || mentionsPhone(id);
   if (nameMatches) score += 2;
   if (idMatches) score += 2;
   // placeholder / aria-label / an associated <label>'s text are weaker hints than name/id
@@ -69,11 +122,11 @@ function scoreUsernameLikeness(input, scope) {
   // only by placeholder/aria-label/label), and the icon stays inert until clicked.
   if (!nameMatches && !idMatches) {
     const hasNewHint = [placeholder, ariaLabel, labelText].some((value) =>
-      /user|login|email/.test(value)
+      /user|login|email/.test(value) || mentionsPhone(value)
     );
     if (hasNewHint) score += 2;
   }
-  if (type === 'text' || type === 'email') score += 1;
+  if (type === 'text' || type === 'email' || type === 'tel') score += 1;
   return score;
 }
 
@@ -194,8 +247,10 @@ function findFillableFields(root) {
 
   const formScope = (passwords[0] && passwords[0].closest && passwords[0].closest('form')) || scope;
   const usernameCandidates = Array.from(
-    formScope.querySelectorAll('input[type="text"], input[type="email"], input[autocomplete*="username"]')
-  ).filter(isFieldVisible);
+    formScope.querySelectorAll(
+      'input[type="text"], input[type="email"], input[type="tel"], input[inputmode="tel" i], input[autocomplete*="username"]'
+    )
+  ).filter(isFieldVisible).filter((input) => !isAddressContactField(input, formScope));
   const username = findBestUsernameInput(usernameCandidates, formScope);
   // The score floor applies ONLY when there is no password field on the page. When a
   // password field IS present, its presence is itself strong evidence that the nearby text
