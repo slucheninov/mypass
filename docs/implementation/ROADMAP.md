@@ -688,8 +688,8 @@ Implementation: [plan](../superpowers/plans/2026-10-11-passkey-discovery-and-pro
 - [x] Browser password-saving/provider warnings with explicit diagnostic limitations.
 - [x] Site passkey-action guidance and confirmation popup fallback with automated coverage.
 - [x] Combined source review and automated verification recorded below.
-- [ ] Authenticated GitHub passkey registration and sign-in with the installed MyPass extension.
-- [ ] Manual checks of native/system passkey providers and other managers in the user's browser profile.
+- [x] Authenticated GitHub passkey registration and sign-in with the installed MyPass extension. Confirmed 2026-10-15.
+- [x] Manual checks of native/system passkey providers and other managers in the user's browser profile. Confirmed 2026-10-15.
 
 Verification on 2026-10-11: `./scripts/test.sh` passed. Reported Swift totals: app 590
 (1 skipped), MyPassKit 211 XCTest plus 6 Swift Testing tests, SyncKit 86 (20 skipped),
@@ -704,13 +704,13 @@ passed again on the final code, recorded in `/tmp/mypass-final-node-20261011.log
 The Swift implementation was unchanged after the full-suite run. `git diff --check`
 passed. The post-review JavaScript rerun was not another full Swift-suite run.
 
-GitHub's public login-page inspection confirmed a passkey action, not successful
-registration or authentication. Tests use fixtures/mocks and cannot prove the installed
-extension owns the user's live browser ceremonies. Conditional mediation/autofill UI
+GitHub's public login-page inspection on 2026-10-11 confirmed a passkey action only.
+On 2026-10-15 a live registration and sign-in with the installed extension succeeded.
+Tests use fixtures/mocks and cannot prove that walk. Conditional mediation/autofill UI
 is not implemented by this change; users initiate the site's explicit passkey action.
 Diagnostics cover observable Chrome password-saving settings and known/permission-
 identified extensions only. They cannot establish that every OS provider or unknown
-manager is disabled; that assurance remains unverified.
+manager is disabled. That check was done manually in the user's browser profile on 2026-10-15.
 
 ## Browser settings and manager help — 2026-10-11
 
@@ -723,7 +723,7 @@ Implementation: [plan](../superpowers/plans/2026-10-11-browser-settings-and-mana
 - [x] Full automated suite and independent review.
 - [x] Mocked extension popup and browser-check page visual checks.
 - [ ] Real native settings window visual verification.
-- [ ] Real GitHub passkey registration and sign-in confirmed by the website.
+- [x] Real GitHub passkey registration and sign-in confirmed by the website. Confirmed 2026-10-15.
 
 Final verification on 2026-10-11: `./scripts/test.sh` passed. Swift totals: app 593
 (1 skipped), MyPassKit 211 XCTest plus 6 Swift Testing tests, SyncKit 86 (20 skipped),
@@ -741,8 +741,8 @@ ceremony from stale failure state. Regression tests exercise these boundaries.
 Independent review passed. Mocked visual checks found no overflow in normal or long
 popup content at 360 px and covered the browser-check page at desktop size. Native
 help links were verified against official documentation. No live native-window visual
-check, actual manager-configuration changes, or GitHub account registration/sign-in
-was performed by this verification.
+check or manager-configuration change was performed by the 2026-10-11 verification.
+GitHub registration and sign-in were confirmed separately on 2026-10-15.
 
 ## Verification commands
 

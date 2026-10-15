@@ -57,6 +57,27 @@ assert.strictEqual(
 const searchPlaceholder = fakeInput({ type: 'text', placeholder: 'Search' });
 assert.strictEqual(scoreUsernameLikeness(searchPlaceholder), 1, 'placeholder="Search" does not match user|login|email — scores only the type bonus');
 
+// Phone-first login (YASNO: placeholder "Номер телефону", often type=tel). The hint
+// counts the same way "Email" does. A bare type=tel does not, so an SMS code box is
+// not treated as the login. shipping/billing autocomplete belongs to address fill.
+const phonePlaceholder = fakeInput({ type: 'text', placeholder: 'Номер телефону' });
+assert.strictEqual(scoreUsernameLikeness(phonePlaceholder), 3, 'placeholder "Номер телефону" scores 3 (hint 2 + type 1)');
+
+const telWithPlaceholder = fakeInput({ type: 'tel', placeholder: 'Номер телефону' });
+assert.strictEqual(scoreUsernameLikeness(telWithPlaceholder), 3, 'type=tel with a phone placeholder scores 3, enough to clear the identifier-first floor');
+
+const bareTel = fakeInput({ type: 'tel' });
+assert.strictEqual(scoreUsernameLikeness(bareTel), 1, 'a bare type=tel scores only the type bonus — an SMS field must not clear the floor by itself');
+
+const telAutocomplete = fakeInput({ type: 'tel', autocomplete: 'tel' });
+assert.strictEqual(scoreUsernameLikeness(telAutocomplete), 6, 'autocomplete=tel is decisive (5) plus the type bonus (1)');
+
+const inputModeTel = fakeInput({ type: 'text', inputmode: 'tel' });
+assert.strictEqual(scoreUsernameLikeness(inputModeTel), 4, 'inputmode=tel scores 3 plus the text type bonus');
+
+const billingTel = fakeInput({ type: 'tel', autocomplete: 'billing tel', placeholder: 'Phone' });
+assert.strictEqual(scoreUsernameLikeness(billingTel), 0, 'a billing phone belongs to address fill, not login fill');
+
 // The placeholder/aria-label/label hint bonus is a single +2 that only applies when name/id
 // gave NO signal — a field matching in BOTH name and placeholder must score the same as one
 // matching only name (the new source adds nothing on top of an existing name/id match).
