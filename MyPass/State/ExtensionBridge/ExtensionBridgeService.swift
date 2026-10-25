@@ -735,6 +735,12 @@ final class ExtensionBridgeService {
                         // subgroup entry would otherwise be reported as saved and
                         // silently not written.
                         guard let location = GroupTreeOperations.entryLocation(entryID: entry.uuid, in: db.rootGroup) else { return }
+                        // An authenticator cannot know whether the relying party accepted
+                        // the new credential (Google, for one, may keep asking for the old
+                        // one), so the version stored before this write — including any
+                        // previous private key — is kept in history, taken from `db` so it
+                        // is the current stored version rather than the earlier lookup.
+                        EntryHistoryOperations.appendSnapshot(of: location.group.entries[location.index], to: &entry)
                         location.group.entries[location.index] = entry
                     } else {
                         db.rootGroup.entries.append(entry)

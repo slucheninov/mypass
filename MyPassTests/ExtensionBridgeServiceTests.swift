@@ -1266,6 +1266,52 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertTrue(entry?.passkeyPrivateKeyPEM?.contains("PRIVATE KEY") == true)
     }
 
+    private func confirmPasskeyCreate(requestId: Int, entryId: UUID?, replace: Bool) {
+        _ = service.handle(.passkeyCreate(
+            token: "t", requestId: requestId, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: authorizedPairingSecret
+        ))
+        let response = service.handle(.passkeyCreateConfirm(
+            token: "t", requestId: requestId, entryId: entryId?.uuidString, replace: replace, pairing: authorizedPairingSecret
+        ))
+        guard case .passkeyCreateComplete(_, _, let error) = response else { return XCTFail("expected complete") }
+        XCTAssertNil(error)
+    }
+
+    /// An authenticator cannot know whether the relying party accepted the new credential,
+    /// so replacing must keep the previous key recoverable in the entry's history.
+    func testPasskeyReplaceKeepsOldCredentialInHistory() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        attachPasskey(to: id, pem: "old-pem", credentialId: Data([9, 9, 9]))
+        confirmPasskeyCreate(requestId: 40, entryId: id, replace: true)
+
+        let entry = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == id }
+        XCTAssertEqual(entry?.history.count, 1)
+        let old = entry?.history.last
+        XCTAssertEqual(old?.passkeyPrivateKeyPEM, "old-pem")
+        XCTAssertEqual(old?.passkeyCredentialId, Data([9, 9, 9]))
+        XCTAssertEqual(old?.history.isEmpty, true, "history items never carry their own history")
+        XCTAssertNotEqual(entry?.passkeyCredentialId, Data([9, 9, 9]))
+        XCTAssertNotEqual(entry?.passkeyPrivateKeyPEM, "old-pem")
+    }
+
+    func testPasskeyAttachToEntryWithoutPasskeyAddsHistoryItem() {
+        let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
+        confirmPasskeyCreate(requestId: 41, entryId: id, replace: false)
+
+        let entry = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.uuid == id }
+        XCTAssertEqual(entry?.history.count, 1)
+        XCTAssertNil(entry?.history.last?.passkeyPrivateKeyPEM)
+        XCTAssertTrue(entry?.passkeyPrivateKeyPEM?.contains("PRIVATE KEY") == true)
+    }
+
+    func testPasskeyCreateIntoNewEntryAddsNoHistory() {
+        confirmPasskeyCreate(requestId: 42, entryId: nil, replace: false)
+        let entry = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).first { $0.passkeyRelyingParty == "example.com" }
+        XCTAssertNotNil(entry)
+        XCTAssertEqual(entry?.history.isEmpty, true)
+    }
+
     /// Regression guard: the confirm write must locate the target anywhere in the group
     /// tree. Looking only at `rootGroup.entries` would report success while writing nothing.
     func testPasskeyCreateConfirmWritesToAnEntryInASubgroup() {
