@@ -50,14 +50,24 @@ final class ExtensionBridgeService {
     var onOpenAppRequested: (() -> Void)?
     var onBrowserSettingsRequested: (() -> Void)?
 
+    /// Where the app-side settings this service reads and writes live (the passkey
+    /// proxy toggle, the password-generator options). Injectable because the
+    /// MyPassTests bundle is hosted inside the signed MyPass.app: it shares the real
+    /// app's sandbox container and `UserDefaults.standard` domain, so a test that
+    /// wrote the real key would silently flip the user's Settings > Browser >
+    /// Passkeys toggle on every test run. Tests pass a throwaway suite instead.
+    private let defaults: UserDefaults
+
     init(
         vaultSession: VaultSession,
         pairingManager: ExtensionPairingManager,
         now: @escaping () -> Date = Date.init,
         autoLockActivityRecorder: AutoLockActivityRecording? = nil,
-        browserDiagnostics: BrowserDiagnosticsStore = .shared
+        browserDiagnostics: BrowserDiagnosticsStore = .shared,
+        defaults: UserDefaults = .standard
     ) {
         self.vaultSession = vaultSession
+        self.defaults = defaults
         self.pairingManager = pairingManager
         self.browserDiagnostics = browserDiagnostics
         self.now = now
@@ -571,14 +581,14 @@ final class ExtensionBridgeService {
             // learn the app-side opt-in on its own and resync its cache/attachment without
             // waiting for a service-worker restart — the app is authoritative, the
             // extension's local flag is only a cache.
-            let enabled = UserDefaults.standard.bool(forKey: "passkeyProxyEnabled")
+            let enabled = defaults.bool(forKey: "passkeyProxyEnabled")
             return .passkeyProxyStatus(unlocked: unlocked, paired: true, attachAllowed: unlocked && enabled, enabled: enabled)
 
         case .setPasskeyProxyEnabled(_, let enabled, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {
                 return .pairingRequired
             }
-            UserDefaults.standard.set(enabled, forKey: "passkeyProxyEnabled")
+            defaults.set(enabled, forKey: "passkeyProxyEnabled")
             return .passkeyProxyEnabled(enabled: enabled)
 
         case .passkeyCreate(_, let requestId, let requestDetailsJson, let originUrl, let pairing):
@@ -588,7 +598,7 @@ final class ExtensionBridgeService {
             // Chrome's attach/detach state can lag the app-side setting (the popup only
             // resyncs on certain opens), so the app itself must refuse here whenever the
             // feature is off, regardless of whatever the extension currently believes.
-            guard UserDefaults.standard.bool(forKey: "passkeyProxyEnabled") else {
+            guard defaults.bool(forKey: "passkeyProxyEnabled") else {
                 return .passkeyCreateComplete(
                     requestId: requestId, responseJson: nil,
                     error: PasskeyErrorDetails(name: "NotAllowedError", message: "MyPass passkeys are turned off in Settings")
@@ -772,7 +782,7 @@ final class ExtensionBridgeService {
             // Chrome's attach/detach state can lag the app-side setting (the popup only
             // resyncs on certain opens), so the app itself must refuse here whenever the
             // feature is off, regardless of whatever the extension currently believes.
-            guard UserDefaults.standard.bool(forKey: "passkeyProxyEnabled") else {
+            guard defaults.bool(forKey: "passkeyProxyEnabled") else {
                 return .passkeyGetComplete(
                     requestId: requestId, responseJson: nil,
                     error: PasskeyErrorDetails(name: "NotAllowedError", message: "MyPass passkeys are turned off in Settings")
@@ -931,7 +941,7 @@ final class ExtensionBridgeService {
             // request.isAnswerableWhileLocked`) already turned away a locked vault
             // before this case is ever reached — generatePassword.isAnswerableWhileLocked
             // is false — so there is no redundant lock re-check to write here.
-            let options = PasswordGeneratorDefaults.load()
+            let options = PasswordGeneratorDefaults.load(from: defaults)
             let rules = PasswordRulesCatalog.rules(forHost: domain)
             do {
                 let password = try PasswordGenerator.generate(options: options, rules: rules)

@@ -10,8 +10,16 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     var session: VaultSession!
     var service: ExtensionBridgeService!
     var authorizedPairingSecret: String!
+    /// Throwaway defaults suite injected into every service built by this class. The
+    /// test bundle is hosted inside the signed MyPass.app, so `UserDefaults.standard`
+    /// here IS the real app's domain; writing "passkeyProxyEnabled" there used to reset
+    /// the user's Settings > Browser > Passkeys toggle on every test run.
+    var defaults: UserDefaults!
+    private var defaultsSuiteName: String!
 
     override func setUpWithError() throws {
+        defaultsSuiteName = "com.mypass.tests.ExtensionBridgeServiceTests.\(UUID().uuidString)"
+        defaults = UserDefaults(suiteName: defaultsSuiteName)!
         tempDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("MyPassExtensionBridgeServiceTests-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
@@ -27,16 +35,16 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             .joined()
         try store.add(PairedBrowser(id: UUID(), label: "Test", createdAt: Date(), secretHash: hash))
         authorizedPairingSecret = secret
-        service = ExtensionBridgeService(vaultSession: session, pairingManager: manager)
+        service = ExtensionBridgeService(vaultSession: session, pairingManager: manager, defaults: defaults)
         // Passkey create/get tests exercise the ceremony flow and assume the app-side
         // toggle is on unless a test explicitly overrides it (see the toggle-off tests
         // below) — matches the default `testGetPasskeyProxyStatus...` tests use.
-        UserDefaults.standard.set(true, forKey: "passkeyProxyEnabled")
+        defaults.set(true, forKey: "passkeyProxyEnabled")
     }
 
     override func tearDownWithError() throws {
         try? FileManager.default.removeItem(at: tempDir)
-        UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled")
+        defaults.removePersistentDomain(forName: defaultsSuiteName)
     }
 
     private func addFixtureEntry(title: String, username: String, password: String, url: String) -> UUID {
@@ -70,7 +78,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     private func makeServiceWithPairing() -> (ExtensionBridgeService, InMemoryExtensionPairingStore, ExtensionPairingManager) {
         let store = InMemoryExtensionPairingStore()
         let manager = ExtensionPairingManager(store: store)
-        let service = ExtensionBridgeService(vaultSession: session, pairingManager: manager)
+        let service = ExtensionBridgeService(vaultSession: session, pairingManager: manager, defaults: defaults)
         return (service, store, manager)
     }
 
@@ -87,7 +95,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let recorder = SpyAutoLockActivityRecorder()
         let manager = ExtensionPairingManager(store: InMemoryExtensionPairingStore())
         let pairing = try XCTUnwrap(manager.completePairing(code: manager.startPairing(browser: "Address test")))
-        let notifying = ExtensionBridgeService(vaultSession: session, pairingManager: manager, autoLockActivityRecorder: recorder)
+        let notifying = ExtensionBridgeService(vaultSession: session, pairingManager: manager, autoLockActivityRecorder: recorder, defaults: defaults)
         XCTAssertEqual(notifying.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: "https://shop.example", pairing: nil)), .pairingRequired)
         XCTAssertEqual(recorder.recordActivityCallCount, 0)
         XCTAssertEqual(notifying.handle(.fillAddress(token: "t", id: entry.uuid.uuidString, url: "https://shop.example", pairing: pairing)), .address(entry.address))
@@ -682,7 +690,8 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         return ExtensionBridgeService(
             vaultSession: session,
             pairingManager: ExtensionPairingManager(store: store),
-            now: now
+            now: now,
+            defaults: defaults
         )
     }
 
@@ -961,8 +970,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     }
 
     func testGetPasskeyProxyStatusReportsUnlockedAndAttachAllowed() {
-        defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
-        UserDefaults.standard.set(true, forKey: "passkeyProxyEnabled")
+        defaults.set(true, forKey: "passkeyProxyEnabled")
         let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true, enabled: true))
     }
@@ -970,8 +978,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     /// Turning the feature off in Settings has to actually stop the extension attaching.
     /// There is no push channel, so `attachAllowed` is the only way the app can say no.
     func testGetPasskeyProxyStatusDisallowsAttachWhenTheAppSideToggleIsOff() {
-        defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
-        UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
+        defaults.set(false, forKey: "passkeyProxyEnabled")
         let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: false, enabled: false))
     }
@@ -979,8 +986,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     /// The one message that must answer past the blanket locked gate — otherwise the
     /// extension can never learn *why* it may not attach.
     func testGetPasskeyProxyStatusReportsLockedWithoutReturningGenericLockedResponse() {
-        defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
-        UserDefaults.standard.set(true, forKey: "passkeyProxyEnabled")
+        defaults.set(true, forKey: "passkeyProxyEnabled")
         session.lock()
         let response = service.handle(.getPasskeyProxyStatus(token: "t", pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .passkeyProxyStatus(unlocked: false, paired: true, attachAllowed: false, enabled: true))
@@ -992,14 +998,13 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     }
 
     func testSetPasskeyProxyEnabledPersistsAndReturnsEnabled() {
-        defer { UserDefaults.standard.removeObject(forKey: "passkeyProxyEnabled") }
         // setUpWithError defaults this to true for the passkey-create/get tests; set it false
         // first so this test actually exercises the false -> true persistence, rather than
         // passing merely because the default already happened to be true.
-        UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
+        defaults.set(false, forKey: "passkeyProxyEnabled")
         let response = service.handle(.setPasskeyProxyEnabled(token: "t", enabled: true, pairing: authorizedPairingSecret))
         XCTAssertEqual(response, .passkeyProxyEnabled(enabled: true))
-        XCTAssertTrue(UserDefaults.standard.bool(forKey: "passkeyProxyEnabled"))
+        XCTAssertTrue(defaults.bool(forKey: "passkeyProxyEnabled"))
     }
 
     func testSetPasskeyProxyEnabledRequiresPairing() {
@@ -1355,7 +1360,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     }
 
     func testPasskeyCreateRefusesWhenAppSideToggleIsOff() {
-        UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
+        defaults.set(false, forKey: "passkeyProxyEnabled")
         let response = service.handle(.passkeyCreate(
             token: "t", requestId: 42, requestDetailsJson: createFixtureRequestJSON(),
             originUrl: "https://example.com", pairing: authorizedPairingSecret
@@ -1399,7 +1404,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     func testPasskeyGetRefusesWhenAppSideToggleIsOff() {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         attachPasskey(to: id)
-        UserDefaults.standard.set(false, forKey: "passkeyProxyEnabled")
+        defaults.set(false, forKey: "passkeyProxyEnabled")
         let response = service.handle(.passkeyGet(
             token: "t", requestId: 43, requestDetailsJson: getFixtureRequestJSON(),
             originUrl: "https://example.com", pairing: authorizedPairingSecret
@@ -1744,7 +1749,8 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let id = addFixtureEntry(title: "Example", username: "alice", password: "s3cret", url: "https://example.com")
         let notifying = ExtensionBridgeService(
             vaultSession: session, pairingManager: ExtensionPairingManager(store: InMemoryExtensionPairingStore()),
-            autoLockActivityRecorder: recorder
+            autoLockActivityRecorder: recorder,
+            defaults: defaults
         )
 
         let response = notifying.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: nil))
@@ -1764,7 +1770,8 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         try! store.add(PairedBrowser(id: UUID(), label: "Test", createdAt: Date(), secretHash: hash))
         let notifying = ExtensionBridgeService(
             vaultSession: session, pairingManager: ExtensionPairingManager(store: store),
-            autoLockActivityRecorder: recorder
+            autoLockActivityRecorder: recorder,
+            defaults: defaults
         )
 
         let response = notifying.handle(.fillCredential(token: "t", id: id.uuidString, url: "https://example.com", pairing: secret))
@@ -1777,7 +1784,8 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let recorder = SpyAutoLockActivityRecorder()
         let notifying = ExtensionBridgeService(
             vaultSession: session, pairingManager: ExtensionPairingManager(store: InMemoryExtensionPairingStore()),
-            autoLockActivityRecorder: recorder
+            autoLockActivityRecorder: recorder,
+            defaults: defaults
         )
 
         _ = notifying.handle(.getPasskeyProxyStatus(token: "t", pairing: nil))
@@ -1791,7 +1799,8 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         let code = manager.startPairing(browser: "Status test")
         let pairing = try XCTUnwrap(manager.completePairing(code: code))
         let notifying = ExtensionBridgeService(
-            vaultSession: session, pairingManager: manager, autoLockActivityRecorder: recorder
+            vaultSession: session, pairingManager: manager, autoLockActivityRecorder: recorder,
+            defaults: defaults
         )
         XCTAssertEqual(notifying.handle(.getPasskeyProxyStatus(token: "t", pairing: pairing)),
                        .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true, enabled: true))
@@ -1818,7 +1827,8 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         try! store.add(PairedBrowser(id: UUID(), label: "Test", createdAt: Date(), secretHash: hash))
         let notifying = ExtensionBridgeService(
             vaultSession: session, pairingManager: ExtensionPairingManager(store: store),
-            autoLockActivityRecorder: recorder
+            autoLockActivityRecorder: recorder,
+            defaults: defaults
         )
 
         let response = notifying.handle(.generatePassword(token: "t", domain: "example.com", pairing: secret))
@@ -1850,10 +1860,9 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     /// generator's requested length passes through unclamped — four required clauses
     /// can never fit in a 2-character password, which is exactly the shape of an
     /// unsatisfiable SITE rule (as opposed to the user's own toggles leaving nothing
-    /// to draw from, covered separately below). `PasswordGeneratorDefaults.load()` in
-    /// the handler always reads `UserDefaults.standard` (it is not injectable the way
-    /// `PasswordRulesCatalog`/`PasswordGenerator` are), so this seeds and restores that
-    /// key directly, mirroring `OpenExistingVaultTests.testRetargetClearsSecondarySyncCheckpoints`.
+    /// to draw from, covered separately below). The handler loads the generator
+    /// options from the service's injected `defaults`, so this seeds the per-test suite
+    /// and never touches the real app's generator settings.
     func testGeneratePasswordReturnsSiteSpecificErrorWhenTheSitesRuleCannotBeSatisfied() throws {
         let domain = "ssa.gov"
         let rules = try XCTUnwrap(
@@ -1864,15 +1873,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             rules.requiredClauses.count, 2,
             "this test relies on ssa.gov requiring more character classes than the 2-character length below can hold"
         )
-        let priorLength = UserDefaults.standard.object(forKey: PasswordGeneratorDefaults.lengthKey)
-        addTeardownBlock {
-            if let priorLength {
-                UserDefaults.standard.set(priorLength, forKey: PasswordGeneratorDefaults.lengthKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: PasswordGeneratorDefaults.lengthKey)
-            }
-        }
-        UserDefaults.standard.set(2, forKey: PasswordGeneratorDefaults.lengthKey)
+        defaults.set(2, forKey: PasswordGeneratorDefaults.lengthKey)
 
         let response = service.handle(.generatePassword(token: "t", domain: domain, pairing: authorizedPairingSecret))
 
@@ -1890,18 +1891,8 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             PasswordGeneratorDefaults.includeDigitsKey,
             PasswordGeneratorDefaults.includeSymbolsKey,
         ]
-        let priorValues = keys.map { UserDefaults.standard.object(forKey: $0) }
-        addTeardownBlock {
-            for (key, priorValue) in zip(keys, priorValues) {
-                if let priorValue {
-                    UserDefaults.standard.set(priorValue, forKey: key)
-                } else {
-                    UserDefaults.standard.removeObject(forKey: key)
-                }
-            }
-        }
         for key in keys {
-            UserDefaults.standard.set(false, forKey: key)
+            defaults.set(false, forKey: key)
         }
 
         let response = service.handle(.generatePassword(token: "t", domain: "example.com", pairing: authorizedPairingSecret))
