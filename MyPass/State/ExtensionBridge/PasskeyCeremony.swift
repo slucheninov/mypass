@@ -252,9 +252,29 @@ enum PasskeyCeremony {
         return out
     }
 
+    /// MyPass's authenticator model identifier (AAGUID), generated once:
+    /// 94803471-f8b4-48f9-98ff-fc4ac1a92af8.
+    ///
+    /// It identifies the authenticator MODEL, not a credential or a user: it is the same
+    /// for every MyPass passkey, it is not secret, and it MUST NEVER CHANGE — entries in
+    /// the community registry (github.com/passkeydeveloper/passkey-authenticator-aaguids)
+    /// and relying-party allow/deny policies are keyed on this exact value. Sites that
+    /// ingest that registry can then label the passkey as "MyPass" instead of showing
+    /// an anonymous one (an all-zero AAGUID, which this used to be, identifies nothing).
+    ///
+    /// Attestation is unchanged: with the default "none" conveyance the response still
+    /// uses fmt "none" with an empty statement, so this proves nothing about the device;
+    /// it only names the model. The intent is that the browser passes the AAGUID on to
+    /// the relying party; whether any given browser or site actually surfaces or honours
+    /// it is outside this code's control.
+    static let mypassAAGUID = Data([
+        0x94, 0x80, 0x34, 0x71, 0xf8, 0xb4, 0x48, 0xf9,
+        0x98, 0xff, 0xfc, 0x4a, 0xc1, 0xa9, 0x2a, 0xf8,
+    ])
+
     private static func buildAttestedCredentialData(credentialId: Data, cosePublicKey: Data) -> Data {
-        // AAGUID: all-zero — a software authenticator with no FIDO MDS registration.
-        var out = Data(repeating: 0, count: 16)
+        // attestedCredentialData = aaguid(16) | credentialIdLength(2) | credentialId | COSE key.
+        var out = mypassAAGUID
         let length = UInt16(credentialId.count)
         out.append(UInt8(length >> 8))
         out.append(UInt8(length & 0xFF))
