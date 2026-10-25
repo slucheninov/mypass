@@ -772,3 +772,13 @@ The catalog is local UI guidance and does not change credential matching or WebA
 
 Design: [Passkey site hints](../superpowers/specs/2026-10-11-passkey-site-hints-design.md).
 Plan: [Implementation](../superpowers/plans/2026-10-11-passkey-site-hints.md).
+
+## Passkey AAGUID and replace safety (2026-10-25)
+
+- [x] Keep the previous entry version (including the old passkey) in history when a passkey is replaced.
+- [x] Isolate bridge tests from the real app defaults (per-test UserDefaults suite).
+- [x] Stable MyPass AAGUID in the attested credential data instead of all zeros.
+- [ ] Upstream registry PR submitted/merged (passkey-authenticator-aaguids; needs a real vector icon, see the spec).
+- [ ] Google shows "MyPass" for new passkeys (manual; depends on Google ingesting the registry).
+
+Spec: [Passkey AAGUID registry](../superpowers/specs/2026-10-25-passkey-aaguid-registry.md).
