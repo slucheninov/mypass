@@ -720,6 +720,13 @@ async function completePasskeyRequest(kind, details) {
     : (value) => chrome.webAuthenticationProxy.completeGetRequest(value);
   let completionError = null;
   let acknowledged = false;
+  // Diagnostic only: sites such as Google hide the real reason behind a generic
+  // "no passkey" screen, so record which ceremony failed and why. Deliberately
+  // limited to kind, error name and message — never the challenge, user handle,
+  // credential material or requestDetailsJson.
+  if (details.error) {
+    console.warn(`MyPass: passkey ${kind} completed with error — ${details.error.name}: ${details.error.message}`);
+  }
   try {
     await complete(details);
     acknowledged = true;

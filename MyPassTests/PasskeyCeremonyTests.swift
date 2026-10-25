@@ -218,6 +218,38 @@ final class PasskeyCeremonyTests: XCTestCase {
         }
     }
 
+    /// authData layout on create: rpIdHash(32) | flags(1) | signCount(4) | aaguid(16) | ...
+    /// The AAGUID is MyPass's fixed authenticator model id, not the all-zero value, and
+    /// the same bytes must appear in the attestationObject's authData and in the separate
+    /// `authenticatorData` JSON field Chromium cross-checks.
+    func testCreateWritesTheStableMyPassAAGUIDInAttestedCredentialData() throws {
+        XCTAssertEqual(PasskeyCeremony.mypassAAGUID.count, 16)
+        XCTAssertEqual(
+            PasskeyCeremony.mypassAAGUID.map { String(format: "%02x", $0) }.joined(),
+            "94803471f8b448f998fffc4ac1a92af8"
+        )
+        for attestation in ["none", "direct"] {
+            let context = try PasskeyCeremony.parseCreateRequest(
+                createFixtureJSON(challenge: Data([1]), userId: Data([2]), attestation: attestation)
+            )
+            let result = try PasskeyCeremony.performCreate(context: context, originUrl: "https://example.com")
+            XCTAssertEqual(Data(result.authData[37..<53]), PasskeyCeremony.mypassAAGUID)
+
+            let root = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(result.responseJson.utf8)) as? [String: Any])
+            let response = try XCTUnwrap(root["response"] as? [String: Any])
+            let jsonAuthData = try XCTUnwrap(PasskeyBase64URL.decode(try XCTUnwrap(response["authenticatorData"] as? String)))
+            XCTAssertEqual(Data(jsonAuthData[37..<53]), PasskeyCeremony.mypassAAGUID)
+
+            // The attestationObject embeds the very same authData byte string.
+            let object = try attestationObject(from: result)
+            let embedded = Data([0x58, UInt8(result.authData.count)]) + result.authData
+            XCTAssertNotNil(object.range(of: embedded), "attestationObject must carry the authData with the AAGUID")
+            // Credential id length follows the AAGUID.
+            let credIdLen = Int(result.authData[53]) << 8 | Int(result.authData[54])
+            XCTAssertEqual(credIdLen, 32)
+        }
+    }
+
     func testPerformCreateAuthDataHasAttestedCredentialDataFlagSet() throws {
         let context = try PasskeyCeremony.parseCreateRequest(createFixtureJSON(challenge: Data([1]), userId: Data([2])))
         let result = try PasskeyCeremony.performCreate(context: context, originUrl: "https://example.com")
