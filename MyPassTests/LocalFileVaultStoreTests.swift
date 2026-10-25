@@ -36,7 +36,14 @@ final class LocalFileVaultStoreTests: XCTestCase {
         let store = try makeStore(bookmark: bookmark)
         try store.save(data: Data("local-file-round-trip".utf8))
         XCTAssertEqual(try store.load(), Data("local-file-round-trip".utf8))
-        XCTAssertEqual(store.primaryVaultFileURL?.path, vaultFileURL.path)
+        // Bookmark resolution returns the canonical location, while `temporaryDirectory`
+        // is reached through the /var -> /private/var symlink whenever the test host is not
+        // sandboxed (unsigned CI builds). Compare the same file with symlinks resolved on
+        // both sides; a different file still fails.
+        XCTAssertEqual(
+            store.primaryVaultFileURL?.resolvingSymlinksInPath().standardizedFileURL.path,
+            vaultFileURL.resolvingSymlinksInPath().standardizedFileURL.path
+        )
     }
 
     func testDeleteVaultFileIfPresentRemovesFile() throws {

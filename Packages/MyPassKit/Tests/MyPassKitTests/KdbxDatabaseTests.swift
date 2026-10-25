@@ -75,14 +75,13 @@ final class KdbxDatabaseTests: XCTestCase {
         XCTAssertThrowsError(try KdbxDatabase.open(data: saved, password: "correct-password"))
     }
 
-    /// Cross-compatibility: a real pykeepass-generated file, regenerated with
-    /// realistic parameters in Task 6 of
-    /// docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md. Renamed from
+    /// Cross-compatibility: a real pykeepass-generated file, generated with
+    /// realistic parameters (32-byte salt, parallelism 2). Renamed from
     /// `testOpensRealKeePassXCReferenceFile` now that it actually opens —
     /// asserting failure here would misrepresent what this package can do.
     func testOpensRealKeePassXCArgon2idReferenceFile() throws {
         guard let fixtureURL = Bundle.module.url(forResource: "argon2id-aes256-gzip", withExtension: "kdbx", subdirectory: "Fixtures") else {
-            throw XCTSkip("Fixture not found — see Task 6 of docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md")
+            throw XCTSkip("Fixture argon2id-aes256-gzip.kdbx is missing from the Fixtures resource")
         }
         let data = try Data(contentsOf: fixtureURL)
         let database = try KdbxDatabase.open(data: data, password: "TestMasterPass123")
@@ -91,8 +90,7 @@ final class KdbxDatabaseTests: XCTestCase {
     }
 
     /// `save()` must write a 32-byte Argon2 salt and parallelism 2 — the shape
-    /// every real KDBX4 file uses, per Decision 4 of
-    /// docs/superpowers/specs/2026-09-12-kdbx4-argon2-interop-design.md. Parses
+    /// every real KDBX4 file uses. Parses
     /// the actual written header (not just round-tripping through `open`) so a
     /// regression that happens to still open correctly can't hide behind a
     /// passing round trip.

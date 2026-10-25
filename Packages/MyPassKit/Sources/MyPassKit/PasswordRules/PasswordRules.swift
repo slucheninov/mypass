@@ -25,9 +25,8 @@ public struct PasswordRules: Equatable {
     public var maxConsecutive: Int?
     /// Parsed and stored, never enforced by `PasswordGenerator` -- a
     /// deliberate, documented limitation, not an oversight: see the doc
-    /// comment on `PasswordGenerator.generateHonoringRules` (Task 4) for
-    /// the rationale, and Decision 4 of
-    /// docs/superpowers/specs/2026-09-12-site-password-rules-and-uri-matching-design.md.
+    /// comment on `PasswordGenerator.generateHonoringRules` for the
+    /// rationale: no rule in the vendored snapshot sets this property.
     public var maxRepeating: Int?
     /// Parsed and stored, never enforced by `PasswordGenerator` -- see
     /// `maxRepeating` above for why.

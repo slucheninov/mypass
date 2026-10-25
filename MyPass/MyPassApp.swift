@@ -5,7 +5,9 @@ import SyncKit
 import ExtensionBridgeKit
 import os.log
 
-@main
+/// Started by `AppLauncher` (the process entry point) only after this process
+/// has won the single-instance election; hosted tests and previews start it
+/// directly without taking part in the election.
 struct MyPassApp: App {
     /// Default inactivity timeout before the vault auto-locks, per the design spec (15 minutes).
     private static let defaultAutoLockTimeout: TimeInterval = 900
@@ -146,6 +148,7 @@ struct MyPassApp: App {
             localFileFallbackActive: resolution.localFileFallbackActive
         )
         _vaultSession = StateObject(wrappedValue: session)
+        AppDelegate.vaultSession = session
         // Shared across `UnlockView`, `MenuBarUnlockPanelView`, and the extension's
         // `.requestDeviceUnlockPrompt` notification — deliberately one instance, not
         // per-view @State, so no surface can start a second device-unlock prompt while
@@ -332,6 +335,7 @@ struct MyPassApp: App {
     private var mainWindow: some Scene {
         WindowGroup(id: "main") {
             ContentView()
+                .quitFreezeOverlay()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
                 .environmentObject(autoLockController)
@@ -340,12 +344,23 @@ struct MyPassApp: App {
                 .background(OpenMainWindowOnDemand())
                 .background(OpenBrowserSettingsOnDemand())
         }
+        .commands {
+            // Replaces the standard Quit item (and Cmd-Q) so the keyboard path goes through the
+            // same guard as the menu bar row: a second `NSApp.terminate` during the quit-time
+            // save-flush would exit before the flush completes. The first press still reaches
+            // `applicationShouldTerminate` through `NSApp.terminate`, unchanged.
+            CommandGroup(replacing: .appTermination) {
+                Button("Quit MyPass") { AppDelegate.requestTermination() }
+                    .keyboardShortcut("q")
+            }
+        }
     }
 
     @SceneBuilder
     private var menuBarExtraScene: some Scene {
         MenuBarExtra("MyPass", systemImage: "key.fill", isInserted: $showMenuBarExtra) {
             MenuBarExtraContent()
+                .quitFreezeOverlay()
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
                 .environmentObject(deviceUnlockPromptCoordinator)
@@ -359,6 +374,7 @@ struct MyPassApp: App {
     private var settingsWindow: some Scene {
         Settings {
             SettingsView()
+                .quitFreezeOverlay()
                 .background(OpenBrowserSettingsOnDemand())
                 .environmentObject(autoLockController)
                 .environmentObject(vaultSession)

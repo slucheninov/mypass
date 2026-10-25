@@ -37,11 +37,13 @@ for what actually calls this library.
 ## Licence
 
 phc-winner-argon2 is dual-licensed CC0 1.0 Universal / Apache License 2.0, at
-the user's option. MyPass uses the Apache-2.0 option, which (unlike the
-KeePassKit GPLv3 dependency rejected in
-`docs/superpowers/spikes/2026-07-21-keepasskit-vs-custom-parser.md`) is
-compatible with MyPass being closed-source. Full text of both licences,
-copied verbatim from upstream's `LICENSE` file at the pinned commit above:
+the user's option. MyPass uses the Apache-2.0 option, which is the same
+licence MyPass itself is released under (root `LICENSE`) and which (unlike the
+KeePassKit GPLv3 dependency rejected during the original KDBX parser evaluation)
+puts no copyleft obligation on the rest of the code base. The notice that ships with
+the build artifacts is tracked in root `THIRD_PARTY_NOTICES.md`. Full text of
+both licences, copied verbatim from upstream's `LICENSE` file at the pinned
+commit above:
 
 Argon2 reference source code package - reference C implementations
 

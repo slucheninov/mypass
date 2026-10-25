@@ -29,6 +29,9 @@ final class LoopbackServer {
     private var listener: NWListener?
     private var activeConnections: [NWConnection] = []
     private var token: String = ""
+    /// The record this instance published, kept so shutdown can tell "mine" from
+    /// a record a newer MyPass wrote after taking over. Read/written on `queue`.
+    private var publishedEndpoint: ExtensionBridgeEndpoint?
 
     private(set) var port: UInt16?
 
@@ -94,7 +97,8 @@ final class LoopbackServer {
         }
 
         let generatedToken = ExtensionBridgeTokenStore.generateToken()
-        try tokenStore.save(ExtensionBridgeEndpoint(port: assignedPort.rawValue, token: generatedToken))
+        let endpoint = ExtensionBridgeEndpoint(port: assignedPort.rawValue, token: generatedToken)
+        try tokenStore.save(endpoint)
 
         // `listener`/`port`/`token` are read from `queue` (via `accept`,
         // `handleFrame`, etc.), so writing them must also happen on `queue`
@@ -105,7 +109,24 @@ final class LoopbackServer {
             listener = newListener
             port = assignedPort.rawValue
             token = generatedToken
+            publishedEndpoint = endpoint
         }
+    }
+
+    /// Stops listening and retires the discovery record, but ONLY if the stored
+    /// record is still the one this instance published (same port and token).
+    /// A newer MyPass that took over writes its own record; deleting that one
+    /// would leave the browser extension with no endpoint at all. The
+    /// load-then-clear is not atomic, but the takeover protocol makes the new
+    /// owner wait for this process to exit before it publishes anything.
+    func shutdown() {
+        let own = queue.sync { publishedEndpoint }
+        stop()
+        guard let own else { return }
+        if let stored = try? tokenStore.load(), stored == own {
+            try? tokenStore.clear()
+        }
+        queue.sync { publishedEndpoint = nil }
     }
 
     func stop() {

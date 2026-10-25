@@ -1,0 +1,89 @@
+MyPass - development build (UNSIGNED)
+=====================================
+
+READ THIS FIRST
+---------------
+This is a development and inspection build. It is NOT signed with a developer
+identity, NOT notarized, and has none of its entitlements applied. It is not a
+recommended way to run a real password vault. Do not keep your only copy of
+important passwords in a vault you open with this build.
+
+What is expected to be limited (NOT tested; do not assume it works):
+
+  * Touch ID unlock. The app guards its biometric key with a Keychain access
+    group that only exists for a properly signed build.
+  * The Keychain-backed token exchange between MyPass.app and ChromeHost (used
+    for browser pairing). It uses the same Keychain access groups.
+
+The supported way to use those features is to build and sign MyPass yourself
+from the source repository with your own Apple Developer team (see README.md
+there, "scripts/dev.sh build"). This build is Apple Silicon (arm64) only and
+targets macOS 14 or later; it has not been run on macOS 14.
+
+What is in this folder
+----------------------
+  MyPass.app               the app, sealed ad hoc (codesign -s -)
+  ChromeHost               the native messaging host used by the browser extension
+  dev.sh                   helper script; only "install-host" is meant to be used
+  INSTALL.txt              this file
+  LICENSE                  Apache License 2.0
+  THIRD_PARTY_NOTICES.md   licenses of bundled third-party software
+
+The browser extension is a separate download (MyPass-chrome-extension-*.zip).
+
+1. Allow macOS to open the files
+--------------------------------
+Files downloaded from a browser carry a quarantine flag, and macOS will refuse
+to open an unsigned, un-notarized app. If you trust this build, clear the flag
+for this whole folder. From inside the extracted folder:
+
+    xattr -dr com.apple.quarantine .
+
+(This is your decision to make; nothing in this package does it for you.) Then
+open MyPass.app. If macOS still blocks it, use right-click > Open once.
+
+2. Install the native messaging host
+------------------------------------
+From inside this folder:
+
+    ./dev.sh install-host
+
+This copies ChromeHost to
+
+    ~/Library/Application Support/MyPass/ChromeHost
+
+and writes a native messaging manifest named com.mypass.chromehost.json into
+the NativeMessagingHosts folder of every installed Chromium-family browser
+(Google Chrome and Chrome for Testing always; Chrome Beta/Canary/Dev,
+Chromium, Edge, Brave, Vivaldi, Opera and Arc when their folder exists).
+Only those files are written. Nothing is deleted or modified elsewhere, and an
+existing ChromeHost is replaced atomically.
+
+To install somewhere else (for example to try it out without touching your
+home folder), name the root explicitly:
+
+    ./dev.sh install-host --install-root /path/to/a/folder
+
+The installer refuses to write through symbolic links or over a directory, and
+refuses to run when the source and destination are the same file.
+
+3. Load the extension
+---------------------
+Unzip MyPass-chrome-extension-*.zip, open chrome://extensions, switch on
+Developer mode, choose "Load unpacked" and select the unzipped folder. The
+extension ID must be hjijbabodfldconmhdcdphlbgaajkejn. Then pair it from the
+MyPass app (Settings > Browser).
+
+Removing it
+-----------
+Nothing here has an uninstaller. To remove what install-host created, delete
+
+    ~/Library/Application Support/MyPass/ChromeHost
+    every com.mypass.chromehost.json inside a NativeMessagingHosts folder
+
+List the manifests it may have written with:
+
+    find ~/Library/Application\ Support -name com.mypass.chromehost.json -path '*NativeMessagingHosts*'
+
+Delete MyPass.app by dragging it to the Trash. Your vault files are yours and
+are never touched by any of the above.

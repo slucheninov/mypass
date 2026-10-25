@@ -272,6 +272,8 @@ final class ExtensionBridgeService {
         return candidates
     }
 
+    static let quittingErrorMessage = "MyPass is quitting"
+
     func handle(_ request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
         let response = response(for: request)
         // Recorded only once the response is known, and only if the request was both
@@ -305,6 +307,13 @@ final class ExtensionBridgeService {
     }
 
     private func response(for request: ExtensionBridgeRequest) -> ExtensionBridgeResponse {
+        // Once the quit-time flush has started the session accepts no further change (see
+        // `VaultSession.isQuitInProgress`). Turning every request away here, before any
+        // handler can acknowledge work it cannot persist, is what keeps "saved" truthful for
+        // the extension; the pairing and unlock handshakes would be pointless this close to exit.
+        if vaultSession?.isQuitInProgress == true {
+            return .error(Self.quittingErrorMessage)
+        }
         guard vaultSession?.currentDatabase != nil || request.isAnswerableWhileLocked else {
             return .locked
         }

@@ -21,10 +21,9 @@ require_command() {
 }
 
 require_command git
-# python3, not jq: this repo already relies on python3 for JSON handling
-# elsewhere (scripts/setup-chrome-extension.sh writes the native messaging
-# manifest via `python3 -c "import json; ..."`), so reusing it here avoids
-# introducing a second JSON tool as a preflight dependency.
+# python3, not jq: python3 ships with the Xcode command line tools, so using it
+# for JSON handling here avoids adding a second JSON tool as a preflight
+# dependency. (scripts/dev.sh install-host deliberately needs neither.)
 require_command python3
 
 WORK_DIR="$(mktemp -d)"

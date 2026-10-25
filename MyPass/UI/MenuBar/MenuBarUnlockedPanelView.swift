@@ -75,7 +75,9 @@ struct MenuBarUnlockedPanelView: View {
             }
 
             menuRow("Quit MyPass") {
-                NSApplication.shared.terminate(nil)
+                // Never `NSApp.terminate` directly: a second terminate while the quit-time
+                // save-flush is pending would exit before the flush completes.
+                AppDelegate.requestTermination()
             }
         }
         .frame(width: 320)

@@ -2085,6 +2085,36 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             .locked
         )
     }
+
+    // MARK: Quit in progress
+
+    /// Once the quit-time flush has started the session refuses changes, so the bridge must
+    /// answer with an explicit error instead of acknowledging work that exit would drop.
+    func testRequestsAreRefusedExplicitlyOnceTheQuitFlushHasStarted() {
+        let flushed = expectation(description: "flush completes")
+        session.flushPendingWrites(timeout: 5) { _ in flushed.fulfill() }
+        wait(for: [flushed], timeout: 8)
+        let before = EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).count
+        let refusal = ExtensionBridgeResponse.error(ExtensionBridgeService.quittingErrorMessage)
+
+        XCTAssertEqual(service.handle(.recordGeneratedPassword(
+            token: "t", password: "generated-secret", url: "https://gitlab.com/login",
+            createdAt: 1_700_000_100_000, pairing: authorizedPairingSecret
+        )), refusal)
+        XCTAssertEqual(service.handle(.createEntry(
+            token: "t", entryType: "Login", title: "Late", username: "u", password: "p",
+            url: "https://late.example", cardNumber: "", cardholderName: "", expiry: "",
+            cvv: "", notes: "", favorite: false, match: "", otp: "", pairing: authorizedPairingSecret
+        )), refusal)
+        XCTAssertEqual(EntrySearch.allEntries(in: session.currentDatabase!.rootGroup).count, before, "nothing was written")
+
+        // A cancelled quit lifts the refusal.
+        session.resumeAfterCancelledQuit()
+        XCTAssertEqual(service.handle(.recordGeneratedPassword(
+            token: "t", password: "generated-secret", url: "https://gitlab.com/login",
+            createdAt: 1_700_000_100_000, pairing: authorizedPairingSecret
+        )), .acknowledged)
+    }
 }
 
 final class SpyAutoLockActivityRecorder: AutoLockActivityRecording {

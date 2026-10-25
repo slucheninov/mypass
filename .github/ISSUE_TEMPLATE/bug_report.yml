@@ -1,0 +1,97 @@
+name: Bug report
+description: Something in MyPass, ChromeHost or the browser extension does not work as expected.
+title: "[Bug]: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        This tracker is public. **Never paste vault contents, master passwords, key files, pairing codes, tokens or screenshots that show real credentials.** Use a throwaway vault with fake data to reproduce.
+
+        Do not describe a security vulnerability in detail here.
+
+        MyPass is pre-release software. Unsigned development builds (the zips produced by `scripts/dev.sh package` or by CI, or `scripts/dev.sh build --unsigned`) have no signing identity or entitlements, so Touch ID unlock and the Keychain-backed app-to-ChromeHost token exchange are expected to be limited or non-functional there. Please say which kind of build you used.
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options:
+        - macOS app
+        - ChromeHost (native messaging host)
+        - Browser extension
+        - Sync (SFTP, iCloud Drive or local folder)
+        - Build, test or install scripts
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: build_kind
+    attributes:
+      label: How was it built or installed?
+      options:
+        - Built from source with my own signing Team
+        - Built from source with the project's default signing (scripts/dev.sh build)
+        - Built from source unsigned (--unsigned, scripts/test.sh --ci)
+        - Unsigned development zips (built by scripts/dev.sh package or CI)
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: The app version, or the git commit or artifact name (the artifact name contains the short SHA).
+      placeholder: "0.2.0 / d2f6c58"
+    validations:
+      required: true
+  - type: input
+    id: macos
+    attributes:
+      label: macOS version and Mac model
+      placeholder: "macOS 26.1, Apple silicon"
+    validations:
+      required: true
+  - type: input
+    id: browser
+    attributes:
+      label: Browser and version
+      description: Only if the extension is involved.
+      placeholder: "Chrome 141"
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: Numbered steps, starting from a fresh test vault if possible.
+      placeholder: |
+        1. ...
+        2. ...
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behaviour
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs or console output
+      description: Redact anything sensitive first (URLs with tokens, usernames, hosts, key material).
+      render: text
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched the existing issues.
+          required: true
+        - label: I removed passwords, vault data, tokens and other secrets from everything I pasted.
+          required: true

@@ -24,32 +24,37 @@ Third-party dependencies: `swift-sodium` (Argon2id), `Citadel` + `swift-nio` + `
 
 | Path | Contents |
 |---|---|
-| `MyPass/` | SwiftUI app. `MyPassApp.swift` is `@main`. Subfolders `App/ Import/ Models/ Security/ State/ Storage/ UI/` |
+| `MyPass/` | SwiftUI app. The process entry point (`@main`) is `AppLauncher` in `App/SingleInstance/`; `MyPassApp` is the SwiftUI `App` it starts and is no longer `@main`. Subfolders `App/ Import/ Models/ Security/ State/ Storage/ UI/` |
 | `MyPass/State/ExtensionBridge/` | `LoopbackServer`, `ExtensionBridgeService`, `ExtensionPairingManager/Store`, `ExtensionEntryMatcher`, `PasskeyCeremony` |
 | `MyPass/UI/` | `Sidebar/ Settings/ MenuBar/ Shell/ EntryList/ EntryDetail/ ExtensionPairing/` |
 | `MyPassTests/` | XCTest suite for the app target (auto-lock, passkeys, TOTP, pairing, vault stores) |
 | `Packages/MyPassKit/` | KDBX4 engine, TOTP generator, password generator, Public Suffix List |
 | `Packages/SyncKit/` | `SFTPBackend`, `iCloudBackend`, `LocalFolderBackend`, `MergeEngine`, `SyncEngine`, TOFU host-key validator |
 | `Packages/ExtensionBridgeKit/` | Shared app-to-host protocol: messages, native messaging codec, token store |
-| `ChromeHost/` | `main.swift`, `Relay.swift`, `com.mypass.chromehost.json`, entitlements |
+| `ChromeHost/` | `main.swift`, `Relay.swift`, entitlements. The native messaging manifest is generated per browser by `scripts/dev.sh install-host`, not stored here. |
 | `ChromeExtension/` | `manifest.json`, `background.js`, `content.js`, `popup.html/js`, `shared/`, `vendor/`, `tests/` |
-| `scripts/` | Build, run, test, generate, extension-setup shell scripts |
-| `docs/implementation/ROADMAP.md` | Single status-tracking file |
-| `docs/superpowers/` | `plans/`, `specs/`, `spikes/` — named `YYYY-MM-DD-slug[-design].md` |
+| `scripts/` | Three maintained scripts: `dev.sh` (generate, build, run, install-host, package), `test.sh`, `update-password-rules.sh`. `scripts/package/INSTALL.txt` ships inside the macOS artifact. |
+| `.github/` | `workflows/ci.yml`, issue forms, pull request template, `dependabot.yml` |
+| `docs/implementation/ROADMAP.md` | The only tracked file under `docs/implementation/`. Lists only unfinished work; delete an item when it is implemented and verified. |
+| `docs/superpowers/` | Local-only and gitignored (`/docs/superpowers/`): `plans/`, `specs/`, `spikes/`, `drafts/`, named `YYYY-MM-DD-slug[-design].md`. `drafts/` holds files that are not published yet (for example `SECURITY.draft.md`). Never commit anything from it and never link to it from tracked files. |
+| `LICENSE`, `THIRD_PARTY_NOTICES.md` | Apache-2.0 root license and the notices for vendored and linked third-party code. Both ship inside the artifacts. |
 | `RUN.md` | Ukrainian run + manual verification checklist. Do not translate it. |
 
 ## Build, run, test
 
 ```sh
-brew install xcodegen             # prerequisite, plus Xcode
-./scripts/generate.sh             # xcodegen generate -> MyPass.xcodeproj
-./scripts/build-all.sh            # app + ChromeHost
-./scripts/run.sh                  # build, stop a running MyPass, relaunch
-./scripts/test.sh                 # full suite
-./scripts/setup-chrome-extension.sh   # install ChromeHost + native messaging manifests
+brew install xcodegen                          # prerequisite, plus Xcode
+./scripts/dev.sh generate                      # xcodegen generate -> MyPass.xcodeproj
+./scripts/dev.sh build [--unsigned]            # app + ChromeHost into ./build
+./scripts/dev.sh run                           # ask every running MyPass to quit (up to 15 s), then build, then open the new build
+./scripts/dev.sh install-host [--host PATH] [--install-root DIR]   # ChromeHost + native messaging manifests
+./scripts/dev.sh package [--out DIR]           # unsigned, ad-hoc-sealed development zips into ./dist
+./scripts/test.sh [--ci] [--no-js]             # full suite
 ```
 
-`scripts/test.sh` runs `xcodebuild test -scheme MyPass`, then `swift test` in each of the three packages, then 15 standalone `node ChromeExtension/tests/*.test.js` scripts. There is no JS test framework — each test file is a plain node script. Node tests are skipped with a warning when `node` is absent.
+`scripts/test.sh` runs `xcodebuild test -scheme MyPass`, then `swift test` in each of the three packages, then every `ChromeExtension/tests/*.test.js` suite (31 today, discovered by glob; each in its own `node` process, failures aggregated). There is no JS test framework — each test file is a plain node script. Without `node` a local run fails unless `--no-js` is passed, which prints that the JS suites were not run. `--ci` rejects `--no-js`, requires every tool, and builds unsigned through command-line overrides only (`project.yml` is untouched). `--no-js` is never a way to report a change as tested when it touches `ChromeExtension/`.
+
+Local builds keep the stable team signing from `project.yml`. Unsigned output exists only behind explicit flags (`--unsigned`, `--ci`, `package`); unsigned artifacts are for development and inspection, and Touch ID and the Keychain-backed app-to-host exchange are expected to be limited there (untested).
 
 Opt-in integration tests: `MYPASS_KEYCHAIN_TESTS=1`, `MYPASS_SFTP_INTEGRATION_TESTS=1` (needs `Packages/SyncKit/Tests/Fixtures/docker-sshd/run.sh`), `MYPASS_ICLOUD_INTEGRATION_TESTS=1`.
 
@@ -57,11 +62,12 @@ The extension has no build step. Load `ChromeExtension/` unpacked and reload it 
 
 **No linter or formatter is configured** anywhere in this repo. Match the style of the surrounding code by hand.
 
-**No CI.** Nothing runs the tests for you. Run `./scripts/test.sh` before claiming work is done.
+**CI is a second check, not a substitute.** `.github/workflows/ci.yml` runs `scripts/test.sh --ci` and `scripts/dev.sh package` on pull requests, on pushes to `master` and on manual dispatch. It builds unsigned on arm64, so a green run proves logic only, not the runtime behaviour of a signed build, and it reports after the fact. Look at the Actions run for the real result instead of assuming one, and run `./scripts/test.sh` yourself before claiming work is done.
 
 ## Architecture essentials
 
 - **Vault engine.** `Packages/MyPassKit` implements KDBX4 from scratch: outer and inner headers, `VariantDictionary`, HMAC block streams, AES-256-CBC and ChaCha20, header authentication, Argon2id and Argon2d via a vendored `phc-winner-argon2` C target (`CArgon2`), supporting any salt length the format allows and parallelism beyond one. swift-sodium is retained for the ChaCha20 and Salsa20 stream ciphers.
+- **Single instance.** `AppLauncher` runs before `MyPassApp.init` and elects one owner through `SingleInstanceCoordinator`, `InstanceLock` (an `flock` file in the app's own support directory) and a versioned two-phase probe/commit exchange over `DistributedNotificationCenter` (the notification name embeds the bundle id and `v2`, and the payload rides in the notification `object` because a sandboxed sender's `userInfo` is dropped). Peers are found through `NSRunningApplication` (the launcher creates `NSApplication` first so LaunchServices can see it) and identified by pid plus start time from the kernel process table. A launch that loses touches no defaults, Keychain, bridge or vault. The newer launch wins; the older copy quits through `QuitFlushCoordinator` (flush, or a Cancel / Quit Anyway prompt on a failed or timed-out save). A live peer that never answers the probe (a build from before the guard, a test host, a foreign process) or an acknowledged peer that does not exit within 15 s makes the new launch fail closed; a sandboxed copy that runs this guard takes part normally. Test hosts and previews are exempt. `scripts/dev.sh run` quits every running copy before it builds, and never force-kills.
 - **Session state.** `MyPass/State/VaultSession.swift` is an `ObservableObject` holding `enum VaultState { locked, unlocked(KdbxDatabase) }`, with debounced background persistence and a sync merge on save.
 - **Auto-lock and device unlock.** `AutoLockController`, `AutoLockIdleTimeout`, `UnlockWindowPolicy`, `DeviceUnlockPromptCoordinator`, plus `Security/BiometricKeyStore.swift` guarding a Keychain access group behind `LAContext`.
 - **Signing constraint.** `project.yml` pins a stable `DEVELOPMENT_TEAM`. Ad-hoc signing changes the cdhash on every build and silently breaks the biometric key ACL. Do not switch it to ad-hoc.
@@ -76,11 +82,12 @@ The extension has no build step. Load `ChromeExtension/` unpacked and reload it 
 ## Conventions
 
 - **Language: English everywhere** — code, comments, commit messages, UI strings, extension copy, docs, plans, specs, error messages, and `Info.plist` / `project.yml` usage descriptions. The single exception is root `RUN.md`, which is Ukrainian and must not be translated. Never introduce Russian copy anywhere. When a change touches a doc that still carries Cyrillic outside `RUN.md`, translate it to English as part of that change. Runtime localization (en, uk, de) is deferred to Phase 7, so ship English strings until then.
-- **Commits: Conventional Commits with a scope**, lowercase imperative subject, no trailing period. Scopes in use: `app`, `extension`, `chrome`, `scripts`, `entry-edit`. Example: `fix(app): reset auto-lock idle timer on deliberate extension activity`.
+- **Commits: Conventional Commits with a scope**, lowercase imperative subject, no trailing period. Scopes in use: `app`, `extension`, `chrome`, `scripts`, `entry-edit`, `ci` (workflow), `docs` (documentation only). Example: `fix(app): reset auto-lock idle timer on deliberate extension activity`.
 - **Long explanatory comments are a feature here.** The codebase records *why* a constraint exists (signing and cdhash, libsodium salt length, `pgrep` under `set -e`, queue choices). Preserve that rationale when editing; do not strip it as noise.
-- **Documentation habit.** Substantial features get a spec in `docs/superpowers/specs/` and a plan in `docs/superpowers/plans/`, with progress tracked in `docs/implementation/ROADMAP.md`. Tick a roadmap box only when the item is implemented **and** its tests pass.
+- **Documentation habit.** Substantial features get a local-only spec in `docs/superpowers/specs/` and plan in `docs/superpowers/plans/` (gitignored, so they are working notes and not repository documentation). `docs/` itself holds documentation only: `docs/implementation/ROADMAP.md` lists only unfinished work: delete an item once it is implemented **and** its tests pass (a manual-only item, once the manual check has actually been walked). Items are open `[ ]` boxes until then; do not tick one for partly done work. Do not add other implementation notes, captures or completed-work logs to `docs/`.
 - **Shell scripts** are `set -euo pipefail`, resolve the repo root themselves, and preflight-check required commands. Keep new scripts in that shape.
-- **Gitignored, do not commit or hand-edit:** `*.xcodeproj`, `MyPass/Info.plist`, `MyPassTests/Info.plist`, `.build/`, `Packages/*/.build/`, `.superpowers/`, `.worktrees/`.
+- **Licensing.** The project is Apache-2.0 (root `LICENSE`, unfilled canonical text, no root `NOTICE`). Any change that adds, removes or bumps a dependency, or re-vendors a file, updates `THIRD_PARTY_NOTICES.md` in the same change; see `CONTRIBUTING.md`.
+- **Gitignored, do not commit or hand-edit:** `*.xcodeproj`, `MyPass/Info.plist`, `MyPassTests/Info.plist`, `.build/`, `Packages/*/.build/`, `/build/`, `/dist/`, `/docs/superpowers/`, `.superpowers/`, `.worktrees/`.
 
 ---
 
@@ -176,7 +183,7 @@ Read one or two files for high-level reasoning. One or two orientation commands.
 
 ## What the orchestrator never does directly
 
-Write a file over 30 lines. Apply two or more edits in one response. Read three or more files for analysis. Run three or more context-gathering commands. Multi-file refactors. Test runs over ten seconds — `./scripts/test.sh` is a full Xcode build plus three `swift test` runs plus 15 node scripts, so it always goes to a subagent.
+Write a file over 30 lines. Apply two or more edits in one response. Read three or more files for analysis. Run three or more context-gathering commands. Multi-file refactors. Test runs over ten seconds — `./scripts/test.sh` is a full Xcode build plus three `swift test` runs plus every `ChromeExtension/tests/*.test.js` suite, so it always goes to a subagent.
 
 ## Not valid reasons to skip a dispatch
 
@@ -197,7 +204,7 @@ Process skills come first and set the approach; implementation skills carry it o
 
 1. `brainstorming` before any creative or feature work, and before entering plan mode.
 2. `systematic-debugging` before proposing a fix for any bug or test failure.
-3. `writing-plans` and `executing-plans` for multi-step work. Plans land in `docs/superpowers/plans/`, specs in `docs/superpowers/specs/`.
+3. `writing-plans` and `executing-plans` for multi-step work. Plans land in `docs/superpowers/plans/`, specs in `docs/superpowers/specs/`; both directories are local-only and gitignored.
 4. `verification-before-completion` before claiming anything is done, fixed or passing.
 5. `/code-review` and `/security-review` for review passes on a finished branch.
 
@@ -210,7 +217,7 @@ A healthy week shows executor tokens well above orchestrator tokens: executors o
 ## Do not use
 
 - `claude-mem` skills (`make-plan`, `do`, `learn-codebase`, `pathfinder`, `smart-explore`). Use the superpowers equivalents. The plugin's cross-session memory stays active; only its skills are off-limits.
-- Anything `gsd-*`. Archived 2026-05-16 to `~/temp/dotfiles-cleanup-2026-05-16/`.
+- Anything `gsd-*`. Retired tooling, not part of this workflow.
 
 ## Anti-patterns
 
@@ -218,4 +225,4 @@ A healthy week shows executor tokens well above orchestrator tokens: executors o
 - Re-running tools already answered earlier in the session.
 - Skipping a review pass. A Sonnet review costs about two cents; a bug caught late costs far more.
 - An executor re-dispatching work it was sent to do. Executors do not delegate.
-- Claiming work is done without running `./scripts/test.sh`. There is no CI to catch it.
+- Claiming work is done without running `./scripts/test.sh` yourself. CI runs unsigned and after the fact, so it is not a substitute.

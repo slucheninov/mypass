@@ -150,15 +150,12 @@ public enum PasswordGenerator {
     /// `satisfies` below and by `repairMaxConsecutive`, and 82 of the 436
     /// rules in the vendored 2026-09-12 snapshot set it. `maxRepeating`
     /// and `maxSequential` are different: zero of those 436 rules set
-    /// either one (see
-    /// docs/superpowers/specs/2026-09-12-site-password-rules-and-uri-matching-design.md,
-    /// Decision 4). Writing enforcement code for a constraint no shipped
+    /// either one. Writing enforcement code for a constraint no shipped
     /// rule ever exercises would be untested code sitting in the single
     /// most security-relevant path in this app -- the same
     /// "self-rolled, unscrutinized logic" risk this codebase already
-    /// refuses to take in `KeyDerivation.swift` (see
-    /// docs/superpowers/specs/2026-09-12-kdbx4-argon2-interop-design.md,
-    /// Decision 1). If a future snapshot refresh
+    /// refuses to take in `KeyDerivation.swift`, which calls the vendored
+    /// reference Argon2 (`CArgon2`) instead of a hand-written one. If a future snapshot refresh
     /// (`scripts/update-password-rules.sh`) ever vendors a rule using
     /// either property, that is the trigger to add enforcement and its
     /// own known-answer tests here -- not something to build

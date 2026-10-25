@@ -7,3 +7,19 @@ Packages/*/.build/
 .superpowers/
 
 .worktrees/
+
+# Python bytecode and per-user Xcode state
+__pycache__/
+*.pyc
+xcuserdata/
+
+# Output of scripts/dev.sh build, run and package
+/build/
+/dist/
+
+# SFTP integration fixture credentials; run.sh generates them on first use
+Packages/SyncKit/Tests/Fixtures/docker-sshd/test_key*
+Packages/SyncKit/Tests/Fixtures/docker-sshd/ssh_host_*
+
+# Local-only planning workspace (specs, plans, spikes, drafts); never committed
+/docs/superpowers/

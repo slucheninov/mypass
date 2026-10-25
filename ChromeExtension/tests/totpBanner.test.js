@@ -1,4 +1,4 @@
-// Covers three "B follow-ups parked" items from ROADMAP Decisions 2026-08-08:
+// Covers three parked follow-ups of the TOTP save banner:
 //   3a — event.isTrusted gating on the Save/Dismiss banner buttons (trustedClickHandler).
 //   3b — per-image QR decode memoization (WeakMap cache in decodeQrFromImage).
 //   3c — img.onload rescan (observeTotpCandidates' capture-phase 'load' listener), plus

@@ -7,27 +7,27 @@
   ```sh
   brew install xcodegen
   ```
-- **Node.js** (опційно) — для JS-тестів розширення Chrome
+- **Node.js** — для JS-тестів розширення Chrome (`scripts/test.sh` без `node` завершується помилкою, якщо не передати `--no-js`)
 
 ## Швидкий старт
 
 ```sh
-./scripts/build-all.sh
-./scripts/run.sh
+./scripts/dev.sh build
+./scripts/dev.sh run
 ```
 
-Перший запуск збере застосунок і native messaging host; `run.sh` відкриє `MyPass.app`.
+Перший запуск збере застосунок і `ChromeHost`; `dev.sh run` відкриє `MyPass.app`. Native messaging host встановлюється окремо: `./scripts/dev.sh install-host` (див. розділ про Chrome-розширення).
 
 ## Скрипти
 
 | Скрипт | Призначення |
 |--------|------------|
-| [`scripts/generate.sh`](scripts/generate.sh) | `xcodegen generate` — створити/оновити `MyPass.xcodeproj` |
-| [`scripts/build.sh`](scripts/build.sh) | Згенерувати проєкт і зібрати схему **MyPass** |
-| [`scripts/build-chrome-host.sh`](scripts/build-chrome-host.sh) | Згенерувати проєкт і зібрати **ChromeHost** |
-| [`scripts/build-all.sh`](scripts/build-all.sh) | Зібрати MyPass і ChromeHost |
-| [`scripts/run.sh`](scripts/run.sh) | Зібрати і запустити **MyPass.app** |
-| [`scripts/test.sh`](scripts/test.sh) | Xcode-тести, Swift Package-тести, JS-тести (якщо є `node`) |
+| [`scripts/dev.sh generate`](scripts/dev.sh) | `xcodegen generate` — створити/оновити `MyPass.xcodeproj` |
+| [`scripts/dev.sh build [--unsigned]`](scripts/dev.sh) | Згенерувати проєкт і зібрати **MyPass** та **ChromeHost** у `./build` |
+| [`scripts/dev.sh run`](scripts/dev.sh) | Спершу попросити завершитися всі запущені копії MyPass (до 15 с), потім зібрати і запустити **MyPass.app**; ніщо не вбивається примусово |
+| [`scripts/dev.sh install-host`](scripts/dev.sh) | Встановити `ChromeHost` і native messaging manifest для встановлених Chromium-браузерів |
+| [`scripts/dev.sh package`](scripts/dev.sh) | Зібрати unsigned-артефакти для розробки в `./dist` |
+| [`scripts/test.sh`](scripts/test.sh) | Xcode-тести, Swift Package-тести, JS-тести (потрібен `node`; без нього — лише з явним `--no-js`) |
 
 ## Тести
 
@@ -50,10 +50,11 @@
 Розширення має закріплений (pinned) ID `hjijbabodfldconmhdcdphlbgaajkejn` завдяки полю `key` у `ChromeExtension/manifest.json`, тому з'єднання можна налаштувати одним скриптом:
 
 ```sh
-./scripts/setup-chrome-extension.sh
+./scripts/dev.sh build
+./scripts/dev.sh install-host
 ```
 
-Скрипт `./scripts/setup-chrome-extension.sh` встановлює native messaging manifest для **усіх встановлених Chromium-браузерів** (Chrome, Edge, Brave, Vivaldi, Opera, Arc тощо). Кожен браузер підключається окремо — у **Settings → Paired browsers** з'являється свій рядок з назвою цього браузера.
+Команда `./scripts/dev.sh install-host` копіює `ChromeHost` і встановлює native messaging manifest для **усіх встановлених Chromium-браузерів** (Chrome, Edge, Brave, Vivaldi, Opera, Arc тощо). Кожен браузер підключається окремо — у **Settings → Paired browsers** з'являється свій рядок з назвою цього браузера.
 
 1. У Chrome завантажте розпаковане розширення з `ChromeExtension/` (див. нижче) — його ID має бути `hjijbabodfldconmhdcdphlbgaajkejn`.
 2. Якщо розширення вже було додано раніше, перезавантажте його (reload) на `chrome://extensions`.
@@ -66,11 +67,11 @@
 2. Натисніть її; у головному вікні MyPass з'явиться **6-значний код** (дійсний 120 секунд).
 3. Введіть цей код у popup розширення та підтвердіть.
 
-Після успішного підключення popup показує збережені записи як раніше. Скасувати довіру можна в **MyPass → Settings → Browser → Paired browsers → Revoke**. Деталі протоколу: [spec pairing](docs/superpowers/specs/2026-07-26-mypass-extension-pairing-design.md).
+Після успішного підключення popup показує збережені записи як раніше. Скасувати довіру можна в **MyPass → Settings → Browser → Paired browsers → Revoke**.
 
 ### Як додати в Chrome (розпаковане)
 
-1. **Передумова:** JS-розширення лежить у [`ChromeExtension/`](ChromeExtension/) — окремого кроку збірки для нього немає; завантажуйте цю папку як є. Native host (`ChromeHost`) збирається автоматично скриптом [`setup-chrome-extension.sh`](scripts/setup-chrome-extension.sh) (див. [Автоматичне налаштування](#автоматичне-налаштування-рекомендовано)).
+1. **Передумова:** JS-розширення лежить у [`ChromeExtension/`](ChromeExtension/) — окремого кроку збірки для нього немає; завантажуйте цю папку як є. Native host (`ChromeHost`) збирається командою `./scripts/dev.sh build`, а встановлюється командою [`./scripts/dev.sh install-host`](scripts/dev.sh) (див. [Автоматичне налаштування](#автоматичне-налаштування-рекомендовано)).
 2. Відкрийте Chrome → перейдіть на `chrome://extensions` (або **Меню → Розширення → Керування розширеннями**).
 3. Увімкніть **Режим розробника** (Developer mode) — перемикач у правому верхньому куті.
 4. Натисніть **Завантажити розпаковане розширення** (Load unpacked).
@@ -190,8 +191,6 @@
    - [x] Фрейм без `document.body` (SVG-документ, фрейм 4b, `blank.svg`), поряд із рекламними фреймами (фрейм 4 тієї ж фікстури — два дрібні 300×250): сторінка з таким SVG-фреймом не дає жодних помилок ані на `chrome://extensions`, ані в консолі сторінки. Саме цей фрейм і провалив би перевірку, якби захист від `document.body === null` у `MutationObserver.observe()` було знято — SVG/XML-документи не мають body.
    - [x] У вузькому фреймі панель обрізається — це відоме обмеження, а не дефект
 
-Повний чеклист і деталі налаштування: [план Фази 4](docs/superpowers/plans/2026-07-25-mypass-phase4-chrome-extension.md).
-
 ### Розблокування з попапа розширення
 
 - [x] Заблокуйте сховище, відкрийте попап на будь-якому сайті — має з'явитися кнопка **Unlock MyPass** поряд із Retry.
@@ -210,6 +209,17 @@
 
 Майстер-пароль ніколи не вводиться в браузері: розширення лише просить застосунок показати власний екран розблокування.
 
+## Один екземпляр MyPass
+
+Ручна перевірка. Не виконувалась; пункти нижче лишаються відкритими, доки їх не пройдено на реальному профілі.
+
+- [ ] Дві копії: запустіть збірку A, відкрийте й розблокуйте сховище. Запустіть збірку B (нова) — A має завершитися сама, B стає єдиним екземпляром, а в Activity Monitor лишається один процес MyPass.
+- [ ] Одночасний запуск: двічі швидко запустіть `open -n` для однієї й тієї ж збірки (або двічі `./scripts/dev.sh run` у різних вікнах терміналу). Має лишитися рівно один MyPass, без двох вікон і без двох сховищ.
+- [ ] Відмова збереження: змусьте збереження не вдатися (наприклад, зробіть файл сховища недоступним для запису) і запустіть нову копію. Стара має показати діалог з **Cancel** (за замовчуванням) і **Quit Anyway**. Після **Cancel** стара лишається працювати, а нова за ~15 с відмовляється стартувати з повідомленням «MyPass is still closing» і не відкриває сховище. Після **Quit Anyway** стара завершується.
+- [ ] Стара збірка без слухача (до появи перевірки): нова копія відмовляється стартувати з повідомленням «Another MyPass is already running»; закрийте стару вручну або запустіть `./scripts/dev.sh run`.
+- [ ] `./scripts/dev.sh run` з уже запущеним MyPass: спершу стара копія завершується, лише потім починається збірка, потім відкривається нова. Якщо стара не завершилась за 15 с, збірки немає, а в терміналі є явна помилка.
+- [ ] Без дубліката bridge і сховища: після будь-якого сценарію вище одне запущене MyPass, одне з'єднання з розширенням (`Settings → Browser` без дублікатів), попап розширення працює, а файл сховища відкритий лише одним процесом (`lsof` на файл сховища показує один PID).
+
 ## Синхронізація через iCloud Drive
 
 1. Розблокуйте сховище (потрібен пароль сховища, щоб прочитати сховище, яке вже може лежати в теці).
@@ -226,7 +236,7 @@
 
 ## Обмеження
 
-- **`MyPass.xcodeproj` у `.gitignore`** — перед збіркою завжди потрібен `./scripts/generate.sh` (викликається автоматично з `build*.sh` і `test.sh`).
+- **`MyPass.xcodeproj` у `.gitignore`** — перед збіркою завжди потрібен `./scripts/dev.sh generate` (викликається автоматично з `dev.sh build` і `test.sh`).
 - **Keychain sharing** — у `MyPass` і `ChromeHost` має бути однаковий Team ID під час підпису, інакше host не зчитає токен/порт з Keychain.
-- **Шлях ChromeHost** — скрипт `scripts/setup-chrome-extension.sh` копіює зібраний бінарник у `~/Library/Application Support/MyPass/ChromeHost`; після перезбірки ChromeHost перезапустіть скрипт, щоб оновити копію.
+- **Шлях ChromeHost** — команда `scripts/dev.sh install-host` копіює зібраний бінарник у `~/Library/Application Support/MyPass/ChromeHost`; після перезбірки ChromeHost запустіть її знову, щоб оновити копію.
 - **iCloud** — синхронізація працює через **теку в iCloud Drive** і не потребує платного акаунта Apple Developer. Шлях через приватний iCloud-контейнер (ubiquity container) вимагає платного акаунта Apple Developer і в цій збірці не задіяний. Інтеграційні iCloud-тести (`MYPASS_ICLOUD_INTEGRATION_TESTS=1`) потребують Mac з увімкненим iCloud Drive.

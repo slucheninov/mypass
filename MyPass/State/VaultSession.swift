@@ -19,9 +19,24 @@ extension VaultState: Equatable {
 
 enum VaultSessionError: Error {
     case notUnlocked
+    case quitInProgress
 }
 
-final class VaultSession: ObservableObject {
+/// How a quit-time flush ended. `saveFailed` carries `lastSaveError` as it
+/// stood after every earlier write finished, so a failure is never hidden.
+enum VaultFlushOutcome: Equatable {
+    case flushed
+    case saveFailed(String)
+    case timedOut
+}
+
+protocol VaultFlushing: AnyObject {
+    func flushPendingWrites(timeout: TimeInterval, completion: @escaping (VaultFlushOutcome) -> Void)
+    /// Ends the quit-time freeze that `flushPendingWrites` started, after the quit was cancelled.
+    func resumeAfterCancelledQuit()
+}
+
+final class VaultSession: ObservableObject, VaultFlushing {
     @Published private(set) var state: VaultState = .locked
     @Published private(set) var lastSaveError: String?
 
@@ -108,6 +123,100 @@ final class VaultSession: ObservableObject {
     /// thread. Backs `triggerBackgroundSyncIfDirty()`, which the app-level
     /// timer calls instead of unconditionally syncing every tick.
     private var hasDirtyLocalChanges = false
+
+    /// Bookkeeping for the quit-time flush, all guarded by `writeStateLock` because the
+    /// queued writes report from `persistQueue` while the flush runs on the main thread.
+    ///
+    /// - `pendingLocalWrites` counts queue jobs that may still write the local file (an
+    ///   autosave, a debounced touch, a migration), from the moment they are enqueued until
+    ///   their LOCAL step is done. A remote sync that follows a finished local write is
+    ///   deliberately not counted: the data is already durable, the upload is atomic and the
+    ///   next launch syncs again, so the quit must not wait on (or prompt about) it.
+    /// - `queuedWriteError` is the failure of the newest local write, or `nil` when the newest
+    ///   one reached `fileStore` (or needed no write). A failed remote sync after a successful
+    ///   local write is NOT recorded here.
+    /// - Generations order those writes against synchronous saves on the main thread
+    ///   (`save(password:)`, the merge in `syncOnUnlock`, a store swap). A synchronous save
+    ///   writes the whole current state, so it supersedes every queued failure of an older
+    ///   generation, whether that failure was already recorded or lands later.
+    private let writeStateLock = NSLock()
+    private var queuedWriteError: String?
+    private var pendingLocalWrites = 0
+    private var writeGeneration = 0
+    private var supersededThroughGeneration = 0
+    private var localDrainWaiters: [(String?) -> Void] = []
+
+    private enum LocalWriteResult {
+        case wrote
+        case failed(String)
+        /// The job did not touch the local file (a failed migration, a probe).
+        case unchanged
+    }
+
+    /// Main thread, at enqueue time, so a flush that starts right afterwards already sees the job.
+    private func beginLocalWrite() -> Int {
+        writeStateLock.lock()
+        defer { writeStateLock.unlock() }
+        pendingLocalWrites += 1
+        writeGeneration += 1
+        return writeGeneration
+    }
+
+    /// `persistQueue`. Exactly once per `beginLocalWrite()`.
+    private func finishLocalWrite(generation: Int, result: LocalWriteResult) {
+        writeStateLock.lock()
+        switch result {
+        case .wrote:
+            queuedWriteError = nil
+        case .failed(let message):
+            if generation > supersededThroughGeneration { queuedWriteError = message }
+        case .unchanged:
+            break
+        }
+        pendingLocalWrites -= 1
+        var waiters: [(String?) -> Void] = []
+        let error = queuedWriteError
+        if pendingLocalWrites == 0 {
+            waiters = localDrainWaiters
+            localDrainWaiters = []
+        }
+        writeStateLock.unlock()
+        waiters.forEach { $0(error) }
+    }
+
+    /// Any thread. The current state just reached `fileStore` outside the queue (or no longer
+    /// has anything to write), so an earlier queued failure is stale and must not prompt at quit.
+    private func noteSynchronousDurableWrite() {
+        writeStateLock.lock()
+        writeGeneration += 1
+        supersededThroughGeneration = writeGeneration
+        queuedWriteError = nil
+        writeStateLock.unlock()
+    }
+
+    /// Calls `waiter` (on whatever thread finishes the last local write, or immediately on the
+    /// caller's thread when none is pending) with the newest local write error.
+    private func whenLocalWritesDrained(_ waiter: @escaping (String?) -> Void) {
+        writeStateLock.lock()
+        if pendingLocalWrites == 0 {
+            let error = queuedWriteError
+            writeStateLock.unlock()
+            waiter(error)
+            return
+        }
+        localDrainWaiters.append(waiter)
+        writeStateLock.unlock()
+    }
+
+    /// `true` from the moment the quit-time flush starts until the quit is cancelled. While it
+    /// is set the session accepts no new change: `mutate` returns `false`, `touchAccess` and
+    /// background sync do nothing and a migration fails with `VaultSessionError.quitInProgress`.
+    /// Everything accepted before it was set is already queued and is waited for; everything
+    /// after it is refused explicitly, so no change is acknowledged and then lost to the exit.
+    /// Published so the windows and the menu bar panel can show "saving" and disable their
+    /// controls (`QuitFreezeOverlay`) instead of silently dropping what the user types.
+    /// Main thread only.
+    @Published private(set) var isQuitInProgress = false
 
     /// `true` while a debounced `touchAccess` persist is still waiting to run.
     /// Exposed so tests can assert that starting a migration cancels it.
@@ -222,6 +331,8 @@ final class VaultSession: ObservableObject {
             self.lastSuccessfullyWrittenBytes = nil
             self.lastSuccessfullyWrittenDatabase = nil
         }
+        // A write that failed against the previous store says nothing about the new one.
+        noteSynchronousDurableWrite()
         SyncBackendResolver.clearCheckpoint(for: .folder)
         SyncBackendResolver.clearCheckpoint(for: .sftp)
     }
@@ -310,6 +421,8 @@ final class VaultSession: ObservableObject {
                 )
                 self.lastSuccessfullyWrittenBytes = remoteBytes
                 self.lastSuccessfullyWrittenDatabase = snapshot
+                // The session is about to hold exactly what is on disk, so an older queued failure is stale.
+                self.noteSynchronousDurableWrite()
 
                 DispatchQueue.main.async { [weak self] in
                     guard let self else { return }
@@ -361,14 +474,83 @@ final class VaultSession: ObservableObject {
         let data = try db.save(password: password, cipher: .aes256, compression: .gzip)
         try fileStore.save(data: data)
         recordSuccessfulWrite(data, database: db)
+        noteSynchronousDurableWrite()
     }
 
-    func mutate(_ body: (inout KdbxDatabase) -> Void) {
-        guard case .unlocked(var db) = state else { return }
+    /// Applies `body` and queues the save. Returns `false`, without running `body`, when the
+    /// vault is locked or a quit is in progress (see `isQuitInProgress`); callers that
+    /// acknowledge the change to someone else (the extension bridge) must not do so then.
+    @discardableResult
+    func mutate(_ body: (inout KdbxDatabase) -> Void) -> Bool {
+        guard !isQuitInProgress, case .unlocked(var db) = state else { return false }
         body(&db)
         state = .unlocked(db)
         hasDirtyLocalChanges = true
         persist(db)
+        return true
+    }
+
+    /// Leaves the quit-time freeze after the user cancelled the quit. Nothing was lost by
+    /// freezing: the debounced touch was written when the flush started.
+    func resumeAfterCancelledQuit() {
+        isQuitInProgress = false
+    }
+
+    /// Quit-time flush. Writes the debounced `touchAccess` change now (if the
+    /// vault is still unlocked), freezes the session (`isQuitInProgress`: every
+    /// change accepted so far is queued, later ones are refused), then waits for
+    /// every queued LOCAL write — INCLUDING writes queued before the session was
+    /// locked, which keep running after `lock()` because each one captured its
+    /// own snapshot and password. Must be called on the main thread. Completes on
+    /// the main thread, exactly once, with the first of: the local writes done
+    /// (`flushed`, or `saveFailed` when the newest local write failed) or
+    /// `timeout` elapsing (`timedOut`).
+    ///
+    /// A remote sync that follows a finished local write is not waited for (see
+    /// `pendingLocalWrites`). The freeze outlives the completion on purpose — it
+    /// covers the window up to the exit and the "Quit Anyway" prompt — and ends
+    /// only through `resumeAfterCancelledQuit()`.
+    ///
+    /// Never blocks the main thread, and deliberately does NOT rely on
+    /// `DispatchQueue.main`: during `applicationShouldTerminate` ->
+    /// `.terminateLater` AppKit waits inside a nested run loop, and when
+    /// `NSApp.terminate` was itself reached from a main-queue block (for
+    /// example a notification callback) libdispatch will not run further
+    /// main-queue blocks until that block returns — a reply scheduled with
+    /// `DispatchQueue.main` would never fire (measured with a real
+    /// `terminateLater`). The completion hop and the timeout therefore use
+    /// run-loop sources, which a nested run loop does service.
+    ///
+    /// A locked session cannot write a debounced change that `lock()` already
+    /// cancelled; only the queued writes remain to wait for.
+    func flushPendingWrites(timeout: TimeInterval, completion: @escaping (VaultFlushOutcome) -> Void) {
+        if let pending = touchAccessPersistWorkItem {
+            pending.cancel()
+            touchAccessPersistWorkItem = nil
+            if case .unlocked(let db) = state { persist(db) }
+        }
+        // After the debounced touch above has been queued and before anything else can run on
+        // the main thread: every change accepted so far is queued, none is accepted from now on.
+        isQuitInProgress = true
+
+        var finished = false
+        var timeoutTimer: Timer?
+        let finish: (VaultFlushOutcome) -> Void = { outcome in
+            guard !finished else { return }
+            finished = true
+            timeoutTimer?.invalidate()
+            completion(outcome)
+        }
+        let timer = Timer(timeInterval: timeout, repeats: false) { _ in finish(.timedOut) }
+        timeoutTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+
+        whenLocalWritesDrained { error in
+            let outcome: VaultFlushOutcome = error.map(VaultFlushOutcome.saveFailed) ?? .flushed
+            let mainRunLoop = CFRunLoopGetMain()
+            CFRunLoopPerformBlock(mainRunLoop, CFRunLoopMode.commonModes.rawValue) { finish(outcome) }
+            CFRunLoopWakeUp(mainRunLoop)
+        }
     }
 
     /// Runs `triggerBackgroundSync()` only when there are unwritten local
@@ -388,7 +570,7 @@ final class VaultSession: ObservableObject {
     /// state — avoids List/detail re-render feedback loops on access tracking.
     /// No-op when vault is locked or entry ID is not found.
     func touchAccess(entryID: UUID) {
-        guard case .unlocked(let db) = state else { return }
+        guard !isQuitInProgress, case .unlocked(let db) = state else { return }
         guard let location = GroupTreeOperations.entryLocation(entryID: entryID, in: db.rootGroup) else { return }
         var entry = location.group.entries[location.index]
         entry.lastAccessTime = Date()
@@ -416,7 +598,7 @@ final class VaultSession: ObservableObject {
     /// and keeps this a single well-tested code path rather than a second,
     /// parallel one.
     func triggerBackgroundSync() {
-        guard case .unlocked(let db) = state else { return }
+        guard !isQuitInProgress, case .unlocked(let db) = state else { return }
         persist(db)
     }
 
@@ -451,6 +633,10 @@ final class VaultSession: ObservableObject {
         strategy: VaultMigrationStrategy,
         completion: @escaping (Result<VaultMigrationOutcome, Error>) -> Void
     ) {
+        guard !isQuitInProgress else {
+            DispatchQueue.main.async { completion(.failure(VaultSessionError.quitInProgress)) }
+            return
+        }
         guard case .unlocked(let db) = state, let password = sessionPassword else {
             DispatchQueue.main.async { completion(.failure(VaultMigrationError.vaultLocked)) }
             return
@@ -468,7 +654,8 @@ final class VaultSession: ObservableObject {
         )
         let service = VaultMigrationService(fileStore: fileStore)
 
-        persistQueue.async {
+        let generation = beginLocalWrite()
+        persistQueue.async { [weak self] in
             let result = Result {
                 try service.migrate(
                     local: snapshot,
@@ -477,6 +664,9 @@ final class VaultSession: ObservableObject {
                     strategy: strategy
                 )
             }
+            var wroteLocally = false
+            if case .success(let outcome) = result, outcome.mergedDatabase != nil { wroteLocally = true }
+            self?.finishLocalWrite(generation: generation, result: wroteLocally ? .wrote : .unchanged)
             DispatchQueue.main.async { [weak self] in
                 if case .success(let outcome) = result, let mergedDatabase = outcome.mergedDatabase {
                     // Only apply the merged database if the session is still unlocked.
@@ -656,6 +846,7 @@ final class VaultSession: ObservableObject {
             let data = try mergedDatabase.save(password: password, cipher: .aes256, compression: .gzip)
             try fileStore.save(data: data)
             recordSuccessfulWrite(data, database: mergedDatabase)
+            noteSynchronousDurableWrite()
         } catch {
             lastSaveError = "Failed to save merged changes locally: \(error)"
         }
@@ -694,6 +885,7 @@ final class VaultSession: ObservableObject {
             deletedObjects: db.deletedObjects,
             recycleBinGroupUUID: db.recycleBinGroupUUID
         )
+        let generation = beginLocalWrite()
         persistQueue.async { [weak self, fileStore, syncEngine] in
             guard let self else { return }
 
@@ -708,6 +900,7 @@ final class VaultSession: ObservableObject {
             // Safe to read `lastSuccessfullyWrittenDatabase` here: we're on
             // `persistQueue`, the only queue that ever touches it.
             if snapshot == self.lastSuccessfullyWrittenDatabase {
+                self.finishLocalWrite(generation: generation, result: .wrote)
                 DispatchQueue.main.async { [weak self] in
                     self?.hasDirtyLocalChanges = false
                     self?.lastSaveError = nil
@@ -719,8 +912,10 @@ final class VaultSession: ObservableObject {
             do {
                 data = try snapshot.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
             } catch {
+                let message = "Failed to save changes: \(error)"
+                self.finishLocalWrite(generation: generation, result: .failed(message))
                 DispatchQueue.main.async { [weak self] in
-                    self?.lastSaveError = "Failed to save changes: \(error)"
+                    self?.lastSaveError = message
                 }
                 return
             }
@@ -728,13 +923,17 @@ final class VaultSession: ObservableObject {
             do {
                 try fileStore.save(data: data)
             } catch {
+                let message = "Failed to save changes: \(error)"
+                self.finishLocalWrite(generation: generation, result: .failed(message))
                 DispatchQueue.main.async { [weak self] in
-                    self?.lastSaveError = "Failed to save changes: \(error)"
+                    self?.lastSaveError = message
                 }
                 return
             }
             self.lastSuccessfullyWrittenBytes = data
             self.lastSuccessfullyWrittenDatabase = snapshot
+            // The local file is durable from here; the quit-time flush does not wait for the sync below.
+            self.finishLocalWrite(generation: generation, result: .wrote)
 
             guard let syncEngine else {
                 DispatchQueue.main.async { [weak self] in

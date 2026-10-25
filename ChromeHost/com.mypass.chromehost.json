@@ -1,9 +1,0 @@
-{
-  "allowed_origins" : [
-    "chrome-extension:\/\/hjijbabodfldconmhdcdphlbgaajkejn\/"
-  ],
-  "description" : "MyPass native messaging host",
-  "name" : "com.mypass.chromehost",
-  "path" : "\/Users\/lucheninov\/Library\/Application Support\/MyPass\/ChromeHost",
-  "type" : "stdio"
-}

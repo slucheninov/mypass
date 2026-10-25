@@ -1,0 +1,22 @@
+version: 2
+updates:
+  - package-ecosystem: "swift"
+    directory: "/Packages/MyPassKit"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "swift"
+    directory: "/Packages/SyncKit"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "swift"
+    directory: "/Packages/ExtensionBridgeKit"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5

@@ -50,9 +50,10 @@ public enum KdbxDatabaseError: Error, Equatable {
 /// Argon2d, parallelism > 1) is exercised end to end by
 /// `KdbxCrossCompatibilityTests.testArgon2idGzipFixturesOpenAndRecoverCorrectData`,
 /// `KdbxCrossCompatibilityTests.testArgon2dGzipFixtureOpensAndRecoversCorrectData`,
-/// and `KdbxDatabaseTests.testOpensRealKeePassXCArgon2idReferenceFile` — see
-/// `docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md` for the
-/// backend swap that made this possible.
+/// and `KdbxDatabaseTests.testOpensRealKeePassXCArgon2idReferenceFile`. The
+/// vendored reference C implementation (`CArgon2`, see its `VENDORING.md`)
+/// replaced libsodium's Argon2 binding, which only accepted a 16-byte salt and
+/// parallelism 1, and that swap is what made this possible.
 /// `Equatable` compares *logical* content (the group tree, tombstones, and
 /// recycle-bin reference) — synthesized from `rootGroup`/`deletedObjects`/
 /// `recycleBinGroupUUID`, all of which are themselves `Equatable` by value
@@ -177,8 +178,10 @@ public struct KdbxDatabase: Equatable {
 
     public func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {
         let masterSeed = Self.randomBytes(count: 32)
-        // 32 bytes, matching real KDBX4 files (KeePass/KeePassXC) — see
-        // docs/superpowers/plans/2026-09-12-kdbx4-argon2-interop.md, Task 7.
+        // 32 bytes, matching real KDBX4 files (KeePass/KeePassXC); pinned by
+        // `testSaveWritesStrongerKdfParametersThanBefore`. The vendored
+        // `CArgon2` (see its `VENDORING.md`) is what lifts the old libsodium
+        // salt-length limit.
         // Every vault this package opens (existing MyPass vaults included,
         // since `open` never carries a file's original KDF parameters
         // forward — see below) re-derives with these parameters on its
