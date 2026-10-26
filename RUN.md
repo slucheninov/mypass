@@ -76,7 +76,7 @@
 3. Увімкніть **Режим розробника** (Developer mode) — перемикач у правому верхньому куті.
 4. Натисніть **Завантажити розпаковане розширення** (Load unpacked).
 5. Оберіть каталог репозиторію [`ChromeExtension/`](ChromeExtension/) (повний шлях: `<repo>/ChromeExtension/`).
-6. Переконайтеся, що на картці відображається **MyPass** (версія 0.2.0) з ID `hjijbabodfldconmhdcdphlbgaajkejn`.
+6. Переконайтеся, що на картці відображається **MyPass** (версія має збігатися зі значенням `version` у `ChromeExtension/manifest.json`) з ID `hjijbabodfldconmhdcdphlbgaajkejn`.
 7. Після змін у JS-файлах: на тій же сторінці натисніть іконку оновлення (reload) на картці MyPass.
 
 ### Якщо popup не відкривається (ERR_FILE_NOT_FOUND)

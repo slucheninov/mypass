@@ -17,7 +17,7 @@ Touch ID.
 
 ## Read this first: development builds only
 
-MyPass is pre-release software (version 0.2.0). There is **no notarized or
+MyPass is pre-release software (see the version in `project.yml` and the latest GitHub release). There is **no notarized or
 Developer ID signed release and no Chrome Web Store listing**. What the project
 can give you today is source you build yourself, plus unsigned **development
 artifacts** (built locally by `./scripts/dev.sh package`, and attached to runs of the
