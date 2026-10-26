@@ -23,6 +23,10 @@ private final class StubReleaseFeed: ReleaseFeed, @unchecked Sendable {
     }
 
     // NSLock is unavailable from async contexts, so the locked sections live in sync helpers.
+    // `released` makes the gate race-free: release() may run before the continuation is stored
+    // (the checker flips to .checking before the feed is entered), and that wakeup must not be lost.
+    private var _released = false
+
     private func recordCall() -> Bool {
         lock.lock()
         defer { lock.unlock() }
@@ -30,16 +34,22 @@ private final class StubReleaseFeed: ReleaseFeed, @unchecked Sendable {
         return _holdUntilReleased
     }
 
-    private func store(_ c: CheckedContinuation<Void, Never>) {
+    /// Stores the continuation, or returns it for immediate resumption when release() already ran.
+    private func storeOrResume(_ c: CheckedContinuation<Void, Never>) {
         lock.lock()
-        defer { lock.unlock() }
-        continuation = c
+        if _released {
+            lock.unlock()
+            c.resume()
+        } else {
+            continuation = c
+            lock.unlock()
+        }
     }
 
     func latestRelease() async throws -> ReleaseInfo {
         if recordCall() {
             await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                store(c)
+                storeOrResume(c)
             }
         }
         return try result.get()
@@ -47,6 +57,7 @@ private final class StubReleaseFeed: ReleaseFeed, @unchecked Sendable {
 
     func release() {
         lock.lock()
+        _released = true
         let c = continuation
         continuation = nil
         lock.unlock()
@@ -228,6 +239,7 @@ final class AppUpdateCheckerTests: XCTestCase {
         let first = Task { await checker.check(manual: false) }
         await waitForChecking(checker)
         await checker.check(manual: true)
+        XCTAssertEqual(checker.status, .checking)
         feed.release()
         await first.value
         XCTAssertEqual(feed.callCount, 1)

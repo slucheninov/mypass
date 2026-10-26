@@ -39,6 +39,7 @@ final class AppUpdateChecker: ObservableObject {
     private var inFlightIsManual = false
     private var initialTimer: Timer?
     private var repeatingTimer: Timer?
+    private var schedulingGeneration = 0
 
     init(feed: ReleaseFeed,
          currentVersion: SemanticVersion?,
@@ -173,12 +174,17 @@ final class AppUpdateChecker: ObservableObject {
     func startScheduling() {
         stopScheduling()
         isScheduled = true
+        schedulingGeneration += 1
+        let generation = schedulingGeneration
         initialTimer = Timer.scheduledTimer(withTimeInterval: Self.initialDelay, repeats: false) { [weak self] _ in
             Task { @MainActor [weak self] in
                 guard let self else { return }
                 await self.scheduledTick()
-                // stopScheduling() may have run while the first tick was awaiting.
-                guard self.isScheduled else { return }
+                // stopScheduling() may have run while the first tick was awaiting. The generation
+                // counter also catches a stop followed by a new start, which flips isScheduled
+                // back to true and would otherwise let this stale task arm a second timer.
+                guard self.isScheduled, generation == self.schedulingGeneration else { return }
+                self.repeatingTimer?.invalidate()
                 self.repeatingTimer = Timer.scheduledTimer(withTimeInterval: Self.interval, repeats: true) { [weak self] _ in
                     Task { @MainActor [weak self] in await self?.scheduledTick() }
                 }
