@@ -372,6 +372,15 @@ struct MyPassApp: App {
                 Button("Quit MyPass") { AppDelegate.requestTermination() }
                     .keyboardShortcut("q")
             }
+            // The activator is used instead of `SettingsLink` because Commands cannot capture
+            // `openSettings`, and the activator also opens the main window first when no scene
+            // has registered the action yet.
+            CommandGroup(after: .appInfo) {
+                Button("Check for Updates…") {
+                    BrowserSettingsActivator.request(pane: .general)
+                    Task { await updateChecker.check(manual: true) }
+                }
+            }
         }
     }
 

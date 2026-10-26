@@ -33,6 +33,8 @@ struct MenuBarUnlockPanelView: View {
 
     var body: some View {
         VStack(spacing: 16) {
+            MenuBarUpdateRow()
+
             Text("MyPass is locked")
                 .font(.headline)
 
