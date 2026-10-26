@@ -6,7 +6,7 @@
 #   scripts/dev.sh build   [--unsigned]
 #   scripts/dev.sh run
 #   scripts/dev.sh install-host [--host PATH] [--install-root DIR]
-#   scripts/dev.sh package [--out DIR]
+#   scripts/dev.sh package [--out DIR] [--release]
 #
 # This same file ships inside the macOS artifact, where it must keep working with no
 # source tree, no Xcode and no python3. Only `install-host` is meant to be used there,
@@ -88,9 +88,13 @@ Commands (checkout only, need Xcode and xcodegen):
                              running and it is the executable just built. If a copy will not
                              quit, nothing is built; if the build fails, no MyPass is left
                              running. Nothing is force-killed and no MyPass.app is removed.
-  package [--out DIR]        Build Release for arm64 without signing, seal it ad hoc, and
+  package [--out DIR] [--release]
+                             Build Release for arm64 without signing, seal it ad hoc, and
                              write the macOS DMG and the Chrome extension zip into DIR
                              (default ./dist). Development artifacts only.
+                             --release: requires a clean working tree and HEAD exactly at
+                             tag vX.Y.Z matching the project version; drops the commit
+                             suffix from the file names and writes SHA256SUMS.txt.
   set-version X.Y.Z          Set the app, host and extension version together (project.yml x2,
                              ChromeExtension/manifest.json). Plain X.Y.Z only. Does not commit.
 
@@ -1029,13 +1033,14 @@ quiet_unless_failed() {
 }
 
 cmd_package() {
-  local out_dir="$REPO_ROOT/dist"
+  local out_dir="$REPO_ROOT/dist" release=0
   [[ -n "$REPO_ROOT" ]] || out_dir=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --out)
         [[ $# -ge 2 ]] || usage_error "--out needs a directory."
         out_dir="$2"; shift ;;
+      --release) release=1 ;;
       -h|--help) usage; exit 0 ;;
       *) usage_error "unknown option for 'package': $1" ;;
     esac
@@ -1066,6 +1071,15 @@ cmd_package() {
   [[ "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || fail "could not read MARKETING_VERSION for the MyPass target from project.yml (got '$version')."
   [[ "$host_version" == "$version" ]] || fail "version mismatch: MyPass is $version but ChromeHost is '$host_version' in project.yml."
   [[ "$ext_version" == "$version" ]] || fail "version mismatch: MyPass is $version but ChromeExtension/manifest.json is '$ext_version'."
+
+  # Release mode refuses before the build: a release must be exactly the tagged commit, so
+  # a dirty tree or a HEAD that is not at tag v<version> fails in seconds, not after minutes.
+  if [[ "$release" == 1 ]]; then
+    [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] || fail "release mode needs a clean working tree (and HEAD at tag v$version)."
+    local tag
+    tag="$(git -C "$REPO_ROOT" describe --exact-match --tags 2>/dev/null || true)"
+    [[ "$tag" == "v$version" ]] || fail "release mode needs HEAD at tag v$version (found '${tag:-no tag}')."
+  fi
 
   mkdir -p -- "$out_dir"
   local out_abs
@@ -1110,6 +1124,13 @@ cmd_package() {
 
   local dmg_base="MyPass-$version-macos-arm64-$provenance"
   local ext_base="MyPass-chrome-extension-$version-$provenance"
+  if [[ "$release" == 1 ]]; then
+    # The build must not have modified or added any file, or the artifacts would not be
+    # the tagged commit. Re-checked here because the pre-build check cannot see build effects.
+    [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] || fail "release mode: the working tree became dirty during the build; refusing to publish artifacts that are not the tagged commit (tag v$version)."
+    dmg_base="MyPass-$version-macos-arm64"
+    ext_base="MyPass-chrome-extension-$version"
+  fi
 
   OWNED_STAGE_PARENT="$out_abs"
   OWNED_STAGE_DIR="$(mktemp -d "$out_abs/.package-stage.XXXXXX")" || fail "could not create a staging directory in '$out_abs'."
@@ -1225,6 +1246,11 @@ EOF
   done
   mv -f -- "$dmg_tmp" "$out_abs/$dmg_base.dmg"
   mv -f -- "$ext_tmp" "$out_abs/$ext_base.zip"
+  if [[ "$release" == 1 ]]; then
+    # Basenames only, DMG first: users run `shasum -a 256 -c SHA256SUMS.txt` in the folder
+    # holding the downloads, so the file must not carry build-machine paths.
+    (cd "$out_abs" && shasum -a 256 "$dmg_base.dmg" "$ext_base.zip" > SHA256SUMS.txt)
+  fi
 
   echo
   echo "Development artifacts (unsigned, ad-hoc sealed; not a supported way to run a real vault):"
