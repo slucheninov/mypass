@@ -20,33 +20,61 @@ from the source repository with your own Apple Developer team (see README.md
 there, "scripts/dev.sh build"). This build is Apple Silicon (arm64) only and
 targets macOS 14 or later; it has not been run on macOS 14.
 
-What is in this folder
-----------------------
+What is in this disk image
+--------------------------
   MyPass.app               the app, sealed ad hoc (codesign -s -)
+  Applications             a shortcut to /Applications, to drag MyPass.app onto
   ChromeHost               the native messaging host used by the browser extension
   dev.sh                   helper script; only "install-host" is meant to be used
   INSTALL.txt              this file
   LICENSE                  Apache License 2.0
   THIRD_PARTY_NOTICES.md   licenses of bundled third-party software
 
-The browser extension is a separate download (MyPass-chrome-extension-*.zip).
+The browser extension is a separate download (MyPass-chrome-extension-X.Y.Z.zip)
+from the same release page.
 
-1. Allow macOS to open the files
---------------------------------
+Wherever X.Y.Z appears below, substitute the version you downloaded (for example 0.3.0).
+
+1. Allow macOS to open the files (do this BEFORE opening the disk image)
+------------------------------------------------------------------------
 Files downloaded from a browser carry a quarantine flag, and macOS will refuse
-to open an unsigned, un-notarized app. If you trust this build, clear the flag
-for this whole folder. From inside the extracted folder:
+to open an unsigned, un-notarized app. Everything copied out of a quarantined
+disk image inherits the flag, and the mounted image is read-only, so the flag
+cannot be removed from the files inside it. Clear it on the downloaded image
+itself, in Terminal:
 
-    xattr -dr com.apple.quarantine .
+    xattr -d com.apple.quarantine ~/Downloads/MyPass-X.Y.Z-macos-arm64.dmg
 
-(This is your decision to make; nothing in this package does it for you.) Then
-open MyPass.app. If macOS still blocks it, use right-click > Open once.
+(This is your decision to make; nothing in this package does it for you.)
 
-2. Install the native messaging host
+If xattr answers "No such xattr", the file never carried the flag (for example when it was fetched with curl); nothing else is needed.
+
+If you already opened the image and copied the app, clear the flag on the
+copies instead:
+
+    xattr -dr com.apple.quarantine /Applications/MyPass.app "$HOME/Library/Application Support/MyPass/ChromeHost"
+
+If macOS still blocks the app, use right-click > Open once.
+
+2. Install the app
+------------------
+Open MyPass-X.Y.Z-macos-arm64.dmg and drag MyPass.app onto the Applications
+shortcut. Run MyPass from /Applications, not from the disk image: the native
+messaging host and the single-instance lock refer to the installed copy.
+
+3. First launch
+---------------
+macOS may show Keychain access prompts: choose "Always Allow" for the MyPass
+items so they do not repeat. If you enable Touch ID unlock, macOS shows its
+Touch ID prompt. As described under READ THIS FIRST, Touch ID unlock and the
+Keychain-backed exchange between MyPass.app and ChromeHost are expected to be
+limited on this unsigned build.
+
+4. Install the native messaging host
 ------------------------------------
-From inside this folder:
+With the disk image mounted, from a Terminal:
 
-    ./dev.sh install-host
+    "/Volumes/MyPass X.Y.Z/dev.sh" install-host
 
 This copies ChromeHost to
 
@@ -62,17 +90,27 @@ existing ChromeHost is replaced atomically.
 To install somewhere else (for example to try it out without touching your
 home folder), name the root explicitly:
 
-    ./dev.sh install-host --install-root /path/to/a/folder
+    "/Volumes/MyPass X.Y.Z/dev.sh" install-host --install-root /path/to/a/folder
 
 The installer refuses to write through symbolic links or over a directory, and
 refuses to run when the source and destination are the same file.
 
-3. Load the extension
+Eject the disk image when you are done with it.
+
+5. Load the extension
 ---------------------
-Unzip MyPass-chrome-extension-*.zip, open chrome://extensions, switch on
+Unzip MyPass-chrome-extension-X.Y.Z.zip, open chrome://extensions, switch on
 Developer mode, choose "Load unpacked" and select the unzipped folder. The
 extension ID must be hjijbabodfldconmhdcdphlbgaajkejn. Then pair it from the
 MyPass app (Settings > Browser).
+
+6. Updating
+-----------
+Download the new disk image and extension zip from the release page and repeat
+steps 1 and 2 (replacing MyPass.app in /Applications), run the install-host
+command from step 4 again, and in chrome://extensions reload the unpacked
+extension from the new folder. A later version of the app will tell you when a
+new release exists.
 
 Removing it
 -----------

@@ -21,7 +21,8 @@ MyPass is pre-release software (version 0.2.0). There is **no notarized or
 Developer ID signed release and no Chrome Web Store listing**. What the project
 can give you today is source you build yourself, plus unsigned **development
 artifacts** (built locally by `./scripts/dev.sh package`, and attached to runs of the
-CI workflow).
+CI workflow). Tagged GitHub releases exist as of the first release, but they are
+equally unsigned and not notarized: the warning below applies to them in full.
 
 - Do not treat the unsigned artifacts as a way to run a real password vault. They
   are for development and inspection. They are built without a signing identity and
@@ -38,6 +39,35 @@ CI workflow).
   on manual dispatch. It builds unsigned on arm64, so a green run is evidence about
   logic only. Check the Actions tab for the actual result of any given run.
 
+## Installing a release
+
+Tagged releases are published at <https://github.com/slucheninov/mypass/releases>.
+Each one carries three downloads:
+
+- `MyPass-X.Y.Z-macos-arm64.dmg`: the app, `ChromeHost` and the install helper.
+- `MyPass-chrome-extension-X.Y.Z.zip`: the browser extension (sideload package).
+- `SHA256SUMS.txt`: checksums for the two files above (`shasum -a 256 -c SHA256SUMS.txt`).
+
+Wherever `X.Y.Z` appears below, substitute the version you downloaded (for example `0.3.0`).
+
+The release is unsigned and not notarized, so read the warning above first. In short:
+
+1. Before opening the DMG, clear its quarantine flag:
+   `xattr -d com.apple.quarantine ~/Downloads/MyPass-X.Y.Z-macos-arm64.dmg`.
+   If `xattr` answers "No such xattr", the file never carried the flag (for example
+   when it was fetched with `curl`); nothing else is needed.
+2. Open the DMG and drag `MyPass.app` onto the `Applications` shortcut, then run it
+   from `/Applications`.
+3. On first launch macOS may show Keychain prompts; choose "Always Allow" for the
+   MyPass items.
+4. With the DMG still mounted, run
+   `"/Volumes/MyPass X.Y.Z/dev.sh" install-host` to install the native messaging host.
+5. Unzip the extension, open `chrome://extensions`, enable Developer mode, choose
+   "Load unpacked" and select the folder, then pair it from the app.
+6. To update, repeat the steps with the new release.
+
+`INSTALL.txt` inside the DMG has the details, including removal.
+
 ## Building from source
 
 Requirements: macOS with Xcode, [XcodeGen](https://github.com/yonaskolb/XcodeGen)
@@ -52,8 +82,9 @@ There are three maintained scripts under `scripts/` (`dev.sh`, `test.sh` and
 | `./scripts/dev.sh generate` | Run XcodeGen to create `MyPass.xcodeproj` (generated, gitignored, never edit it). |
 | `./scripts/dev.sh build [--unsigned]` | Generate the project, then build `MyPass` and `ChromeHost` into `./build`. Without the flag the build uses the stable team signing from `project.yml`; `--unsigned` builds with no signing and no entitlements. |
 | `./scripts/dev.sh run` | Ask every running MyPass to quit and wait up to 15 s for it to exit, then build, then open the new build and check that it is the only MyPass running. A copy that will not quit stops the run before the build; nothing is force-killed. |
+| `./scripts/dev.sh set-version X.Y.Z` | Set the app, host and extension version together (`project.yml` twice, `ChromeExtension/manifest.json`). Plain `X.Y.Z` only; it does not commit. |
 | `./scripts/dev.sh install-host [--host PATH] [--install-root DIR]` | Install the native messaging host and browser manifests (see below). |
-| `./scripts/dev.sh package [--out DIR]` | Build Release for arm64, seal it ad hoc, and write the two development zips into `./dist` (or `DIR`). |
+| `./scripts/dev.sh package [--out DIR] [--release]` | Build Release for arm64, seal it ad hoc, and write the macOS DMG and the Chrome extension zip into `./dist` (or `DIR`); `--release` is for tagged releases (see Cutting a release). |
 | `./scripts/test.sh [--ci] [--no-js]` | Run the Xcode app tests, the three Swift package test suites and every `ChromeExtension/tests/*.test.js` suite. |
 | `./scripts/update-password-rules.sh` | Refresh the vendored Apple password-rules snapshot and its provenance file. |
 
@@ -113,6 +144,19 @@ Keychain items and the biometric key from a build made with another identity are
 shared. This route is not covered by the project's tests and is untested: it is not a
 supported configuration.
 
+### Cutting a release
+
+```sh
+./scripts/dev.sh set-version X.Y.Z
+git commit -am "chore(release): bump version to X.Y.Z"
+git tag vX.Y.Z
+git push origin master vX.Y.Z
+```
+
+Watch the Release workflow in the Actions tab; the release appears as a draft and is
+published after its assets are verified. A failed run is fixed forward with the next
+patch tag; a pushed tag is never moved or deleted.
+
 ## The browser extension and the native messaging host
 
 The extension lives in `ChromeExtension/` and has no build step. Load it unpacked on
@@ -148,14 +192,14 @@ seconds). Pairings are revocable in the app's Settings, Browser tab.
 ## Development artifacts
 
 `./scripts/dev.sh package` (and each CI run, which uploads them as artifacts kept for
-14 days) produces two zips, named with the version and the short commit SHA (a
+14 days) produces a DMG and a zip, named with the version and the short commit SHA (a
 `-dirty` suffix marks a dirty working tree, `nogit` a build outside a git checkout):
 
-- `MyPass-macos-arm64-unsigned-<version>-<sha7>.zip`: `MyPass.app`, `ChromeHost`,
-  `dev.sh` (only `install-host` is meant to be used), `INSTALL.txt`, `LICENSE` and
-  `THIRD_PARTY_NOTICES.md`. `INSTALL.txt` states the development-only warning, how
-  to clear the download quarantine flag, how to run `./dev.sh install-host`, and how
-  to remove the host and manifests by hand.
+- `MyPass-<version>-macos-arm64-<sha7>.dmg`: a volume with `MyPass.app`, an
+  `Applications` shortcut, `ChromeHost`, `dev.sh` (only `install-host` is meant to be
+  used), `INSTALL.txt`, `LICENSE` and `THIRD_PARTY_NOTICES.md`. `INSTALL.txt` states the
+  development-only warning, how to clear the download quarantine flag, how to run
+  `dev.sh install-host`, and how to remove the host and manifests by hand.
 - `MyPass-chrome-extension-<version>-<sha7>.zip`: the extension's runtime files with
   `manifest.json` at the zip root, plus `LICENSE` and `THIRD_PARTY_NOTICES.md`. The
   tests are excluded. It is a sideload package, not a Web Store submission.

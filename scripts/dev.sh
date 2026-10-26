@@ -6,7 +6,7 @@
 #   scripts/dev.sh build   [--unsigned]
 #   scripts/dev.sh run
 #   scripts/dev.sh install-host [--host PATH] [--install-root DIR]
-#   scripts/dev.sh package [--out DIR]
+#   scripts/dev.sh package [--out DIR] [--release]
 #
 # This same file ships inside the macOS artifact, where it must keep working with no
 # source tree, no Xcode and no python3. Only `install-host` is meant to be used there,
@@ -88,9 +88,15 @@ Commands (checkout only, need Xcode and xcodegen):
                              running and it is the executable just built. If a copy will not
                              quit, nothing is built; if the build fails, no MyPass is left
                              running. Nothing is force-killed and no MyPass.app is removed.
-  package [--out DIR]        Build Release for arm64 without signing, seal it ad hoc, and
-                             write the macOS and Chrome extension zips into DIR
+  package [--out DIR] [--release]
+                             Build Release for arm64 without signing, seal it ad hoc, and
+                             write the macOS DMG and the Chrome extension zip into DIR
                              (default ./dist). Development artifacts only.
+                             --release: requires a clean working tree and HEAD exactly at
+                             tag vX.Y.Z matching the project version; drops the commit
+                             suffix from the file names and writes SHA256SUMS.txt.
+  set-version X.Y.Z          Set the app, host and extension version together (project.yml x2,
+                             ChromeExtension/manifest.json). Plain X.Y.Z only. Does not commit.
 
 Command available from an extracted artifact as well (macOS base tools only):
   install-host [--host PATH] [--install-root DIR]
@@ -899,6 +905,53 @@ project_version() {
   ' "$REPO_ROOT/project.yml"
 }
 
+# Set the app, host and extension version together: MARKETING_VERSION in both project.yml
+# targets (MyPass, ChromeHost) and "version" in ChromeExtension/manifest.json. Plain X.Y.Z
+# only, because Chrome rejects pre-release suffixes in manifest versions. Rewrites go through
+# temp files next to the originals (registered for the EXIT trap) instead of `sed -i ''`, so
+# the function does not depend on BSD/GNU sed flag differences; nothing is written back until
+# both rewrites are validated, and the originals are then overwritten in place with `cat >`
+# to keep their file mode. Does not commit.
+cmd_set_version() {
+  case "${1:-}" in -h|--help) usage; return 0 ;; esac
+  [[ $# -eq 1 ]] || usage_error "set-version takes exactly one argument: X.Y.Z"
+  require_checkout set-version
+  local v="$1"
+  [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || usage_error "version must be plain X.Y.Z (digits only, no 'v' prefix or suffix): '$v'"
+
+  local yml="$REPO_ROOT/project.yml" manifest="$REPO_ROOT/ChromeExtension/manifest.json"
+  local yml_tmp manifest_tmp count
+  yml_tmp="$(mktemp "$yml.XXXXXX")"
+  OWNED_TMP_FILES+=("$yml_tmp")
+  manifest_tmp="$(mktemp "$manifest.XXXXXX")"
+  OWNED_TMP_FILES+=("$manifest_tmp")
+
+  # Keep the quoting style project.yml already uses ("0.2.0").
+  sed -E 's/^([[:space:]]*MARKETING_VERSION:[[:space:]]*)"[^"]*"/\1"'"$v"'"/' "$yml" > "$yml_tmp"
+  count="$(grep -c "^[[:space:]]*MARKETING_VERSION:[[:space:]]*\"$v\"" "$yml_tmp" || true)"
+  [[ "$count" -eq 2 ]] \
+    || fail "expected exactly 2 quoted MARKETING_VERSION lines in project.yml, rewrote $count."
+
+  # Only the first "version" key: later ones (if any) belong to nested objects.
+  awk -v v="$v" '
+    !done && /^[[:space:]]*"version":/ {
+      sub(/"version":[[:space:]]*"[^"]*"/, "\"version\": \"" v "\"")
+      done = 1; n++
+    }
+    { print }
+    END { if (n != 1) exit 3 }
+  ' "$manifest" > "$manifest_tmp" \
+    || fail "expected exactly 1 \"version\" line in ChromeExtension/manifest.json."
+  grep -q "^[[:space:]]*\"version\": \"$v\"" "$manifest_tmp" \
+    || fail "ChromeExtension/manifest.json \"version\" line is not a quoted string."
+
+  cat "$yml_tmp" > "$yml"
+  cat "$manifest_tmp" > "$manifest"
+  echo "updated project.yml (2 targets)"
+  echo "updated ChromeExtension/manifest.json"
+}
+
 # Every file the extension refers to by name must be in the staged package. Sources checked:
 # manifest.json strings, importScripts() and chrome.runtime.getURL() literals in the staged
 # scripts, and src/href attributes in the staged pages. Done with grep/sed so packaging does
@@ -959,7 +1012,7 @@ EOF
 # Text files (scripts, notices, manifest, pages) must not carry a macOS home-directory
 # path. Compiled binaries are only reported: Swift and SwiftPM can embed absolute build
 # paths, which is informational for the artifact but should be looked at. The prefix is
-# built from pieces so this script, which ships in the zip, does not match its own scan.
+# built from pieces so this script, which ships in the dmg, does not match its own scan.
 scan_for_personal_paths() {
   local stage="$1" label="$2" hits users_dir="/Us""ers"
   hits="$(grep -rIl -e "$users_dir/" "$stage" 2>/dev/null || true)"
@@ -980,13 +1033,14 @@ quiet_unless_failed() {
 }
 
 cmd_package() {
-  local out_dir="$REPO_ROOT/dist"
+  local out_dir="$REPO_ROOT/dist" release=0
   [[ -n "$REPO_ROOT" ]] || out_dir=""
   while [[ $# -gt 0 ]]; do
     case "$1" in
       --out)
         [[ $# -ge 2 ]] || usage_error "--out needs a directory."
         out_dir="$2"; shift ;;
+      --release) release=1 ;;
       -h|--help) usage; exit 0 ;;
       *) usage_error "unknown option for 'package': $1" ;;
     esac
@@ -996,6 +1050,7 @@ cmd_package() {
   require_command xcodebuild "Install Xcode from the App Store."
   require_command codesign
   require_command ditto
+  require_command hdiutil
   require_command zip "Install the zip command line tool."
   require_command unzip
   require_command lipo
@@ -1005,7 +1060,7 @@ cmd_package() {
 
   # Fail on missing inputs before spending minutes on a build.
   local f
-  for f in LICENSE THIRD_PARTY_NOTICES.md scripts/package/INSTALL.txt ChromeExtension/manifest.json project.yml; do
+  for f in LICENSE THIRD_PARTY_NOTICES.md scripts/package/INSTALL.txt scripts/package/RELEASE_NOTES_HEADER.md ChromeExtension/manifest.json project.yml; do
     [[ -f "$REPO_ROOT/$f" ]] || fail "required file '$f' is missing from the repository."
   done
 
@@ -1016,6 +1071,15 @@ cmd_package() {
   [[ "$version" =~ ^[0-9][0-9A-Za-z.+-]*$ ]] || fail "could not read MARKETING_VERSION for the MyPass target from project.yml (got '$version')."
   [[ "$host_version" == "$version" ]] || fail "version mismatch: MyPass is $version but ChromeHost is '$host_version' in project.yml."
   [[ "$ext_version" == "$version" ]] || fail "version mismatch: MyPass is $version but ChromeExtension/manifest.json is '$ext_version'."
+
+  # Release mode refuses before the build: a release must be exactly the tagged commit, so
+  # a dirty tree or a HEAD that is not at tag v<version> fails in seconds, not after minutes.
+  if [[ "$release" == 1 ]]; then
+    [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] || fail "release mode needs a clean working tree (and HEAD at tag v$version)."
+    local tag
+    tag="$(git -C "$REPO_ROOT" describe --exact-match --tags 2>/dev/null || true)"
+    [[ "$tag" == "v$version" ]] || fail "release mode needs HEAD at tag v$version (found '${tag:-no tag}')."
+  fi
 
   mkdir -p -- "$out_dir"
   local out_abs
@@ -1058,14 +1122,23 @@ cmd_package() {
     provenance="nogit"
   fi
 
-  local mac_base="MyPass-macos-arm64-unsigned-$version-$provenance"
+  local dmg_base="MyPass-$version-macos-arm64-$provenance"
   local ext_base="MyPass-chrome-extension-$version-$provenance"
+  if [[ "$release" == 1 ]]; then
+    # The build must not have modified or added any file, or the artifacts would not be
+    # the tagged commit. Re-checked here because the pre-build check cannot see build effects.
+    [[ -z "$(git -C "$REPO_ROOT" status --porcelain)" ]] || fail "release mode: the working tree became dirty during the build; refusing to publish artifacts that are not the tagged commit (tag v$version)."
+    dmg_base="MyPass-$version-macos-arm64"
+    ext_base="MyPass-chrome-extension-$version"
+  fi
 
   OWNED_STAGE_PARENT="$out_abs"
   OWNED_STAGE_DIR="$(mktemp -d "$out_abs/.package-stage.XXXXXX")" || fail "could not create a staging directory in '$out_abs'."
 
   # --- macOS artifact ---
-  local mac_stage="$OWNED_STAGE_DIR/mac/$mac_base"
+  # A plain directory, not nested under a named folder: hdiutil -srcfolder makes the folder's
+  # contents the volume root.
+  local mac_stage="$OWNED_STAGE_DIR/dmg"
   mkdir -p -- "$mac_stage"
   ditto --norsrc --noextattr --noqtn "$products/MyPass.app" "$mac_stage/MyPass.app"
   cp -- "$products/ChromeHost" "$mac_stage/ChromeHost"
@@ -1111,6 +1184,10 @@ EOF
     fi
   done
 
+  # Drag-to-install shortcut. Created last so no recursive scan above follows it into
+  # /Applications, and it is not part of the signed content.
+  ln -s /Applications "$mac_stage/Applications"
+
   # --- extension artifact ---
   # Everything under ChromeExtension/ except tests and hidden files: new runtime files are
   # picked up automatically, and verify_extension_references below proves nothing the
@@ -1133,9 +1210,8 @@ EOF
   verify_extension_references "$ext_stage"
   scan_for_personal_paths "$ext_stage" "the extension artifact"
 
-  # --- zip, verify, move into place ---
-  local mac_tmp="$OWNED_STAGE_DIR/$mac_base.zip" ext_tmp="$OWNED_STAGE_DIR/$ext_base.zip"
-  ditto -c -k --keepParent --norsrc --noextattr --noqtn "$mac_stage" "$mac_tmp"
+  # --- dmg and zip, verify, move into place ---
+  local dmg_tmp="$OWNED_STAGE_DIR/$dmg_base.dmg" ext_tmp="$OWNED_STAGE_DIR/$ext_base.zip"
   (cd "$ext_stage" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | zip -X -q "$ext_tmp" -@)
 
   local listing entry
@@ -1148,22 +1224,42 @@ EOF
   for entry in manifest.json LICENSE THIRD_PARTY_NOTICES.md; do
     grep -qxF "$entry" <<<"$listing" || fail "the extension zip is missing '$entry'."
   done
-  listing="$(unzip -Z1 "$mac_tmp")"
-  for entry in "$mac_base/dev.sh" "$mac_base/ChromeHost" "$mac_base/INSTALL.txt" "$mac_base/LICENSE" "$mac_base/THIRD_PARTY_NOTICES.md" "$mac_base/MyPass.app/Contents/Info.plist"; do
-    grep -qxF "$entry" <<<"$listing" || fail "the macOS zip is missing '$entry'."
+
+  # The stage becomes the volume root, so check it exactly before imaging.
+  if [[ -n "$(find "$mac_stage" \( -name .DS_Store -o -name __MACOSX \) -print -quit)" ]]; then
+    fail "the macOS stage contains Finder files (.DS_Store or __MACOSX)."
+  fi
+  for entry in dev.sh ChromeHost INSTALL.txt LICENSE THIRD_PARTY_NOTICES.md MyPass.app/Contents/Info.plist; do
+    [[ -e "$mac_stage/$entry" ]] || fail "the macOS stage is missing '$entry'."
   done
+  listing="$(ls -A "$mac_stage" | LC_ALL=C sort)"
+  [[ "$listing" == "$(printf '%s\n' Applications ChromeHost INSTALL.txt LICENSE MyPass.app THIRD_PARTY_NOTICES.md dev.sh)" ]] \
+    || fail "the macOS stage has unexpected contents: $(tr '\n' ' ' <<<"$listing")"
+  [[ "$(readlink "$mac_stage/Applications")" == /Applications ]] || fail "the Applications link in the macOS stage is wrong."
+
+  quiet_unless_failed hdiutil create -srcfolder "$mac_stage" -volname "MyPass $version" -fs HFS+ -format UDZO -ov "$dmg_tmp"
+  quiet_unless_failed hdiutil verify "$dmg_tmp"
 
   local final
-  for final in "$out_abs/$mac_base.zip" "$out_abs/$ext_base.zip"; do
+  for final in "$out_abs/$dmg_base.dmg" "$out_abs/$ext_base.zip"; do
     [[ ! -d "$final" ]] || fail "'$final' is a directory; refusing to replace it."
   done
-  mv -f -- "$mac_tmp" "$out_abs/$mac_base.zip"
+  mv -f -- "$dmg_tmp" "$out_abs/$dmg_base.dmg"
   mv -f -- "$ext_tmp" "$out_abs/$ext_base.zip"
+  if [[ "$release" == 1 ]]; then
+    # Basenames only, DMG first: users run `shasum -a 256 -c SHA256SUMS.txt` in the folder
+    # holding the downloads, so the file must not carry build-machine paths.
+    (cd "$out_abs" && shasum -a 256 "$dmg_base.dmg" "$ext_base.zip" > SHA256SUMS.txt)
+  fi
 
   echo
-  echo "Development artifacts (unsigned, ad-hoc sealed; not a supported way to run a real vault):"
-  (cd "$out_abs" && shasum -a 256 "$mac_base.zip" "$ext_base.zip")
-  echo "  $out_abs/$mac_base.zip"
+  if [[ "$release" == "1" ]]; then
+    echo "Release artifacts (unsigned, ad-hoc sealed; see INSTALL.txt inside the disk image):"
+  else
+    echo "Development artifacts (unsigned, ad-hoc sealed; not a supported way to run a real vault):"
+  fi
+  (cd "$out_abs" && shasum -a 256 "$dmg_base.dmg" "$ext_base.zip")
+  echo "  $out_abs/$dmg_base.dmg"
   echo "  $out_abs/$ext_base.zip"
 }
 
@@ -1181,6 +1277,7 @@ main() {
     run) cmd_run "$@" ;;
     install-host) cmd_install_host "$@" ;;
     package) cmd_package "$@" ;;
+    set-version) cmd_set_version "$@" ;;
     -h|--help|help) usage ;;
     *) usage_error "unknown command: $command_name" ;;
   esac
