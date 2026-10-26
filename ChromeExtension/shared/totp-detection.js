@@ -42,20 +42,79 @@ function detectOtpauthText(root) {
 // "YOURMANUALSETUPKEY") can accidentally satisfy the base32 alphabet+length check before
 // the real key is ever reached. Real setup keys are rendered either all-uppercase or
 // all-lowercase (e.g. "JBSW Y3DP EHPK 3PXP" or "jbsw y3dp ehpk 3pxp"), so restrict
-// the window to maximal runs of tokens that are uniformly one case as written, which
-// excludes ordinary mixed-case words.
+// the scan to maximal runs of tokens that are uniformly one case as written, which
+// excludes ordinary mixed-case words. A token holding a character outside the base32
+// alphabet (0, 1, 8, 9) can never be part of a key, so it ends the run.
 //
-// For uppercase, candidates are tried span-first (shortest to longest). For lowercase,
-// single tokens are checked first (unambiguous standalone key), then grouped spans from
-// largest to smallest so a 32-char key is not truncated to its first valid 16-char prefix.
-// Within multi-token lowercase spans an additional uniform-group guard is applied: all
-// tokens in the span must share the same character length. Real grouped TOTP keys use
-// fixed-width groups (e.g. 4×4 chars); prose words have varied lengths, so concatenating
-// tokens of different lengths is rejected. Limitation: an all-lowercase key is
-// indistinguishable from a prose run whose words happen to share a uniform length —
-// detection does not promise universal coverage for lowercase keys.
-const CAPS_TOKEN_REGEX = /^[A-Z0-9]+$/;
+// Inside a run the group structure decides what is a key, not a window size:
+//   1. A token whose width differs from both neighbours is a standalone key candidate.
+//      Those are tried first (unambiguous, no grouping to verify).
+//   2. Real grouped keys use fixed-width groups (e.g. 8x4 chars); prose words have varied
+//      lengths. So a candidate is a maximal block of consecutive equal-width tokens, taken
+//      as a whole. The whole block is validated, never a sub-span or a prefix of it, so a
+//      32-char key is not cut to its first valid 16-char prefix, and a key longer than 8
+//      groups is not cut at an arbitrary token count. A block that does not validate (for
+//      example one past the base32 length cap) is skipped, so detection fails closed.
+//
+// Limitations: an all-lowercase or all-uppercase key is indistinguishable from a run of
+// same-width words (a 4-letter label word such as "NEXT" directly before or after a
+// 4-wide grouped key joins its block, as does a 2-letter word such as "OK" after a key
+// grouped in 2s). A key whose final group is narrower than the others (a 26-char key
+// rendered as 6x4 + 2) is NOT supported: the short tail is indistinguishable from a
+// trailing prose word ("OK", "IN", "AM"), and absorbing it would corrupt the secret of
+// every ordinary key that is followed by such a word. Such a key is read as its
+// uniform-width groups only, which may be a valid-looking incomplete secret; that is a
+// known limitation, not a claim that the result is the complete key. The same holds for a
+// key whose groups are not all the same width (mixed-width groups): only the uniform
+// prefix block is read. Detection does not promise universal coverage; label words of
+// other widths are never absorbed.
+//
+// Digit-only tokens (2-7) are valid in both cases, so they belong to an uppercase run and
+// a lowercase run alike. Runs are therefore collected per case over the whole token list,
+// which keeps "2345 6723 jbsw y3dp ..." from losing its leading numeric groups to an
+// uppercase run that stops at the first lowercase letter.
+const CAPS_TOKEN_REGEX = /^[A-Z2-7]+$/;
 const LOWER_TOKEN_REGEX = /^[a-z2-7]+$/;
+
+// Returns the normalized key found in one case-uniform run of tokens, or null.
+function extractKeyFromRun(run) {
+  const blocks = [];
+  for (let start = 0; start < run.length;) {
+    let end = start + 1;
+    while (end < run.length && run[end].length === run[start].length) end += 1;
+    blocks.push({ start, end });
+    start = end;
+  }
+  for (const { start, end } of blocks) {
+    if (end - start === 1 && totpBase32.isBase32Secret(run[start])) {
+      return totpBase32.normalizeBase32Candidate(run[start]);
+    }
+  }
+  for (const { start, end } of blocks) {
+    if (end - start < 2) continue;
+    const candidate = run.slice(start, end).join('');
+    if (totpBase32.isBase32Secret(candidate)) {
+      return totpBase32.normalizeBase32Candidate(candidate);
+    }
+  }
+  return null;
+}
+
+// Maximal runs of consecutive tokens that all match tokenRegex, with their start index.
+function collectRuns(tokens, tokenRegex) {
+  const runs = [];
+  for (let i = 0; i < tokens.length;) {
+    if (!tokenRegex.test(tokens[i])) {
+      i += 1;
+      continue;
+    }
+    let runEnd = i;
+    while (runEnd < tokens.length && tokenRegex.test(tokens[runEnd])) runEnd += 1;
+    runs.push({ start: i, tokens: tokens.slice(i, runEnd) });
+    i = runEnd;
+  }
+  return runs;
+}
 
 function detectManualSetupKey(root) {
   const scope = root || document;
@@ -64,55 +123,16 @@ function detectManualSetupKey(root) {
   const text = (body.textContent || '').replace(/\s+/g, ' ');
   if (!MANUAL_KEY_LABEL_REGEX.test(text)) return null;
   const tokens = text.split(' ').filter(Boolean);
-  let i = 0;
-  while (i < tokens.length) {
-    if (CAPS_TOKEN_REGEX.test(tokens[i])) {
-      let runEnd = i;
-      while (runEnd < tokens.length && CAPS_TOKEN_REGEX.test(tokens[runEnd])) runEnd += 1;
-      const run = tokens.slice(i, runEnd);
-      const runLen = run.length;
-      for (let span = 1; span <= 8 && span <= runLen; span += 1) {
-        for (let start = 0; start + span <= runLen; start += 1) {
-          const candidate = run.slice(start, start + span).join('');
-          if (totpBase32.isBase32Secret(candidate)) {
-            return totpBase32.normalizeBase32Candidate(candidate);
-          }
-        }
-      }
-      i = runEnd;
-    } else if (LOWER_TOKEN_REGEX.test(tokens[i])) {
-      let runEnd = i;
-      while (runEnd < tokens.length && LOWER_TOKEN_REGEX.test(tokens[runEnd])) runEnd += 1;
-      const run = tokens.slice(i, runEnd);
-      const runLen = run.length;
-      // Single tokens first: a standalone key needs no group-structure check.
-      for (let start = 0; start < runLen; start += 1) {
-        if (totpBase32.isBase32Secret(run[start])) {
-          return totpBase32.normalizeBase32Candidate(run[start]);
-        }
-      }
-      // Multi-token grouped spans: scan largest to smallest to return the complete key
-      // rather than a valid prefix. Require uniform token lengths (prose words vary).
-      const maxSpan = Math.min(8, runLen);
-      for (let span = maxSpan; span >= 2; span -= 1) {
-        for (let start = 0; start + span <= runLen; start += 1) {
-          const slice = run.slice(start, start + span);
-          const groupLen = slice[0].length;
-          let uniform = true;
-          for (let k = 1; k < span; k += 1) {
-            if (slice[k].length !== groupLen) { uniform = false; break; }
-          }
-          if (!uniform) continue;
-          const candidate = slice.join('');
-          if (totpBase32.isBase32Secret(candidate)) {
-            return totpBase32.normalizeBase32Candidate(candidate);
-          }
-        }
-      }
-      i = runEnd;
-    } else {
-      i += 1;
-    }
+  // Document order decides which key wins. At the same start (leading numeric groups are
+  // valid in both cases, so an uppercase and a lowercase run begin together) the longer run
+  // goes first: the shorter one is only the numeric prefix of the complete key and would
+  // otherwise win and return that prefix as a valid-looking incomplete secret.
+  const runs = collectRuns(tokens, CAPS_TOKEN_REGEX)
+    .concat(collectRuns(tokens, LOWER_TOKEN_REGEX))
+    .sort((a, b) => a.start - b.start || b.tokens.length - a.tokens.length);
+  for (const run of runs) {
+    const key = extractKeyFromRun(run.tokens);
+    if (key) return key;
   }
   return null;
 }
