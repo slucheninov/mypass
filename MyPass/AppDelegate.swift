@@ -11,6 +11,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     /// `MyPassApp.init()` (Phase 3, Task 12) for the lifetime of the app.
     static var backgroundSyncTimer: Timer?
 
+    /// Retains the update checker created in `MyPassApp.init()` so `applicationWillTerminate`
+    /// can stop its timers.
+    static var updateChecker: AppUpdateChecker?
+
     /// Retains the `LocalFolderChangeWatcher` installed in `MyPassApp.init()`
     /// (Phase 3, Task 12) when the Local-folder backend is active, for the
     /// lifetime of the app.
@@ -88,5 +92,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ notification: Notification) {
         // Removes the browser discovery record, but only if it is still ours.
         Self.extensionBridgeServer?.shutdown()
+        MainActor.assumeIsolated { Self.updateChecker?.stopScheduling() }
     }
 }

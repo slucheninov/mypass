@@ -12,7 +12,10 @@ struct ContentView: View {
         // `.unlocked` branch is torn down when the vault locks, so a handler that resets
         // state would simply never run — which previously left the window stuck at
         // `.floating` above every other app until the app restarted.
+        // The update banner inset sits outside the switch for the same reason, so it covers
+        // both the locked and the unlocked screen.
         vaultContent
+            .safeAreaInset(edge: .top, spacing: 0) { UpdateBannerView() }
             .onChange(of: navigationState.pendingPairingCode) { _, code in
                 MainWindowActivator.setMainWindowFloating(code != nil)
             }

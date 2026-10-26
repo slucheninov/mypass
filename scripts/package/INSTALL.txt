@@ -130,8 +130,9 @@ MyPass app (Settings > Browser).
 Download the new disk image and extension zip from the release page and repeat
 steps 1 and 2 (replacing MyPass.app in /Applications), run the install-host
 command from step 4 again, and in chrome://extensions reload the unpacked
-extension from the new folder. A later version of the app will tell you when a
-new release exists.
+extension from the new folder. MyPass checks GitHub for a newer release at launch
+and once a day and shows a banner with a link to the release page; you can turn
+this off in Settings > General > Updates.
 
 Removing it
 -----------

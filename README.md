@@ -70,7 +70,14 @@ The release is unsigned and not notarized, so read the warning above first. In s
    `"/Volumes/MyPass X.Y.Z/dev.sh" install-host` to install the native messaging host.
 5. Unzip the extension, open `chrome://extensions`, enable Developer mode, choose
    "Load unpacked" and select the folder, then pair it from the app.
-6. To update, repeat the steps with the new release.
+6. To update, repeat the steps with the new release. MyPass also tells you when one
+   exists (see below).
+
+MyPass checks for a newer release a few seconds after launch and then once a day by
+asking `api.github.com` for the tag of the latest release; nothing else is sent. A
+banner offers a **View release** button that opens the release page in your browser;
+nothing is downloaded or installed automatically. Turn the check off in Settings >
+General > Updates, or run it on demand with **Check for Updates…** in the MyPass menu.
 
 `INSTALL.txt` inside the DMG has the details, including removal.
 

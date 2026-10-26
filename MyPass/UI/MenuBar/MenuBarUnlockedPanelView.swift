@@ -27,6 +27,8 @@ struct MenuBarUnlockedPanelView: View {
 
     private var listContent: some View {
         VStack(alignment: .leading, spacing: 0) {
+            MenuBarUpdateRow()
+
             if let database = vaultSession.currentDatabase {
                 let recents = RecentEntriesQuery.recent(in: database)
                 if !recents.isEmpty {
