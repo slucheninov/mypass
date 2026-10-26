@@ -148,8 +148,12 @@ final class AppUpdateChecker: ObservableObject {
 
     // MARK: - Banner
 
+    /// Persists the version the banner is actually showing (`bannerRelease`), not whatever
+    /// `status` says: the banner stays up through a failed manual check or a running check,
+    /// and Later must stick in those states too. The version string is stored so a newer
+    /// release still brings the banner back.
     func dismissBanner() {
-        if case .available(let release) = status {
+        if let release = bannerRelease {
             defaults.set(release.version.description, forKey: DefaultsKey.dismissedVersion)
         }
         bannerRelease = nil

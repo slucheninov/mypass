@@ -148,6 +148,23 @@ final class AppUpdateCheckerTests: XCTestCase {
         XCTAssertEqual(checker.status, .available(rel))
     }
 
+    func testDismissAfterFailedManualCheckStillPersists() async {
+        let rel = release("0.4.0")
+        let feed = StubReleaseFeed(result: .success(rel))
+        let checker = makeChecker(feed: feed)
+        await checker.check(manual: false)
+        XCTAssertEqual(checker.bannerRelease, rel)
+
+        feed.result = .failure(ReleaseFeedError.badStatus(403))
+        await checker.check(manual: true)
+        XCTAssertEqual(checker.status, .failed(message: "GitHub rate limit reached; try again later."))
+        XCTAssertEqual(checker.bannerRelease, rel)
+
+        checker.dismissBanner()
+        XCTAssertNil(checker.bannerRelease)
+        XCTAssertEqual(defaults.string(forKey: "updateCheckDismissedVersion"), "0.4.0")
+    }
+
     func testDismissedVersionSurvivesRelaunchAndNewerReleaseReturns() async {
         let feed = StubReleaseFeed(result: .success(release("0.4.0")))
         let first = makeChecker(feed: feed)

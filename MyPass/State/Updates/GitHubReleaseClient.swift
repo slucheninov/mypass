@@ -22,11 +22,24 @@ enum ReleaseFeedError: Error, Equatable {
 final class GitHubReleaseClient: ReleaseFeed {
     static let defaultRepository = "slucheninov/mypass"
 
+    /// Dedicated session instead of `URLSession.shared` (privacy: the Settings caption says
+    /// nothing else is sent). Ephemeral with no cookie storage, no cookies and no URL cache,
+    /// so no stored cookies go out, nothing is written to the shared on-disk cache, and no
+    /// extra headers beyond the request's own are added by shared state.
+    private static let defaultSession: URLSession = {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpCookieStorage = nil
+        config.httpShouldSetCookies = false
+        config.urlCache = nil
+        config.timeoutIntervalForRequest = 10
+        return URLSession(configuration: config)
+    }()
+
     private let session: URLSession
     private let endpoint: URL
     private let currentVersion: String
 
-    init(session: URLSession = .shared,
+    init(session: URLSession = GitHubReleaseClient.defaultSession,
          repository: String = GitHubReleaseClient.defaultRepository,
          currentVersion: String) {
         self.session = session
