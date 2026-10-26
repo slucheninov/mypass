@@ -56,10 +56,16 @@ The release is unsigned and not notarized, so read the warning above first. In s
    `xattr -d com.apple.quarantine ~/Downloads/MyPass-X.Y.Z-macos-arm64.dmg`.
    If `xattr` answers "No such xattr", the file never carried the flag (for example
    when it was fetched with `curl`); nothing else is needed.
+   If you mounted the DMG first and `dev.sh` is killed with "Apple could not verify",
+   eject it, clear the flag on the `.dmg` file and mount it again; the files inside a
+   mounted image cannot be changed.
 2. Open the DMG and drag `MyPass.app` onto the `Applications` shortcut, then run it
    from `/Applications`.
-3. On first launch macOS may show Keychain prompts; choose "Always Allow" for the
-   MyPass items.
+3. On first launch macOS may show Keychain prompts asking for your macOS account
+   password; choose "Always Allow" for the MyPass items. If the correct password is
+   rejected, the login keychain is out of sync with the account (common after
+   Migration Assistant): in Keychain Access choose Edit > Change Password for
+   Keychain "login"… and set it to the account password.
 4. With the DMG still mounted, run
    `"/Volumes/MyPass X.Y.Z/dev.sh" install-host` to install the native messaging host.
 5. Unzip the extension, open `chrome://extensions`, enable Developer mode, choose

@@ -54,6 +54,17 @@ copies instead:
 
     xattr -dr com.apple.quarantine /Applications/MyPass.app "$HOME/Library/Application Support/MyPass/ChromeHost"
 
+If you mounted the image before clearing the flag, macOS refuses to run dev.sh
+from it ("Apple could not verify" followed by "zsh: killed"). Eject the image,
+clear the flag on the downloaded file, and mount it again:
+
+    hdiutil detach "/Volumes/MyPass X.Y.Z"
+    xattr -d com.apple.quarantine ~/Downloads/MyPass-X.Y.Z-macos-arm64.dmg
+    open ~/Downloads/MyPass-X.Y.Z-macos-arm64.dmg
+
+Do not work around it with "bash dev.sh": the script would run, but the copied
+ChromeHost would keep the flag and the browser could not start it.
+
 If macOS still blocks the app, use right-click > Open once.
 
 2. Install the app
@@ -69,6 +80,16 @@ items so they do not repeat. If you enable Touch ID unlock, macOS shows its
 Touch ID prompt. As described under READ THIS FIRST, Touch ID unlock and the
 Keychain-backed exchange between MyPass.app and ChromeHost are expected to be
 limited on this unsigned build.
+
+The prompt wants the password of your macOS account: the "login" keychain is
+protected by it. ChromeHost asks for the item com.mypass.extensionbridge.endpoint
+because this unsigned build has no Keychain access group shared with MyPass.app;
+choose "Always Allow" so the prompt does not repeat. If macOS rejects a password
+you know is right, the login keychain is out of sync with the account (this
+happens after Migration Assistant or a password reset): open Keychain Access,
+select "login", then Edit > Change Password for Keychain "login"…, enter the
+old password (the one from the previous Mac or before the reset) and set the
+current account password.
 
 4. Install the native messaging host
 ------------------------------------
