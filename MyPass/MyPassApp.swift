@@ -25,6 +25,7 @@ struct MyPassApp: App {
     @StateObject private var navigationState: NavigationState
     @StateObject private var autoLockController: AutoLockController
     @StateObject private var deviceUnlockPromptCoordinator: DeviceUnlockPromptCoordinator
+    @StateObject private var updateChecker: AppUpdateChecker
 
     init() {
         let defaults = UserDefaults.standard
@@ -313,6 +314,23 @@ struct MyPassApp: App {
             session?.triggerBackgroundSyncIfDirty()
         }
 
+        // Update check: a banner-only notice that a newer GitHub release exists.
+        let bundleVersion = (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String)
+            .flatMap(SemanticVersion.init(string:))
+        let updateChecker = MainActor.assumeIsolated {
+            AppUpdateChecker(
+                feed: GitHubReleaseClient(currentVersion: bundleVersion?.description ?? "unknown"),
+                currentVersion: bundleVersion,
+                defaults: .standard
+            )
+        }
+        _updateChecker = StateObject(wrappedValue: updateChecker)
+        AppDelegate.updateChecker = updateChecker
+        // Hosted XCTest runs execute this init too; they must never reach api.github.com.
+        if !AppRuntimeEnvironment.isTestOrPreviewHost {
+            MainActor.assumeIsolated { updateChecker.startScheduling() }
+        }
+
         // Design spec's Local-folder backend requirement "FSEvents for
         // external changes" — closes the forward reference Task 3 left
         // open ("Consumed by ... app-level auto-sync trigger").
@@ -336,6 +354,7 @@ struct MyPassApp: App {
         WindowGroup(id: "main") {
             ContentView()
                 .quitFreezeOverlay()
+                .environmentObject(updateChecker)
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
                 .environmentObject(autoLockController)
@@ -361,6 +380,7 @@ struct MyPassApp: App {
         MenuBarExtra("MyPass", systemImage: "key.fill", isInserted: $showMenuBarExtra) {
             MenuBarExtraContent()
                 .quitFreezeOverlay()
+                .environmentObject(updateChecker)
                 .environmentObject(vaultSession)
                 .environmentObject(navigationState)
                 .environmentObject(deviceUnlockPromptCoordinator)
@@ -375,6 +395,7 @@ struct MyPassApp: App {
         Settings {
             SettingsView()
                 .quitFreezeOverlay()
+                .environmentObject(updateChecker)
                 .background(OpenBrowserSettingsOnDemand())
                 .environmentObject(autoLockController)
                 .environmentObject(vaultSession)

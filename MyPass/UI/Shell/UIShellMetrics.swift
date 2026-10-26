@@ -12,6 +12,8 @@ enum UIShellMetrics {
     static let listColumnMinWidth: CGFloat = 260
     static let selectionAccentBarWidth: CGFloat = 3
     static let emptyStateIconSize: CGFloat = 64
+    static let bannerHorizontalPadding: CGFloat = 16
+    static let bannerVerticalPadding: CGFloat = 8
 
     /// Detail column backdrop — semantic so light/dark stay readable.
     static var detailColumnBackground: Color {
