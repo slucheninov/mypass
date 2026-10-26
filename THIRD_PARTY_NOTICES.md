@@ -14,7 +14,7 @@ zip and the Chrome extension zip) and is part of the repository root.
   Swift back-deployment runtime library that is copied into the app bundle;
 - the Chrome extension: the single vendored script `vendor/jsQR.js`.
 
-**How it was built.** Checked on 2026-10-25 against the pinned revisions in
+**How it was built.** Checked on 2026-10-26 against the pinned revisions in
 `Packages/MyPassKit/Package.resolved` and `Packages/SyncKit/Package.resolved`
 (`Packages/ExtensionBridgeKit` has no external dependency), against the
 checkouts of exactly those revisions, and against the modules that a build of
@@ -41,8 +41,8 @@ This file is a reviewed list, not machine-generated from `Package.resolved`.
 | Citadel | 0.12.1, `ae8562f` | MIT | macOS app |
 | Citadel `CCitadelBcrypt` (OpenBSD bcrypt / Blowfish) | bundled in Citadel 0.12.1 | ISC and BSD-style (with advertising clause) | macOS app |
 | BigInt | 5.7.0, `e07e00f` | MIT | macOS app |
-| swift-nio-ssh (Wellz26 fork) | 0.3.6, `a05e6bb` | Apache-2.0 | macOS app |
-| swift-nio | 2.101.3, `0b18836` | Apache-2.0 (plus MIT and Apache-2.0 sub-components, see below) | macOS app |
+| swift-nio-ssh (Wellz26 fork) | 0.3.7, `d88989f` | Apache-2.0 | macOS app |
+| swift-nio | 2.104.0, `6db9d9a` | Apache-2.0 (plus MIT and Apache-2.0 sub-components, see below) | macOS app |
 | swift-crypto | 3.15.1, `95ba031` | Apache-2.0 | macOS app |
 | BoringSSL (bundled in swift-crypto) | `0226f30` | Apache-2.0 | macOS app |
 | fiat-crypto (inside BoringSSL) | as bundled by BoringSSL `0226f30` | Apache-2.0 | macOS app |
@@ -352,10 +352,10 @@ OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 ~~~~
 
-### swift-nio-ssh 0.3.6 (Wellz26 fork)
+### swift-nio-ssh 0.3.7 (Wellz26 fork)
 
-- Dependency URL: https://github.com/Wellz26/swift-nio-ssh, tag `0.3.6`, commit
-  `a05e6bbe6b141ee68da3030e00275504c0595d4d`. License Apache-2.0 (text in
+- Dependency URL: https://github.com/Wellz26/swift-nio-ssh, tag `0.3.7`, commit
+  `d88989f3d3bb1dfb2a38ce4af598afbf7fc3095c`. License Apache-2.0 (text in
   Appendix A; upstream `LICENSE.txt` is byte-identical to it). Source files
   carry "Copyright (c) 2017-2022 Apple Inc. and the SwiftNIO project authors".
   The repository has no `NOTICE` file.
@@ -367,10 +367,10 @@ SOFTWARE.
   names the same URL for SwiftPM to resolve a single `swift-nio-ssh`.
   Replacing the dependency is out of scope for this project today.
 
-### swift-nio 2.101.3
+### swift-nio 2.104.0
 
-- Upstream: https://github.com/apple/swift-nio, tag `2.101.3`, commit
-  `0b18836bd8b0162e7e17a995a3fbee20ed8f3b2b`. License Apache-2.0 (text in
+- Upstream: https://github.com/apple/swift-nio, tag `2.104.0`, commit
+  `6db9d9abd92ad7399b8a564cafbb87d3507245fa`. License Apache-2.0 (text in
   Appendix A; upstream `LICENSE.txt` is byte-identical to it).
 - Upstream `NOTICE.txt`, required to be carried along by Apache-2.0 §4(d):
 
