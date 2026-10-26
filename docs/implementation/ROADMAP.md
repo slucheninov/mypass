@@ -64,8 +64,6 @@ the name "MyPass" in Google's passkey UI depends on the community registry.
 
 ## Deferred follow-ups
 
-- [ ] Lowercase manual TOTP setup keys in `detectManualSetupKey` (`ChromeExtension/content.js`).
-      Deferred: the detector only accepts contiguous all-caps tokens as written.
 - [ ] Unicode-form Public Suffix List rules (IDN suffixes such as `公司.hk`) are not matched
       against punycode hosts, because no IDNA conversion is done. Unchanged from earlier
       behaviour.

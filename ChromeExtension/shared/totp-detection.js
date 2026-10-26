@@ -40,10 +40,22 @@ function detectOtpauthText(root) {
 // A plain sliding window over every token (including surrounding label words) is unsafe:
 // concatenating enough ordinary sentence words (e.g. "Your"+"manual"+"setup"+"key" ->
 // "YOURMANUALSETUPKEY") can accidentally satisfy the base32 alphabet+length check before
-// the real key is ever reached. Real setup keys are rendered in caps (e.g. "JBSW Y3DP EHPK
-// 3PXP"), so restrict the window to maximal runs of tokens that are already all
-// uppercase letters/digits as written, which excludes ordinary lowercase/mixed-case words.
+// the real key is ever reached. Real setup keys are rendered either all-uppercase or
+// all-lowercase (e.g. "JBSW Y3DP EHPK 3PXP" or "jbsw y3dp ehpk 3pxp"), so restrict
+// the window to maximal runs of tokens that are uniformly one case as written, which
+// excludes ordinary mixed-case words.
+//
+// For uppercase, candidates are tried span-first (shortest to longest). For lowercase,
+// single tokens are checked first (unambiguous standalone key), then grouped spans from
+// largest to smallest so a 32-char key is not truncated to its first valid 16-char prefix.
+// Within multi-token lowercase spans an additional uniform-group guard is applied: all
+// tokens in the span must share the same character length. Real grouped TOTP keys use
+// fixed-width groups (e.g. 4×4 chars); prose words have varied lengths, so concatenating
+// tokens of different lengths is rejected. Limitation: an all-lowercase key is
+// indistinguishable from a prose run whose words happen to share a uniform length —
+// detection does not promise universal coverage for lowercase keys.
 const CAPS_TOKEN_REGEX = /^[A-Z0-9]+$/;
+const LOWER_TOKEN_REGEX = /^[a-z2-7]+$/;
 
 function detectManualSetupKey(root) {
   const scope = root || document;
@@ -54,21 +66,53 @@ function detectManualSetupKey(root) {
   const tokens = text.split(' ').filter(Boolean);
   let i = 0;
   while (i < tokens.length) {
-    if (!CAPS_TOKEN_REGEX.test(tokens[i])) {
-      i += 1;
-      continue;
-    }
-    let runEnd = i;
-    while (runEnd < tokens.length && CAPS_TOKEN_REGEX.test(tokens[runEnd])) runEnd += 1;
-    for (let start = i; start < runEnd; start += 1) {
-      for (let span = 1; span <= 8 && start + span <= runEnd; span += 1) {
-        const candidate = tokens.slice(start, start + span).join('');
-        if (totpBase32.isBase32Secret(candidate)) {
-          return totpBase32.normalizeBase32Candidate(candidate);
+    if (CAPS_TOKEN_REGEX.test(tokens[i])) {
+      let runEnd = i;
+      while (runEnd < tokens.length && CAPS_TOKEN_REGEX.test(tokens[runEnd])) runEnd += 1;
+      const run = tokens.slice(i, runEnd);
+      const runLen = run.length;
+      for (let span = 1; span <= 8 && span <= runLen; span += 1) {
+        for (let start = 0; start + span <= runLen; start += 1) {
+          const candidate = run.slice(start, start + span).join('');
+          if (totpBase32.isBase32Secret(candidate)) {
+            return totpBase32.normalizeBase32Candidate(candidate);
+          }
         }
       }
+      i = runEnd;
+    } else if (LOWER_TOKEN_REGEX.test(tokens[i])) {
+      let runEnd = i;
+      while (runEnd < tokens.length && LOWER_TOKEN_REGEX.test(tokens[runEnd])) runEnd += 1;
+      const run = tokens.slice(i, runEnd);
+      const runLen = run.length;
+      // Single tokens first: a standalone key needs no group-structure check.
+      for (let start = 0; start < runLen; start += 1) {
+        if (totpBase32.isBase32Secret(run[start])) {
+          return totpBase32.normalizeBase32Candidate(run[start]);
+        }
+      }
+      // Multi-token grouped spans: scan largest to smallest to return the complete key
+      // rather than a valid prefix. Require uniform token lengths (prose words vary).
+      const maxSpan = Math.min(8, runLen);
+      for (let span = maxSpan; span >= 2; span -= 1) {
+        for (let start = 0; start + span <= runLen; start += 1) {
+          const slice = run.slice(start, start + span);
+          const groupLen = slice[0].length;
+          let uniform = true;
+          for (let k = 1; k < span; k += 1) {
+            if (slice[k].length !== groupLen) { uniform = false; break; }
+          }
+          if (!uniform) continue;
+          const candidate = slice.join('');
+          if (totpBase32.isBase32Secret(candidate)) {
+            return totpBase32.normalizeBase32Candidate(candidate);
+          }
+        }
+      }
+      i = runEnd;
+    } else {
+      i += 1;
     }
-    i = runEnd;
   }
   return null;
 }
