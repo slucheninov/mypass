@@ -32,10 +32,65 @@ assert.strictEqual(isBase32Secret('jbswy3dp ehpk3pxp'), true, 'lowercase and spa
 assert.strictEqual(isBase32Secret('short'), false);
 assert.strictEqual(isBase32Secret('has1and9digits'), false);
 
-// detectManualSetupKey
+// detectManualSetupKey — uppercase (existing behaviour)
 const manualDoc = fakeDoc({ bodyText: 'Your manual setup key is JBSW Y3DP EHPK 3PXP — enter it in your app' });
 assert.strictEqual(detectManualSetupKey(manualDoc), 'JBSWY3DPEHPK3PXP');
 assert.strictEqual(detectManualSetupKey(fakeDoc({ bodyText: 'JBSWY3DPEHPK3PXP with no label nearby' })), null, 'requires a label keyword present');
+
+// detectManualSetupKey — lowercase keys
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'Your secret is jbswy3dpehpk3pxp — enter it in your app' })),
+  'JBSWY3DPEHPK3PXP',
+  'single all-lowercase token accepted and normalised to uppercase'
+);
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'Your manual setup key is jbsw y3dp ehpk 3pxp — enter it in your app' })),
+  'JBSWY3DPEHPK3PXP',
+  'space-grouped all-lowercase tokens accepted'
+);
+// all-letter keys (no base32 digit in key) — single token
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'Your secret is aabbccddaabbccdd — enter it in your app' })),
+  'AABBCCDDAABBCCDD',
+  'standalone all-letter lowercase key accepted'
+);
+// all-letter keys — grouped
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'Your manual setup key is aabb ccdd aabb ccdd — enter it in your app' })),
+  'AABBCCDDAABBCCDD',
+  'space-grouped all-letter lowercase key accepted'
+);
+// 32-char key in 8 groups of 4; largest-span-first returns the complete key, not a 16-char prefix
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'Your secret is aabb ccdd aabb ccdd eeff gghh iijj kkll' })),
+  'AABBCCDDAABBCCDDEEFFGGHHIIJJKKLL',
+  '32-char lowercase key in 8 groups of 4 returned complete'
+);
+// uniform-group guard: letter-only prose must not match even when a label is present —
+// no single token ≥16 chars, no uniform-length multi-token span long enough
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'manual setup key information is provided here today in this form' })),
+  null,
+  'lowercase letter-only prose rejected (varied token lengths fail uniform-group guard)'
+);
+// uniform-group guard: mixed-length tokens block prose concatenation even when a digit is present
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'manual setup key information about 2factor authentication is provided here' })),
+  null,
+  'prose with a base32 digit token rejected because mixed-length tokens fail uniform-group guard'
+);
+// mixed-case tokens are not accepted (capitalized words, not TOTP keys)
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'Your secret Jbswy3dpEhpk3pxp is here' })),
+  null,
+  'mixed-case token rejected'
+);
+// lowercase key without label still returns null
+assert.strictEqual(
+  detectManualSetupKey(fakeDoc({ bodyText: 'jbswy3dpehpk3pxp with no label nearby' })),
+  null,
+  'lowercase key without label returns null'
+);
 
 // priority ordering
 const combinedDoc = fakeDoc({
