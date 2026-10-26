@@ -1060,7 +1060,7 @@ cmd_package() {
 
   # Fail on missing inputs before spending minutes on a build.
   local f
-  for f in LICENSE THIRD_PARTY_NOTICES.md scripts/package/INSTALL.txt ChromeExtension/manifest.json project.yml; do
+  for f in LICENSE THIRD_PARTY_NOTICES.md scripts/package/INSTALL.txt scripts/package/RELEASE_NOTES_HEADER.md ChromeExtension/manifest.json project.yml; do
     [[ -f "$REPO_ROOT/$f" ]] || fail "required file '$f' is missing from the repository."
   done
 
