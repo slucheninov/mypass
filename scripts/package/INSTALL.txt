@@ -33,6 +33,8 @@ What is in this disk image
 The browser extension is a separate download (MyPass-chrome-extension-X.Y.Z.zip)
 from the same release page.
 
+Wherever X.Y.Z appears below, substitute the version you downloaded (for example 0.3.0).
+
 1. Allow macOS to open the files (do this BEFORE opening the disk image)
 ------------------------------------------------------------------------
 Files downloaded from a browser carry a quarantine flag, and macOS will refuse
@@ -45,6 +47,8 @@ itself, in Terminal:
 
 (This is your decision to make; nothing in this package does it for you.)
 
+If xattr answers "No such xattr", the file never carried the flag (for example when it was fetched with curl); nothing else is needed.
+
 If you already opened the image and copied the app, clear the flag on the
 copies instead:
 
@@ -56,8 +60,7 @@ If macOS still blocks the app, use right-click > Open once.
 ------------------
 Open MyPass-X.Y.Z-macos-arm64.dmg and drag MyPass.app onto the Applications
 shortcut. Run MyPass from /Applications, not from the disk image: the native
-messaging host and the single-instance lock refer to the installed copy. Eject
-the image afterwards.
+messaging host and the single-instance lock refer to the installed copy.
 
 3. First launch
 ---------------
@@ -91,6 +94,8 @@ home folder), name the root explicitly:
 
 The installer refuses to write through symbolic links or over a directory, and
 refuses to run when the source and destination are the same file.
+
+Eject the disk image when you are done with it.
 
 5. Load the extension
 ---------------------

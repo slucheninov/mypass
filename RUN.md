@@ -225,7 +225,7 @@
 Ручна перевірка. Не виконувалась; пункти лишаються відкритими, доки їх не пройдено.
 
 - [ ] `./scripts/dev.sh package`, змонтувати DMG: у корені рівно сім елементів (`MyPass.app`, `Applications`, `ChromeHost`, `dev.sh`, `INSTALL.txt`, `LICENSE`, `THIRD_PARTY_NOTICES.md`), а `Applications` веде на `/Applications`.
-- [ ] `mkdir -p /tmp/mypass-host-test`, потім з змонтованого тому виконати `"/Volumes/MyPass X.Y.Z/dev.sh" install-host --install-root /tmp/mypass-host-test` без помилок про файлову систему лише для читання.
+- [ ] `mkdir -p /tmp/mypass-host-test`, потім зі змонтованого тому виконати `"/Volumes/MyPass X.Y.Z/dev.sh" install-host --install-root /tmp/mypass-host-test` без помилок про файлову систему лише для читання.
 - [ ] `xattr -d com.apple.quarantine` на DMG, перетягнути `MyPass.app` у `/Applications`, відкрити застосунок з `/Applications` і перевірити, що він стартує.
 - [ ] Після першого тегу `v0.3.0` перевірити Release на GitHub: три файли, `shasum -a 256 -c SHA256SUMS.txt` проходить, випуск не чернетка.
 

@@ -48,10 +48,14 @@ Each one carries three downloads:
 - `MyPass-chrome-extension-X.Y.Z.zip`: the browser extension (sideload package).
 - `SHA256SUMS.txt`: checksums for the two files above (`shasum -a 256 -c SHA256SUMS.txt`).
 
+Wherever `X.Y.Z` appears below, substitute the version you downloaded (for example `0.3.0`).
+
 The release is unsigned and not notarized, so read the warning above first. In short:
 
 1. Before opening the DMG, clear its quarantine flag:
    `xattr -d com.apple.quarantine ~/Downloads/MyPass-X.Y.Z-macos-arm64.dmg`.
+   If `xattr` answers "No such xattr", the file never carried the flag (for example
+   when it was fetched with `curl`); nothing else is needed.
 2. Open the DMG and drag `MyPass.app` onto the `Applications` shortcut, then run it
    from `/Applications`.
 3. On first launch macOS may show Keychain prompts; choose "Always Allow" for the
