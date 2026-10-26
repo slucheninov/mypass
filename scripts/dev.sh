@@ -1253,7 +1253,11 @@ EOF
   fi
 
   echo
-  echo "Development artifacts (unsigned, ad-hoc sealed; not a supported way to run a real vault):"
+  if [[ "$release" == "1" ]]; then
+    echo "Release artifacts (unsigned, ad-hoc sealed; see INSTALL.txt inside the disk image):"
+  else
+    echo "Development artifacts (unsigned, ad-hoc sealed; not a supported way to run a real vault):"
+  fi
   (cd "$out_abs" && shasum -a 256 "$dmg_base.dmg" "$ext_base.zip")
   echo "  $out_abs/$dmg_base.dmg"
   echo "  $out_abs/$ext_base.zip"
