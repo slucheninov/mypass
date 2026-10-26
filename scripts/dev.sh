@@ -89,7 +89,7 @@ Commands (checkout only, need Xcode and xcodegen):
                              quit, nothing is built; if the build fails, no MyPass is left
                              running. Nothing is force-killed and no MyPass.app is removed.
   package [--out DIR]        Build Release for arm64 without signing, seal it ad hoc, and
-                             write the macOS and Chrome extension zips into DIR
+                             write the macOS DMG and the Chrome extension zip into DIR
                              (default ./dist). Development artifacts only.
   set-version X.Y.Z          Set the app, host and extension version together (project.yml x2,
                              ChromeExtension/manifest.json). Plain X.Y.Z only. Does not commit.
@@ -1008,7 +1008,7 @@ EOF
 # Text files (scripts, notices, manifest, pages) must not carry a macOS home-directory
 # path. Compiled binaries are only reported: Swift and SwiftPM can embed absolute build
 # paths, which is informational for the artifact but should be looked at. The prefix is
-# built from pieces so this script, which ships in the zip, does not match its own scan.
+# built from pieces so this script, which ships in the dmg, does not match its own scan.
 scan_for_personal_paths() {
   local stage="$1" label="$2" hits users_dir="/Us""ers"
   hits="$(grep -rIl -e "$users_dir/" "$stage" 2>/dev/null || true)"
@@ -1045,6 +1045,7 @@ cmd_package() {
   require_command xcodebuild "Install Xcode from the App Store."
   require_command codesign
   require_command ditto
+  require_command hdiutil
   require_command zip "Install the zip command line tool."
   require_command unzip
   require_command lipo
@@ -1107,14 +1108,16 @@ cmd_package() {
     provenance="nogit"
   fi
 
-  local mac_base="MyPass-macos-arm64-unsigned-$version-$provenance"
+  local dmg_base="MyPass-$version-macos-arm64-$provenance"
   local ext_base="MyPass-chrome-extension-$version-$provenance"
 
   OWNED_STAGE_PARENT="$out_abs"
   OWNED_STAGE_DIR="$(mktemp -d "$out_abs/.package-stage.XXXXXX")" || fail "could not create a staging directory in '$out_abs'."
 
   # --- macOS artifact ---
-  local mac_stage="$OWNED_STAGE_DIR/mac/$mac_base"
+  # A plain directory, not nested under a named folder: hdiutil -srcfolder makes the folder's
+  # contents the volume root.
+  local mac_stage="$OWNED_STAGE_DIR/dmg"
   mkdir -p -- "$mac_stage"
   ditto --norsrc --noextattr --noqtn "$products/MyPass.app" "$mac_stage/MyPass.app"
   cp -- "$products/ChromeHost" "$mac_stage/ChromeHost"
@@ -1160,6 +1163,10 @@ EOF
     fi
   done
 
+  # Drag-to-install shortcut. Created last so no recursive scan above follows it into
+  # /Applications, and it is not part of the signed content.
+  ln -s /Applications "$mac_stage/Applications"
+
   # --- extension artifact ---
   # Everything under ChromeExtension/ except tests and hidden files: new runtime files are
   # picked up automatically, and verify_extension_references below proves nothing the
@@ -1182,9 +1189,8 @@ EOF
   verify_extension_references "$ext_stage"
   scan_for_personal_paths "$ext_stage" "the extension artifact"
 
-  # --- zip, verify, move into place ---
-  local mac_tmp="$OWNED_STAGE_DIR/$mac_base.zip" ext_tmp="$OWNED_STAGE_DIR/$ext_base.zip"
-  ditto -c -k --keepParent --norsrc --noextattr --noqtn "$mac_stage" "$mac_tmp"
+  # --- dmg and zip, verify, move into place ---
+  local dmg_tmp="$OWNED_STAGE_DIR/$dmg_base.dmg" ext_tmp="$OWNED_STAGE_DIR/$ext_base.zip"
   (cd "$ext_stage" && find . -type f | sed 's|^\./||' | LC_ALL=C sort | zip -X -q "$ext_tmp" -@)
 
   local listing entry
@@ -1197,22 +1203,33 @@ EOF
   for entry in manifest.json LICENSE THIRD_PARTY_NOTICES.md; do
     grep -qxF "$entry" <<<"$listing" || fail "the extension zip is missing '$entry'."
   done
-  listing="$(unzip -Z1 "$mac_tmp")"
-  for entry in "$mac_base/dev.sh" "$mac_base/ChromeHost" "$mac_base/INSTALL.txt" "$mac_base/LICENSE" "$mac_base/THIRD_PARTY_NOTICES.md" "$mac_base/MyPass.app/Contents/Info.plist"; do
-    grep -qxF "$entry" <<<"$listing" || fail "the macOS zip is missing '$entry'."
+
+  # The stage becomes the volume root, so check it exactly before imaging.
+  if [[ -n "$(find "$mac_stage" \( -name .DS_Store -o -name __MACOSX \) -print -quit)" ]]; then
+    fail "the macOS stage contains Finder files (.DS_Store or __MACOSX)."
+  fi
+  for entry in dev.sh ChromeHost INSTALL.txt LICENSE THIRD_PARTY_NOTICES.md MyPass.app/Contents/Info.plist; do
+    [[ -e "$mac_stage/$entry" ]] || fail "the macOS stage is missing '$entry'."
   done
+  listing="$(ls -A "$mac_stage" | LC_ALL=C sort)"
+  [[ "$listing" == "$(printf '%s\n' Applications ChromeHost INSTALL.txt LICENSE MyPass.app THIRD_PARTY_NOTICES.md dev.sh)" ]] \
+    || fail "the macOS stage has unexpected contents: $(tr '\n' ' ' <<<"$listing")"
+  [[ "$(readlink "$mac_stage/Applications")" == /Applications ]] || fail "the Applications link in the macOS stage is wrong."
+
+  quiet_unless_failed hdiutil create -srcfolder "$mac_stage" -volname "MyPass $version" -fs HFS+ -format UDZO -ov "$dmg_tmp"
+  quiet_unless_failed hdiutil verify "$dmg_tmp"
 
   local final
-  for final in "$out_abs/$mac_base.zip" "$out_abs/$ext_base.zip"; do
+  for final in "$out_abs/$dmg_base.dmg" "$out_abs/$ext_base.zip"; do
     [[ ! -d "$final" ]] || fail "'$final' is a directory; refusing to replace it."
   done
-  mv -f -- "$mac_tmp" "$out_abs/$mac_base.zip"
+  mv -f -- "$dmg_tmp" "$out_abs/$dmg_base.dmg"
   mv -f -- "$ext_tmp" "$out_abs/$ext_base.zip"
 
   echo
   echo "Development artifacts (unsigned, ad-hoc sealed; not a supported way to run a real vault):"
-  (cd "$out_abs" && shasum -a 256 "$mac_base.zip" "$ext_base.zip")
-  echo "  $out_abs/$mac_base.zip"
+  (cd "$out_abs" && shasum -a 256 "$dmg_base.dmg" "$ext_base.zip")
+  echo "  $out_abs/$dmg_base.dmg"
   echo "  $out_abs/$ext_base.zip"
 }
 
