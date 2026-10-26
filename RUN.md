@@ -228,6 +228,8 @@
 - [ ] `mkdir -p /tmp/mypass-host-test`, потім зі змонтованого тому виконати `"/Volumes/MyPass X.Y.Z/dev.sh" install-host --install-root /tmp/mypass-host-test` без помилок про файлову систему лише для читання.
 - [ ] `xattr -d com.apple.quarantine` на DMG, перетягнути `MyPass.app` у `/Applications`, відкрити застосунок з `/Applications` і перевірити, що він стартує.
 - [ ] Після першого тегу `v0.3.0` перевірити Release на GitHub: три файли, `shasum -a 256 -c SHA256SUMS.txt` проходить, випуск не чернетка.
+- [ ] Негативний сценарій: змонтувати образ до зняття карантину й запустити `dev.sh install-host`; macOS має вбити скрипт («Apple не може підтвердити…», `zsh: killed`). Після `hdiutil detach`, `xattr -d com.apple.quarantine` на `.dmg` і повторного монтування `install-host` проходить, а `xattr -l` на встановленому `ChromeHost` не показує карантину.
+- [ ] Перший запит Keychain від `ChromeHost` (елемент `com.mypass.extensionbridge.endpoint`) приймає пароль облікового запису macOS; «Дозволяти завжди» прибирає повторні запити. Якщо правильний пароль відхиляється, в'язка «login» розсинхронізована: Keychain Access → Edit → Change Password for Keychain "login"….
 
 ## Синхронізація через iCloud Drive
 
