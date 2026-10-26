@@ -91,6 +91,8 @@ Commands (checkout only, need Xcode and xcodegen):
   package [--out DIR]        Build Release for arm64 without signing, seal it ad hoc, and
                              write the macOS and Chrome extension zips into DIR
                              (default ./dist). Development artifacts only.
+  set-version X.Y.Z          Set the app, host and extension version together (project.yml x2,
+                             ChromeExtension/manifest.json). Plain X.Y.Z only. Does not commit.
 
 Command available from an extracted artifact as well (macOS base tools only):
   install-host [--host PATH] [--install-root DIR]
@@ -899,6 +901,53 @@ project_version() {
   ' "$REPO_ROOT/project.yml"
 }
 
+# Set the app, host and extension version together: MARKETING_VERSION in both project.yml
+# targets (MyPass, ChromeHost) and "version" in ChromeExtension/manifest.json. Plain X.Y.Z
+# only, because Chrome rejects pre-release suffixes in manifest versions. Rewrites go through
+# temp files next to the originals (registered for the EXIT trap) instead of `sed -i ''`, so
+# the function does not depend on BSD/GNU sed flag differences; nothing is written back until
+# both rewrites are validated, and the originals are then overwritten in place with `cat >`
+# to keep their file mode. Does not commit.
+cmd_set_version() {
+  case "${1:-}" in -h|--help) usage; return 0 ;; esac
+  [[ $# -eq 1 ]] || usage_error "set-version takes exactly one argument: X.Y.Z"
+  require_checkout set-version
+  local v="$1"
+  [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] \
+    || usage_error "version must be plain X.Y.Z (digits only, no 'v' prefix or suffix): '$v'"
+
+  local yml="$REPO_ROOT/project.yml" manifest="$REPO_ROOT/ChromeExtension/manifest.json"
+  local yml_tmp manifest_tmp count
+  yml_tmp="$(mktemp "$yml.XXXXXX")"
+  OWNED_TMP_FILES+=("$yml_tmp")
+  manifest_tmp="$(mktemp "$manifest.XXXXXX")"
+  OWNED_TMP_FILES+=("$manifest_tmp")
+
+  # Keep the quoting style project.yml already uses ("0.2.0").
+  sed -E 's/^([[:space:]]*MARKETING_VERSION:[[:space:]]*)"[^"]*"/\1"'"$v"'"/' "$yml" > "$yml_tmp"
+  count="$(grep -c "^[[:space:]]*MARKETING_VERSION:[[:space:]]*\"$v\"" "$yml_tmp" || true)"
+  [[ "$count" -eq 2 ]] \
+    || fail "expected exactly 2 quoted MARKETING_VERSION lines in project.yml, rewrote $count."
+
+  # Only the first "version" key: later ones (if any) belong to nested objects.
+  awk -v v="$v" '
+    !done && /^[[:space:]]*"version":/ {
+      sub(/"version":[[:space:]]*"[^"]*"/, "\"version\": \"" v "\"")
+      done = 1; n++
+    }
+    { print }
+    END { if (n != 1) exit 3 }
+  ' "$manifest" > "$manifest_tmp" \
+    || fail "expected exactly 1 \"version\" line in ChromeExtension/manifest.json."
+  grep -q "^[[:space:]]*\"version\": \"$v\"" "$manifest_tmp" \
+    || fail "ChromeExtension/manifest.json \"version\" line is not a quoted string."
+
+  cat "$yml_tmp" > "$yml"
+  cat "$manifest_tmp" > "$manifest"
+  echo "updated project.yml (2 targets)"
+  echo "updated ChromeExtension/manifest.json"
+}
+
 # Every file the extension refers to by name must be in the staged package. Sources checked:
 # manifest.json strings, importScripts() and chrome.runtime.getURL() literals in the staged
 # scripts, and src/href attributes in the staged pages. Done with grep/sed so packaging does
@@ -1181,6 +1230,7 @@ main() {
     run) cmd_run "$@" ;;
     install-host) cmd_install_host "$@" ;;
     package) cmd_package "$@" ;;
+    set-version) cmd_set_version "$@" ;;
     -h|--help|help) usage ;;
     *) usage_error "unknown command: $command_name" ;;
   esac
