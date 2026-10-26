@@ -1,0 +1,104 @@
+name: Release
+
+# Publishes a GitHub Release when a version tag is pushed. A tag is the only trigger
+# (no workflow_dispatch): a release without a tag has no provenance. The tag must equal
+# the version in project.yml and ChromeExtension/manifest.json; `package --release` fails
+# otherwise. Releases are unsigned and ad-hoc sealed, like the CI artifacts.
+on:
+  push:
+    tags:
+      - 'v[0-9]+.[0-9]+.[0-9]+'
+
+# contents: write is needed only to create the release; nothing else is granted.
+permissions:
+  contents: write
+
+# One run per tag; never cancel a release half way.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: release
+    runs-on: macos-26
+    timeout-minutes: 90
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history and tags so `git describe --exact-match --tags` works in package --release.
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Check the pinned Xcode and gh
+        run: |
+          if [[ ! -d "$DEVELOPER_DIR" ]]; then
+            echo "::error::$DEVELOPER_DIR is not on this runner image. Installed Xcode versions:"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          xcodebuild -version
+          gh --version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # A release must pass the full suite, same as CI.
+      - name: Test
+        run: ./scripts/test.sh --ci
+
+      - name: Package release artifacts
+        run: ./scripts/dev.sh package --release
+
+      - name: Check the artifact set
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          expected="MyPass-${VERSION}-macos-arm64.dmg
+          MyPass-chrome-extension-${VERSION}.zip
+          SHA256SUMS.txt"
+          actual="$(ls -1 dist | LC_ALL=C sort)"
+          expected="$(printf '%s\n' "$expected" | sed 's/^[[:space:]]*//' | LC_ALL=C sort)"
+          if [[ "$actual" != "$expected" ]]; then
+            echo "::error::dist/ does not hold exactly the three release files. Found:"
+            echo "$actual"
+            exit 1
+          fi
+
+      # Draft first, publish last: releases/latest ignores drafts, so a run that dies during the
+      # upload never advertises a half-published release to the update checker.
+      - name: Create the draft release
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          # A draft left by an earlier failed run of this same tag is replaced; a published
+          # release makes `gh release create` fail below, which is the right outcome.
+          if [[ "$(gh release view "$GITHUB_REF_NAME" --json isDraft --jq .isDraft 2>/dev/null || true)" == "true" ]]; then
+            gh release delete "$GITHUB_REF_NAME" --yes
+          fi
+          sed "s/{{VERSION}}/${VERSION}/g" scripts/package/RELEASE_NOTES_HEADER.md > notes.md
+          gh api "repos/${GITHUB_REPOSITORY}/releases/generate-notes" \
+            -f tag_name="$GITHUB_REF_NAME" --jq .body >> notes.md
+          gh release create "$GITHUB_REF_NAME" \
+            --draft \
+            --title "MyPass ${VERSION}" \
+            --notes-file notes.md \
+            dist/*.dmg dist/*.zip dist/SHA256SUMS.txt
+
+      - name: Verify the draft assets
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          count="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets | length')"
+          names="$(gh release view "$GITHUB_REF_NAME" --json assets --jq '[.assets[].name] | sort | join(",")')"
+          want="MyPass-${VERSION}-macos-arm64.dmg,MyPass-chrome-extension-${VERSION}.zip,SHA256SUMS.txt"
+          if [[ "$count" != "3" || "$names" != "$want" ]]; then
+            echo "::error::draft release assets are '$names' ($count), expected '$want'."
+            exit 1
+          fi
+
+      - name: Publish the release
+        run: gh release edit "$GITHUB_REF_NAME" --draft=false
