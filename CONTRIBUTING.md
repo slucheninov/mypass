@@ -23,7 +23,7 @@ with `./scripts/dev.sh generate`; never edit or commit it.
 | `./scripts/dev.sh build [--unsigned]` | Build `MyPass` and `ChromeHost` into `./build`. |
 | `./scripts/dev.sh run` | Quit every running MyPass, build, open the new build. |
 | `./scripts/dev.sh install-host [--host PATH] [--install-root DIR]` | Install the native messaging host and manifests. |
-| `./scripts/dev.sh package [--out DIR]` | Build the unsigned development artifacts into `./dist`. |
+| `./scripts/dev.sh package [--out DIR] [--release]` | Build the unsigned development artifacts (a DMG and the extension zip) into `./dist`; `--release` names them for a tagged release. |
 | `./scripts/test.sh [--ci] [--no-js]` | Run the app tests, the three package suites and all extension JS suites. |
 
 Load the extension unpacked from `ChromeExtension/` on `chrome://extensions` and
