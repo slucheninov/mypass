@@ -229,6 +229,19 @@
 - [ ] `xattr -d com.apple.quarantine` на DMG, перетягнути `MyPass.app` у `/Applications`, відкрити застосунок з `/Applications` і перевірити, що він стартує.
 - [ ] Після першого тегу `v0.3.0` перевірити Release на GitHub: три файли, `shasum -a 256 -c SHA256SUMS.txt` проходить, випуск не чернетка.
 
+## Перевірка оновлень (ручна перевірка)
+
+Ручна перевірка. Не виконувалась; пункти лишаються відкритими, доки їх не пройдено.
+
+- [ ] `./scripts/dev.sh set-version 0.2.9` (без коміту, поки опубліковано реліз `v0.3.0`), потім `./scripts/dev.sh run`; приблизно через 10 с угорі головного вікна з'являється банер "MyPass 0.3.0 is available (you have 0.2.9)" з кнопками **View release** і **Later**, і той самий банер видно на екрані розблокування.
+- [ ] У меню-барі (вікно розблокованого і заблокованого стану) є рядок "MyPass 0.3.0 available…", що відкриває сторінку релізу в браузері.
+- [ ] **View release** відкриває `https://github.com/slucheninov/mypass/releases/tag/v0.3.0`.
+- [ ] **Later** ховає банер і рядок у меню-барі; після перезапуску застосунку вони не повертаються; `defaults read com.mypass.app updateCheckDismissedVersion` дає `0.3.0`.
+- [ ] `Settings → General → Updates`: "Check now" показує "MyPass 0.3.0 is available" і посилання (навіть після Later); без мережі показує помилку в рядку, без діалогу.
+- [ ] Вимкнути "Check for updates automatically", перезапустити: у Console (фільтр `category:UpdateCheck` або Little Snitch/`nettop`) жодного запиту до `api.github.com`; банер зник.
+- [ ] Меню `MyPass → Check for Updates…` відкриває Settings на вкладці General і запускає перевірку.
+- [ ] Повернути версії: `git checkout -- project.yml ChromeExtension/manifest.json`, `git status` чистий.
+
 ## Синхронізація через iCloud Drive
 
 1. Розблокуйте сховище (потрібен пароль сховища, щоб прочитати сховище, яке вже може лежати в теці).
