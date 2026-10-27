@@ -81,11 +81,10 @@ struct AddressEditView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Address" : "Edit Address")
-        .toolbar {
-            EditActionsToolbarContent(onCancel: onCancel, onSave: {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: {
                 onSave(AddressEntryEditing.savedEntry(existing: existingEntry, title: title, address: address, favorite: isFavorite, notes: notes), selectedGroupID)
             })
-            FavoriteToggleToolbarItem(isFavorite: $isFavorite)
         }
     }
 }

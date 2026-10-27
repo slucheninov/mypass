@@ -99,7 +99,15 @@ private struct DetailColumnView: View {
     var body: some View {
         switch navigationState.detailPresentation {
         case .browse:
+            // The Edit button and the ⋮ menu live in this in-column row, not in the window
+            // toolbar. With nothing selected (or a scope overview) there is no entry, so
+            // the inset contributes zero height.
             browseDetail()
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let entry = currentBrowseEntry {
+                        EntryBrowseActionRow(entry: entry)
+                    }
+                }
         case .edit(let entryID):
             entryEdit(existingID: entryID)
         case .create(let defaultGroupID, let entryType):

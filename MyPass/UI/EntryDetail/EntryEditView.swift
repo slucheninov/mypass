@@ -211,9 +211,8 @@ struct EntryEditView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Entry" : "Edit Entry")
-        .toolbar {
-            EditActionsToolbarContent(onCancel: onCancel, onSave: save)
-            FavoriteToggleToolbarItem(isFavorite: $isFavorite)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: save)
         }
         .sheet(isPresented: $showPasswordGenerator) {
             // The FULL host, not a registrable domain: PasswordRulesCatalog

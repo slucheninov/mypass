@@ -54,9 +54,6 @@ struct NotesDetailView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle("Note")
-        .toolbar {
-            DetailActionsToolbarContent(onEdit: { navigationState.presentEdit(entryID: entry.uuid) })
-        }
         .onChange(of: navigationState.selectedEntryID) { _, newID in
             showLargeType = false
             if let newID {

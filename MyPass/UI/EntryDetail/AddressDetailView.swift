@@ -43,7 +43,6 @@ struct AddressDetailView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle("Address")
-        .toolbar { DetailActionsToolbarContent(onEdit: { navigationState.presentEdit(entryID: entry.uuid) }) }
     }
 
     private func copy(_ value: String) {

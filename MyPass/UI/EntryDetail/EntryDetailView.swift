@@ -233,13 +233,6 @@ struct EntryDetailView: View {
                 .padding(.horizontal, 24)
             }
             .background(UIShellMetrics.detailColumnBackground)
-            .toolbar {
-                ToolbarItemGroup(placement: .primaryAction) {
-                    Button("Edit", systemImage: "square.and.pencil") {
-                        navigationState.presentEdit(entryID: entry.uuid)
-                    }
-                }
-            }
             .onReceive(timer) { now = $0 }
             .sheet(isPresented: $showHistory) {
                 HistoryView(

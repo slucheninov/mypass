@@ -158,9 +158,8 @@ struct CardEditView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Card" : "Edit Card")
-        .toolbar {
-            EditActionsToolbarContent(onCancel: onCancel, onSave: save)
-            FavoriteToggleToolbarItem(isFavorite: $isFavorite)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: save)
         }
     }
 

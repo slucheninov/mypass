@@ -57,9 +57,6 @@ struct CardDetailView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle("Card")
-        .toolbar {
-            DetailActionsToolbarContent(onEdit: { navigationState.presentEdit(entryID: entry.uuid) })
-        }
         .onChange(of: navigationState.selectedEntryID) { _, newID in
             isCardNumberRevealed = false
             isCVVRevealed = false
