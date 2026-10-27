@@ -64,9 +64,6 @@ the name "MyPass" in Google's passkey UI depends on the community registry.
 
 ## Deferred follow-ups
 
-- [ ] Unicode-form Public Suffix List rules (IDN suffixes such as `公司.hk`) are not matched
-      against punycode hosts, because no IDNA conversion is done. Unchanged from earlier
-      behaviour.
 - [ ] Remove the "TEMPORARY diagnostic detail" at `MyPass/UI/Settings/SecuritySettingsPane.swift:251`
       (the raw Swift error shown in the enable-device-unlock alert) once the real-device
       Keychain failure it was added for is root-caused.

@@ -11,6 +11,24 @@ enum ExtensionEntryMatcher {
     /// no registrable domain to reduce to, so — consistent with the
     /// single-label and IP-literal branches below — it is compared whole.
     ///
+    /// Internationalised names compare in ACE (punycode) form. Foundation's
+    /// `URL.host` is ACE ("xn--...") for a URL written with a literal Unicode
+    /// host, but Unicode for a percent-encoded one
+    /// (`https://%E5%85%AC%E5%8F%B8.hk/`), so the resolved host is canonicalised
+    /// once with `PublicSuffixList.canonicalHost(_:)` before anything else.
+    /// `PublicSuffixList` canonicalises its Unicode-form rules (e.g. `公司.hk`)
+    /// the same way, so "公司.hk", its percent-encoded form and "xn--55qx5d.hk"
+    /// are one site — including when the host is itself a public suffix or
+    /// has no PSL entry and is compared whole — and two sites beneath that
+    /// suffix stay distinct. A non-ASCII host that cannot be converted has no
+    /// comparable identity: it yields nil and matches nothing. Only
+    /// registrable-domain mode canonicalises; host, exact and starts-with
+    /// matching still compare `URL.host` as Foundation spells it, and the
+    /// port/origin rules are unchanged. The mapping is Foundation's, verified
+    /// on macOS 27 only; the macOS 14 runtime is untested. If the PSL registry
+    /// is unavailable (see `PublicSuffixList`), the lookup returns nil and the
+    /// canonical host is compared whole, which can only narrow a match.
+    ///
     /// IP literals have no registrable domain and are never reduced to their
     /// last two labels — they are compared whole. This matters for IPv4:
     /// without it, "127.0.0.1", "192.168.0.1", and "10.0.0.1" would all
@@ -26,6 +44,14 @@ enum ExtensionEntryMatcher {
             host = URL(string: "https://" + trimmed)?.host
         }
         guard var resolvedHost = host?.lowercased(), !resolvedHost.isEmpty else { return nil }
+
+        // Canonicalise once, up front, so every return below (bare public
+        // suffix, single label, IP literal, PSL fallback) compares one spelling.
+        // Pure-ASCII hosts are deliberately left to the existing handling.
+        if !resolvedHost.allSatisfy(\.isASCII) {
+            guard let canonical = PublicSuffixList.canonicalHost(resolvedHost) else { return nil }
+            resolvedHost = canonical
+        }
 
         // A trailing DNS-root dot ("example.com.", "127.0.0.1.") names the
         // same host as the form without it. The label-rebuild below already

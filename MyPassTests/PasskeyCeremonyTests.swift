@@ -418,6 +418,37 @@ final class PasskeyCeremonyTests: XCTestCase {
         }
     }
 
+    // The bundled PSL spells the suffix `公司.hk` in Unicode; origins and rpIds
+    // arrive as ACE. Before IDNA canonicalisation the suffix was just "hk", so
+    // an rpId naming the suffix itself looked like a legitimate parent domain.
+
+    func testValidateOriginRejectsRpIdEqualToUnicodeSuffixOfAceOrigin() {
+        let origin = "https://evil.xn--55qx5d.hk"
+        XCTAssertThrowsError(
+            try PasskeyCeremony.validateOrigin(origin, requestDetailsJson: requestJSONWithOrigin(origin), rpId: "xn--55qx5d.hk")
+        ) { error in
+            XCTAssertEqual(error as? PasskeyCeremonyError, .rpIdNotAuthorized)
+        }
+    }
+
+    func testValidateOriginRejectsSiblingRegistrableDomainUnderUnicodeSuffix() {
+        let origin = "https://evil.xn--55qx5d.hk"
+        XCTAssertThrowsError(
+            try PasskeyCeremony.validateOrigin(origin, requestDetailsJson: requestJSONWithOrigin(origin), rpId: "bank.xn--55qx5d.hk")
+        ) { error in
+            XCTAssertEqual(error as? PasskeyCeremonyError, .rpIdNotAuthorized)
+        }
+    }
+
+    func testValidateOriginAcceptsOwnRpIdUnderUnicodeSuffix() {
+        let origin = "https://login.bank.xn--55qx5d.hk"
+        for rpId in ["bank.xn--55qx5d.hk", "login.bank.xn--55qx5d.hk"] {
+            XCTAssertNoThrow(
+                try PasskeyCeremony.validateOrigin(origin, requestDetailsJson: requestJSONWithOrigin(origin), rpId: rpId), rpId
+            )
+        }
+    }
+
     // MARK: CBOR
 
     func testCBOREncodesCanonicalHeadersAcrossLengthBoundaries() {

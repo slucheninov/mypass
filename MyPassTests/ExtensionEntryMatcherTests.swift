@@ -156,6 +156,74 @@ final class ExtensionEntryMatcherTests: XCTestCase {
         XCTAssertTrue(matches.isEmpty, "foo.github.io and bar.github.io must not be treated as the same site")
     }
 
+    // Foundation's `URL.host` is ACE (punycode) for a literal-Unicode or "xn--..."
+    // URL, but stays Unicode for a percent-encoded one. The bundled PSL spells
+    // `公司.hk` in Unicode, so before IDNA canonicalisation any two
+    // "*.xn--55qx5d.hk" sites shared the registrable domain "xn--55qx5d.hk".
+    // "xn--55qx5d" for 公司 is an independently verified reference value.
+
+    func testRegistrableDomainUnderBundledUnicodeSuffixIsUnicodeAndAceEquivalent() {
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://login.example.xn--55qx5d.hk/path"), "example.xn--55qx5d.hk")
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://login.example.公司.hk/path"), "example.xn--55qx5d.hk")
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "example.公司.hk"), "example.xn--55qx5d.hk")
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://EXAMPLE.公司.HK./"), "example.xn--55qx5d.hk")
+    }
+
+    func testMatchingEntriesDoesNotOverMatchAcrossDifferentSitesUnderUnicodeSuffix() {
+        let entry = makeEntry(url: "https://alpha.xn--55qx5d.hk")
+        let group = makeGroup(entries: [entry])
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://beta.xn--55qx5d.hk").isEmpty)
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://beta.公司.hk").isEmpty)
+    }
+
+    func testMatchingEntriesMatchesSameSiteAcrossUnicodeAndAceSpellings() {
+        let unicodeEntry = makeEntry(url: "https://alpha.公司.hk")
+        let aceEntry = makeEntry(url: "https://alpha.xn--55qx5d.hk")
+        let group = makeGroup(entries: [unicodeEntry, aceEntry])
+        let expected = Set([unicodeEntry.uuid, aceEntry.uuid])
+        XCTAssertEqual(Set(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://login.alpha.xn--55qx5d.hk").map(\.uuid)), expected)
+        XCTAssertEqual(Set(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://login.alpha.公司.hk").map(\.uuid)), expected)
+    }
+
+    func testPercentEncodedUnicodeHostEqualsAceAndLiteralUnicodeAtRegistrableDomain() {
+        // %E5%85%AC%E5%8F%B8 is UTF-8 for 公司; URL.host returns it decoded.
+        XCTAssertEqual(
+            ExtensionEntryMatcher.registrableDomain(from: "https://login.example.%E5%85%AC%E5%8F%B8.hk/path"),
+            "example.xn--55qx5d.hk"
+        )
+        XCTAssertEqual(
+            ExtensionEntryMatcher.registrableDomain(from: "https://login.example.%E5%85%AC%E5%8F%B8.hk/path"),
+            ExtensionEntryMatcher.registrableDomain(from: "https://login.example.xn--55qx5d.hk/path")
+        )
+        let aceEntry = makeEntry(url: "https://alpha.xn--55qx5d.hk")
+        let group = makeGroup(entries: [aceEntry])
+        XCTAssertEqual(
+            ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://login.alpha.%E5%85%AC%E5%8F%B8.hk/").map(\.uuid),
+            [aceEntry.uuid]
+        )
+        XCTAssertTrue(ExtensionEntryMatcher.matchingEntries(in: group, forURL: "https://login.beta.%E5%85%AC%E5%8F%B8.hk/").isEmpty)
+    }
+
+    func testBareUnicodePublicSuffixAndNoPslEntryHostsCompareWholeInOneSpelling() {
+        // The host IS the public suffix, so the PSL gives no registrable
+        // domain and the canonical host is compared whole.
+        let expected = "xn--55qx5d.hk"
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://xn--55qx5d.hk"), expected)
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://公司.hk"), expected)
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://%E5%85%AC%E5%8F%B8.hk"), expected)
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://%E5%85%AC%E5%8F%B8.HK./"), expected)
+        // A single non-ASCII label (localhost-style intranet name) also meets
+        // its ACE spelling in the single-label branch.
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://%E4%BE%8B%E3%81%88/"), "xn--r8jz45g")
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://xn--r8jz45g/"), "xn--r8jz45g")
+        XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://LOCALHOST:8765/"), "localhost")
+    }
+
+    func testRegistrableDomainRejectsUnconvertibleNonAsciiHost() {
+        // An encoded "/" cannot be part of a host name; nothing should match.
+        XCTAssertNil(ExtensionEntryMatcher.registrableDomain(from: "https://%E5%85%AC%2F%E5%8F%B8.hk/"))
+    }
+
     func testRegistrableDomainOfBarePublicSuffixHostsComparesWhole() {
         XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://github.io"), "github.io")
         XCTAssertEqual(ExtensionEntryMatcher.registrableDomain(from: "https://co.uk"), "co.uk")
