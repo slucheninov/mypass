@@ -29,6 +29,14 @@ struct MyPassApp: App {
 
     init() {
         let defaults = UserDefaults.standard
+        // Apply the saved theme before any window exists so the first frame is already
+        // in the right appearance (no light flash for a Dark choice). `NSApp.appearance`
+        // is the single mechanism: it covers windows, the MenuBarExtra panel, sheets and
+        // alerts. `App.init` runs on the main thread but is not statically main-actor
+        // isolated here, hence `assumeIsolated`.
+        MainActor.assumeIsolated {
+            AppTheme.apply(AppTheme(storedRaw: defaults.string(forKey: AppTheme.storageKey)))
+        }
         let autoLockIdleTimeout = AutoLockIdleTimeout(rawValue: defaults.string(forKey: "autoLockIdleTimeout") ?? "") ?? .thirtyMinutes
         let lockOnDeviceSleepEnabled = defaults.object(forKey: "lockOnDeviceSleepEnabled") as? Bool ?? true
 
