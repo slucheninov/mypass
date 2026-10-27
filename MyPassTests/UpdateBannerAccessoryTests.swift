@@ -127,8 +127,19 @@ final class UpdateBannerAccessoryIntegrationTests: XCTestCase {
         super.tearDown()
     }
 
-    private func spin(_ seconds: TimeInterval = 0.3) {
+    /// A short fixed spin, used only where the expected outcome is "nothing happens".
+    private func spin(_ seconds: TimeInterval = 0.1) {
         RunLoop.main.run(until: Date().addingTimeInterval(seconds))
+    }
+
+    /// Pumps the main run loop until `condition` holds or `timeout` expires. SwiftUI delivers the
+    /// banner state to the anchor in its own update pass, so a positive assertion waits for the
+    /// state it asserts instead of guessing an interval. On timeout the caller's assertion fails.
+    private func waitUntil(timeout: TimeInterval = 5, _ condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() && Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
     }
 
     func testAccessoryTracksBannerStateAndIsRemovedWithTheView() async {
@@ -148,17 +159,27 @@ final class UpdateBannerAccessoryIntegrationTests: XCTestCase {
         window.orderFront(nil)
         defer { window.close() }
 
+        // Wait for the first layout so the baseline height is real, then give the (negative)
+        // "no banner, no accessory" assertion a short fixed window to be violated in.
+        waitUntil { window.contentLayoutRect.height > 0 }
         spin()
         XCTAssertTrue(window.titlebarAccessoryViewControllers.isEmpty, "no banner, no accessory")
         let bareLayoutHeight = window.contentLayoutRect.height
+        XCTAssertGreaterThan(bareLayoutHeight, 0, "the window must have laid out before the baseline is taken")
 
         await checker.check(manual: true)
-        spin()
+        waitUntil {
+            window.titlebarAccessoryViewControllers.count == 1
+                && window.contentLayoutRect.height < bareLayoutHeight
+        }
         XCTAssertEqual(window.titlebarAccessoryViewControllers.count, 1)
         XCTAssertLessThan(window.contentLayoutRect.height, bareLayoutHeight)
 
         checker.dismissBanner()
-        spin()
+        waitUntil {
+            window.titlebarAccessoryViewControllers.isEmpty
+                && window.contentLayoutRect.height == bareLayoutHeight
+        }
         XCTAssertTrue(window.titlebarAccessoryViewControllers.isEmpty, "Later must remove the accessory, not just empty it")
         XCTAssertEqual(window.contentLayoutRect.height, bareLayoutHeight, "no leftover band after dismissal")
 
@@ -170,11 +191,11 @@ final class UpdateBannerAccessoryIntegrationTests: XCTestCase {
         window.contentViewController = NSHostingController(
             rootView: Color.clear.updateBannerAccessory().environmentObject(newer).environmentObject(session))
         await newer.check(manual: true)
-        spin()
+        waitUntil { window.titlebarAccessoryViewControllers.count == 1 }
         XCTAssertEqual(window.titlebarAccessoryViewControllers.count, 1, "a newer release brings the banner back")
 
         window.contentViewController = NSViewController()
-        spin()
+        waitUntil { window.titlebarAccessoryViewControllers.isEmpty }
         XCTAssertTrue(window.titlebarAccessoryViewControllers.isEmpty, "removing the view must remove its accessory")
     }
 }
