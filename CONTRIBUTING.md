@@ -104,7 +104,8 @@ the build artifacts contain. In the same pull request:
 
 Do not put passwords, vault files, master keys, tokens or key material in an issue,
 a pull request or a log you attach. Do not describe a security vulnerability in
-detail in a public issue or pull request.
+detail in a public issue or pull request. Report vulnerabilities as described in
+[`SECURITY.md`](SECURITY.md).
 
 ## License
 

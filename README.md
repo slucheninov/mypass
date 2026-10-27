@@ -33,7 +33,8 @@ equally unsigned and not notarized: the warning below applies to them in full.
 - The supported way to run MyPass, including Touch ID and the browser bridge, is a
   locally built app signed with a stable signing identity (see below).
 - Keep backups of any vault you open with a development build. No independent
-  security review of MyPass is claimed.
+  security review of MyPass is claimed. To report a vulnerability privately, see
+  [`SECURITY.md`](SECURITY.md).
 - The GitHub Actions workflow in `.github/workflows/ci.yml` runs the full test suite
   and packages the development artifacts on pull requests, on pushes to `master` and
   on manual dispatch. It builds unsigned on arm64, so a green run is evidence about
