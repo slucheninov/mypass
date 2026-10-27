@@ -153,8 +153,10 @@ struct MyPassApp: App {
         // Shared across `UnlockView`, `MenuBarUnlockPanelView`, and the extension's
         // `.requestDeviceUnlockPrompt` notification — deliberately one instance, not
         // per-view @State, so no surface can start a second device-unlock prompt while
-        // another one is already in flight or already auto-fired this locked session.
-        _deviceUnlockPromptCoordinator = StateObject(wrappedValue: DeviceUnlockPromptCoordinator(vaultSession: session))
+        // another one is already in flight, and so an extension unlock request recorded
+        // before `UnlockView` exists is still there when it appears.
+        let unlockPromptCoordinator = DeviceUnlockPromptCoordinator(vaultSession: session)
+        _deviceUnlockPromptCoordinator = StateObject(wrappedValue: unlockPromptCoordinator)
 
         // Design spec's external-change handling (reload-and-merge when
         // another device/process touches the same iCloud Drive file) is wired
@@ -264,16 +266,21 @@ struct MyPassApp: App {
             }
         }
 
-        // Stage 3 (U5): the popup's Unlock button. Activation alone is not enough —
-        // if the window was already open on the unlock screen, `UnlockView.onAppear`
-        // will not re-fire, so the Touch ID prompt has to be requested explicitly.
-        //
-        // When the window was closed instead, `MainWindowActivator.request()` opens it
-        // asynchronously and `UnlockView.onAppear` runs its own auto-prompt; this
-        // notification arrives before any observer exists and is harmlessly dropped, so
-        // exactly one prompt is shown in both paths.
-        extensionBridgeService.onUnlockRequested = {
+        // Stage 3 (U5): the popup's Unlock button. Pressing it is a deliberate, explicit
+        // request for a Touch ID prompt — the only prompt the app ever starts without a
+        // click on its own buttons. The request is recorded on the coordinator first so
+        // both delivery paths converge on `consumeExtensionUnlockRequest()`:
+        //   - window already open on the unlock screen: `UnlockView` is mounted, so its
+        //     `.requestDeviceUnlockPrompt` handler consumes the request and prompts;
+        //   - window closed: `MainWindowActivator.request()` opens it asynchronously, the
+        //     notification below is dropped for lack of an observer, and
+        //     `UnlockView.onAppear` consumes the request instead.
+        // Whichever runs first consumes it, so exactly one prompt is shown.
+        extensionBridgeService.onUnlockRequested = { [unlockPromptCoordinator] in
             DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    unlockPromptCoordinator.noteExtensionUnlockRequest()
+                }
                 MainWindowActivator.request()
                 NotificationCenter.default.post(name: .requestDeviceUnlockPrompt, object: nil)
             }

@@ -5,8 +5,11 @@ extension Notification.Name {
     static let requestMainWindow = Notification.Name("com.mypass.requestMainWindow")
 
     /// Posted when something outside the unlock screen wants the Touch ID prompt shown
-    /// again — currently only the browser extension's `requestUnlock`. `UnlockView`'s
-    /// own `.onAppear` auto-prompt does not re-fire when an open window is refocused.
+    /// — currently only the browser extension's `requestUnlock`. `UnlockView` never
+    /// prompts on its own when it appears or an open window is refocused; this
+    /// notification (paired with `DeviceUnlockPromptCoordinator`'s recorded extension
+    /// request, which `UnlockView.onAppear` consumes when the window was closed) is the
+    /// only non-button path to a prompt.
     static let requestDeviceUnlockPrompt = Notification.Name("com.mypass.requestDeviceUnlockPrompt")
 }
 

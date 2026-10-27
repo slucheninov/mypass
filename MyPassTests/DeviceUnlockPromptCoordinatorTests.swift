@@ -3,65 +3,60 @@ import XCTest
 
 @MainActor
 final class DeviceUnlockPromptCoordinatorTests: XCTestCase {
-    func testAutoPromptIsAllowedTheFirstTime() {
-        let coordinator = DeviceUnlockPromptCoordinator()
-        XCTAssertTrue(coordinator.requestAutoPrompt())
+    private var tempDir: URL!
+
+    override func setUpWithError() throws {
+        tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("MyPassDeviceUnlockPromptCoordinatorTests-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
     }
 
-    func testAutoPromptFiresAtMostOncePerLockedSession() {
-        let coordinator = DeviceUnlockPromptCoordinator()
-        XCTAssertTrue(coordinator.requestAutoPrompt())
-        coordinator.promptFinished()
-
-        // A second onAppear (or the menu bar reopening) must not fire a second
-        // automatic prompt for the same locked session.
-        XCTAssertFalse(coordinator.requestAutoPrompt())
+    override func tearDownWithError() throws {
+        try? FileManager.default.removeItem(at: tempDir)
     }
 
-    func testInFlightPromptSuppressesAnyOtherAutoPrompt() {
+    func testExplicitPromptIsAllowedTheFirstTime() {
         let coordinator = DeviceUnlockPromptCoordinator()
-        XCTAssertTrue(coordinator.requestAutoPrompt())
-
-        // Still in flight (promptFinished() never called) — another surface's
-        // auto-prompt must not start a second system sheet.
-        XCTAssertFalse(coordinator.requestAutoPrompt())
+        XCTAssertTrue(coordinator.requestExplicitPrompt())
     }
 
-    func testInFlightPromptSuppressesAnExplicitClick() {
-        let coordinator = DeviceUnlockPromptCoordinator()
-        XCTAssertTrue(coordinator.requestAutoPrompt())
+    func testExplicitPromptIsAllowedAfterEveryLock() throws {
+        let session = VaultSession(fileStore: VaultFileStore(directory: tempDir))
+        let coordinator = DeviceUnlockPromptCoordinator(vaultSession: session)
 
+        for _ in 0..<3 {
+            try session.unlock(password: "correct-horse")
+            session.lock()
+            // Locking neither grants nor forbids anything beyond the explicit gate.
+            XCTAssertTrue(coordinator.requestExplicitPrompt())
+            coordinator.promptFinished()
+        }
+    }
+
+    func testInFlightPromptSuppressesASecondExplicitRequest() {
+        let coordinator = DeviceUnlockPromptCoordinator()
+        XCTAssertTrue(coordinator.requestExplicitPrompt())
+
+        // Still in flight (promptFinished() never called) — another surface must not
+        // start a second system sheet.
         XCTAssertFalse(coordinator.requestExplicitPrompt())
     }
 
-    func testExplicitClickIsAllowedAfterTheInFlightPromptFinishes() {
+    func testExplicitRequestIsAllowedAgainAfterPromptFinished() {
         let coordinator = DeviceUnlockPromptCoordinator()
-        XCTAssertTrue(coordinator.requestAutoPrompt())
+        XCTAssertTrue(coordinator.requestExplicitPrompt())
         coordinator.promptFinished()
 
-        // Explicit clicks are a deliberate retry and must always be allowed once
-        // nothing is in flight, even though the automatic prompt already fired.
         XCTAssertTrue(coordinator.requestExplicitPrompt())
     }
 
-    func testExplicitClicksCanRepeatAsLongAsEachOneFinishes() {
+    func testLockClearsAnInFlightPrompt() {
         let coordinator = DeviceUnlockPromptCoordinator()
         XCTAssertTrue(coordinator.requestExplicitPrompt())
-        coordinator.promptFinished()
-        XCTAssertTrue(coordinator.requestExplicitPrompt())
-        coordinator.promptFinished()
-        XCTAssertTrue(coordinator.requestExplicitPrompt())
-    }
-
-    func testReLockingAllowsANewAutoPrompt() {
-        let coordinator = DeviceUnlockPromptCoordinator()
-        XCTAssertTrue(coordinator.requestAutoPrompt())
-        coordinator.promptFinished()
-        XCTAssertFalse(coordinator.requestAutoPrompt(), "sanity check: still the same locked session")
 
         coordinator.vaultDidLock()
 
-        XCTAssertTrue(coordinator.requestAutoPrompt(), "a fresh locked session must get its own auto-prompt allowance")
+        XCTAssertTrue(coordinator.requestExplicitPrompt())
     }
 
     // MARK: - Stale in-flight self-healing
@@ -73,7 +68,7 @@ final class DeviceUnlockPromptCoordinatorTests: XCTestCase {
         var clock = Date()
         let coordinator = DeviceUnlockPromptCoordinator(now: { clock })
 
-        XCTAssertTrue(coordinator.requestAutoPrompt())
+        XCTAssertTrue(coordinator.requestExplicitPrompt())
         // `promptFinished()` is deliberately never called here.
         clock = clock.addingTimeInterval(DeviceUnlockPromptCoordinator.staleInFlightThreshold + 1)
 
@@ -87,9 +82,45 @@ final class DeviceUnlockPromptCoordinatorTests: XCTestCase {
         var clock = Date()
         let coordinator = DeviceUnlockPromptCoordinator(now: { clock })
 
-        XCTAssertTrue(coordinator.requestAutoPrompt())
+        XCTAssertTrue(coordinator.requestExplicitPrompt())
         clock = clock.addingTimeInterval(DeviceUnlockPromptCoordinator.staleInFlightThreshold - 1)
 
         XCTAssertFalse(coordinator.requestExplicitPrompt(), "not stale yet — must still be treated as in flight")
+    }
+
+    // MARK: - Extension unlock request memory
+
+    func testNoExtensionRequestMeansNothingToConsume() {
+        let coordinator = DeviceUnlockPromptCoordinator()
+        // What a plain view appearance sees: no request, so no prompt.
+        XCTAssertFalse(coordinator.consumeExtensionUnlockRequest())
+    }
+
+    func testExtensionRequestIsConsumedExactlyOnce() {
+        let coordinator = DeviceUnlockPromptCoordinator()
+        coordinator.noteExtensionUnlockRequest()
+
+        XCTAssertTrue(coordinator.consumeExtensionUnlockRequest())
+        XCTAssertFalse(coordinator.consumeExtensionUnlockRequest())
+    }
+
+    func testStaleExtensionRequestIsIgnored() {
+        var clock = Date()
+        let coordinator = DeviceUnlockPromptCoordinator(now: { clock })
+        coordinator.noteExtensionUnlockRequest()
+
+        clock = clock.addingTimeInterval(DeviceUnlockPromptCoordinator.extensionRequestFreshness + 1)
+
+        XCTAssertFalse(coordinator.consumeExtensionUnlockRequest())
+    }
+
+    func testLockDoesNotCreateAnExtensionRequest() throws {
+        let session = VaultSession(fileStore: VaultFileStore(directory: tempDir))
+        let coordinator = DeviceUnlockPromptCoordinator(vaultSession: session)
+
+        try session.unlock(password: "correct-horse")
+        session.lock()
+
+        XCTAssertFalse(coordinator.consumeExtensionUnlockRequest())
     }
 }
