@@ -46,6 +46,11 @@ make something pass.
 - A GitHub Actions workflow (`.github/workflows/ci.yml`) runs on pull requests, on
   pushes to `master` and on manual dispatch. It is unsigned and reports after the
   fact, so it is not a substitute for running the suite yourself.
+- `.github/workflows/codeql.yml` runs CodeQL on the same triggers plus a weekly
+  schedule. `.coderabbit.yaml` configures CodeRabbit pull request reviews, which run
+  only while the CodeRabbit GitHub App is installed; if no review starts, comment
+  `@coderabbitai review`. Neither result blocks a merge by itself: that is set in the
+  repository's GitHub branch protection, not in these files.
 - New behaviour comes with tests next to the code it covers. The suite has no
   linter or formatter, so match the style of the surrounding code by hand.
 

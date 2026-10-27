@@ -1,0 +1,132 @@
+name: CodeQL
+
+# GitHub code scanning, advanced setup (code scanning default setup stays "not-configured" so
+# the two never run side by side). The languages and what each one analyzes:
+#   actions                 .github/workflows/*.yml
+#   javascript-typescript   ChromeExtension/ (vendor/ is excluded in .github/codeql/codeql-config.yml)
+#   swift                   MyPass, ChromeHost and the library targets of the three local Swift
+#                           packages, extracted from the same unsigned build a developer runs:
+#                           scripts/dev.sh build --unsigned. Only what that build compiles is
+#                           analyzed, so the test targets (MyPassTests, Packages/*/Tests) are not.
+# The vendored C code (CArgon2) is not analyzed on purpose.
+#
+# Like ci.yml this uses the plain pull_request event (no pull_request_target) and no secrets, so a
+# pull request from a fork runs with a read-only token and cannot reach anything privileged.
+# GitHub documents that code scanning still accepts the SARIF upload when the run is triggered by
+# the pull_request event, so a fork pull request (or Dependabot) gets its results with that token.
+# A push to master by Dependabot (a squash-merge commit it authored) has no such exception and its
+# upload can fail with "Resource not accessible by integration".
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  # Weekly, so alerts also appear when GitHub ships new queries without any code change.
+  # A schedule only fires from the default branch.
+  schedule:
+    - cron: "23 4 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# One run per ref. A newer push cancels an in-progress pull request run; runs on master, the
+# schedule and manual runs are never cancelled.
+concurrency:
+  group: codeql-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  analyze:
+    # The job name is what a branch protection rule or ruleset matches as a required status
+    # check, exactly like "ci" in ci.yml: "Analyze (actions)", "Analyze (javascript-typescript)"
+    # and "Analyze (swift)". Do not rename it without updating those rules.
+    name: Analyze (${{ matrix.language }})
+    runs-on: ${{ matrix.runs-on }}
+    timeout-minutes: 90
+    permissions:
+      # Read the repository.
+      contents: read
+      # Upload the SARIF results to code scanning. This is the only write permission.
+      security-events: write
+      # `actions: read` (workflow run details) is only needed for private repositories; this
+      # repository is public. Add it here if the repository ever becomes private.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: actions
+            build-mode: none
+            runs-on: ubuntu-24.04
+          - language: javascript-typescript
+            build-mode: none
+            runs-on: ubuntu-24.04
+          # macos-26 and the pinned Xcode match ci.yml (arm64, Xcode 26.6). The CodeQL bundle
+          # pinned below (2.27.3) supports Swift 5.4 to 6.3 and Xcode 26.6 ships Swift 6.3 (Apple's
+          # release notes), but the first run is the real check. CodeQL does not support building
+          # with Xcode 27 selected on macOS 26 (a local Xcode 27 is Swift 6.4), hence the pin.
+          # Apple Silicon support is a beta that needs Rosetta 2 while it traces the build.
+          - language: swift
+            build-mode: manual
+            runs-on: macos-26
+            developer-dir: /Applications/Xcode_26.6.app
+    env:
+      # Empty for the non-Swift legs. Pinned for Swift so a runner image bump cannot change the
+      # toolchain the extractor traces silently.
+      DEVELOPER_DIR: ${{ matrix.developer-dir }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the pinned Xcode
+        if: matrix.language == 'swift'
+        run: |
+          if [[ ! -d "$DEVELOPER_DIR" ]]; then
+            echo "::error::$DEVELOPER_DIR is not on this runner image. Installed Xcode versions:"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          xcodebuild -version
+          xcrun swift --version
+
+      # CodeQL's build tracing runs x86-64 code, which an arm64 runner executes through
+      # Rosetta 2. The runner image inventory does not list Rosetta, so verify it and install it
+      # when it is missing instead of failing later inside the traced build.
+      - name: Check Rosetta 2
+        if: matrix.language == 'swift'
+        run: |
+          rosetta=/Library/Apple/usr/share/rosetta/rosetta
+          if [[ ! -f "$rosetta" ]]; then
+            sudo softwareupdate --install-rosetta --agree-to-license
+          fi
+          [[ -f "$rosetta" ]] || { echo "::error::Rosetta 2 is not installed."; exit 1; }
+          echo "Rosetta 2 is available."
+
+      - name: Install xcodegen
+        if: matrix.language == 'swift'
+        run: brew install xcodegen
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          languages: ${{ matrix.language }}
+          build-mode: ${{ matrix.build-mode }}
+          config-file: ./.github/codeql/codeql-config.yml
+
+      # CodeQL traces this build to extract Swift. It is the same unsigned Debug build as
+      # `scripts/dev.sh build --unsigned` and `scripts/test.sh --ci` (xcodegen generate, then
+      # MyPass and ChromeHost with CODE_SIGNING_ALLOWED=NO and no entitlements). No signing
+      # identity and no provisioning profile are involved. The runner is fresh, so every file is
+      # compiled and nothing is skipped as up to date.
+      - name: Build for Swift extraction
+        if: matrix.build-mode == 'manual'
+        run: ./scripts/dev.sh build --unsigned
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
+        with:
+          category: /language:${{ matrix.language }}
