@@ -130,8 +130,10 @@ public extension KdbxEntry {
     static let additionalURLsStringArrayKey = "KP2A_URL"
 
     /// Primary URL (if non-empty) followed by `KP2A_URL` StringArray extras, deduplicated,
-    /// order preserved. Setting the first element becomes the primary `URL` field; the
-    /// remainder is stored as the `KP2A_URL` StringArray. An empty array clears both.
+    /// order preserved. Empty extras are skipped just like an empty primary, so the first
+    /// element (and `primaryWebsiteURL`) is never "". Setting the first element becomes the
+    /// primary `URL` field; the remainder is stored as the `KP2A_URL` StringArray. An empty
+    /// array clears both.
     var urls: [String] {
         get {
             var result: [String] = []
@@ -139,7 +141,7 @@ public extension KdbxEntry {
                 result.append(url)
             }
             if let array = stringArrays.first(where: { $0.key == Self.additionalURLsStringArrayKey }) {
-                for value in array.values where !result.contains(value) {
+                for value in array.values where !value.isEmpty && !result.contains(value) {
                     result.append(value)
                 }
             }
