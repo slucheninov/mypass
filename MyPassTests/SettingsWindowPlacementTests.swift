@@ -69,4 +69,29 @@ final class SettingsWindowPlacementTests: XCTestCase {
             pointer: CGPoint(x: -5000, y: -5000), screens: [screenA, screenB]))
         XCTAssertEqual(mid(frame), mid(screenA.visibleFrame))
     }
+
+    func testEqualOverlapPicksTheFirstScreen() throws {
+        // Two side-by-side screens of equal size; the anchor straddles the seam evenly.
+        let left = SettingsWindowPlacement.Screen(
+            frame: CGRect(x: 0, y: 0, width: 1000, height: 800),
+            visibleFrame: CGRect(x: 0, y: 0, width: 1000, height: 800))
+        let right = SettingsWindowPlacement.Screen(
+            frame: CGRect(x: 1000, y: 0, width: 1000, height: 800),
+            visibleFrame: CGRect(x: 1000, y: 0, width: 1000, height: 800))
+        let anchor = CGRect(x: 900, y: 100, width: 200, height: 200)
+        for screens in [[left, right], [right, left]] {
+            let frame = try XCTUnwrap(SettingsWindowPlacement.targetFrame(
+                windowSize: settingsSize, anchor: anchor,
+                pointer: CGPoint(x: 100, y: 100), screens: screens))
+            XCTAssertTrue(screens[0].visibleFrame.contains(frame))
+        }
+    }
+
+    func testAnchorTouchingNoScreenFallsBackToPointerScreen() throws {
+        let anchor = CGRect(x: -5000, y: -5000, width: 400, height: 300)
+        let frame = try XCTUnwrap(SettingsWindowPlacement.targetFrame(
+            windowSize: settingsSize, anchor: anchor,
+            pointer: CGPoint(x: 2000, y: 500), screens: [screenA, screenB]))
+        XCTAssertTrue(screenB.visibleFrame.contains(frame))
+    }
 }

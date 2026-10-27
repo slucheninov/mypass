@@ -108,9 +108,12 @@ enum MainWindowActivator {
     /// The main window the user can actually see right now: visible, not minimized and on the
     /// Space being displayed. `SettingsWindowPlacer` centres Settings over it; `nil` makes the
     /// placer fall back to the display under the pointer.
-    static func visibleMainWindowOnActiveSpace() -> NSWindow? {
+    ///
+    /// `excluded` keeps the Settings window itself out of the lookup: it is titled and can
+    /// become main, so it passes `isMainAppWindow` and would otherwise anchor to its own frame.
+    static func visibleMainWindowOnActiveSpace(excluding excluded: NSWindow? = nil) -> NSWindow? {
         NSApp.windows.first {
-            isMainAppWindow($0) && $0.isVisible && !$0.isMiniaturized && $0.isOnActiveSpace
+            $0 !== excluded && isMainAppWindow($0) && $0.isVisible && !$0.isMiniaturized && $0.isOnActiveSpace
         }
     }
 

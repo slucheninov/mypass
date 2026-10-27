@@ -14,17 +14,35 @@ import SwiftUI
 @MainActor
 enum SettingsWindowPlacer {
     private static weak var settingsWindow: NSWindow?
-    /// Target computed before the window existed; applied from `attach` while the window is
-    /// still off screen, so the first open does not flash at SwiftUI's default position.
-    private static var pendingFrame: CGRect?
+
+    /// The inputs of a placement, captured at the moment Settings was requested. They are kept
+    /// instead of a ready-made frame because the frame depends on the window's size, which is
+    /// only known once the window exists: 660x420 is merely the minimum, and SwiftUI may size
+    /// the window larger or restore a saved size. The size is never changed, only the origin.
+    private struct Request {
+        let anchor: CGRect?
+        let pointer: CGPoint
+        let screens: [SettingsWindowPlacement.Screen]
+
+        func frame(for size: CGSize) -> CGRect? {
+            SettingsWindowPlacement.targetFrame(
+                windowSize: size, anchor: anchor, pointer: pointer, screens: screens)
+        }
+    }
+
+    /// Request made before the window existed; applied from `attach` while the window is still
+    /// off screen. Cleared by the safety net in `openSettings` so it cannot go stale when
+    /// `open()` never creates the window.
+    private static var pendingRequest: Request?
 
     /// Computes the placement, pre-positions the window when it already exists, runs `open`
     /// (the SwiftUI `openSettings` action) and re-applies once on the next run-loop turn.
     static func openSettings(_ open: () -> Void) {
-        let size = settingsWindow?.frame.size ?? CGSize(width: 660, height: 420)
-        let target = SettingsWindowPlacement.targetFrame(
-            windowSize: size,
-            anchor: MainWindowActivator.visibleMainWindowOnActiveSpace()?.frame,
+        let request = Request(
+            // The Settings window itself is excluded: it is titled and can become main, so
+            // with the main window closed or minimized it would otherwise anchor to itself
+            // and never move to the display under the pointer.
+            anchor: MainWindowActivator.visibleMainWindowOnActiveSpace(excluding: settingsWindow)?.frame,
             pointer: NSEvent.mouseLocation,
             screens: NSScreen.screens.map {
                 SettingsWindowPlacement.Screen(frame: $0.frame, visibleFrame: $0.visibleFrame)
@@ -33,18 +51,18 @@ enum SettingsWindowPlacer {
 
         if let window = settingsWindow {
             allowOnCurrentSpace(window)
-            if let target { window.setFrame(target, display: false) }
+            place(window, using: request)
         } else {
-            pendingFrame = target
+            pendingRequest = request
         }
 
         open()
 
-        // Safety net: if SwiftUI restored a saved frame or re-laid the window out while
-        // handling `open()`, put it back. Setting the same frame twice is harmless.
+        // Safety net: if SwiftUI restored a saved position or re-laid the window out while
+        // handling `open()`, put it back. Re-placing with the same inputs is idempotent.
         DispatchQueue.main.async {
-            guard let window = settingsWindow, let target else { return }
-            if window.frame != target { window.setFrame(target, display: false) }
+            pendingRequest = nil
+            if let window = settingsWindow { place(window, using: request) }
         }
     }
 
@@ -52,10 +70,17 @@ enum SettingsWindowPlacer {
     static func attach(_ window: NSWindow) {
         settingsWindow = window
         allowOnCurrentSpace(window)
-        if let frame = pendingFrame {
-            pendingFrame = nil
-            window.setFrame(frame, display: false)
+        if let request = pendingRequest {
+            pendingRequest = nil
+            place(window, using: request)
         }
+    }
+
+    /// Moves the window to the target origin computed for its *current* size; never resizes.
+    private static func place(_ window: NSWindow, using request: Request) {
+        guard let target = request.frame(for: window.frame.size),
+              target.origin != window.frame.origin else { return }
+        window.setFrameOrigin(target.origin)
     }
 
     /// `.moveToActiveSpace` makes the window follow the user to the current Space instead of
@@ -77,7 +102,10 @@ struct SettingsWindowAccessor: NSViewRepresentable {
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             guard let window else { return }
-            Task { @MainActor in SettingsWindowPlacer.attach(window) }
+            // Synchronous on purpose: deferring would let the window be ordered front at
+            // SwiftUI's default position first, which is exactly the flash `attach` avoids.
+            // AppKit calls this on the main thread.
+            MainActor.assumeIsolated { SettingsWindowPlacer.attach(window) }
         }
     }
 }
