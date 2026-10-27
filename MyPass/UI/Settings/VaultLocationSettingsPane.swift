@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// The "Location" section of the Vault pane. It is not a pane of its own any more: it is a
+/// section hosted by `VaultSettingsPane`, which supplies the single grouped `Form` (and its
+/// scrolling) around it.
+///
 /// Reachable before authentication as well as after — unlike the old Sync
 /// pane's iCloud button, "Change Location…" is never disabled on lock state;
 /// `VaultLocationChangeSheet` handles proving ownership itself.
@@ -13,7 +17,7 @@ struct VaultLocationSettingsPane: View {
     }
 
     var body: some View {
-        Form {
+        Group {
             Section {
                 LabeledContent("Current Location", value: currentLocation.rawValue)
                 Text(vaultSession.primaryVaultPathDisplay)
@@ -43,12 +47,10 @@ struct VaultLocationSettingsPane: View {
                 }
                 SettingsHelperText(text: "Local keeps the vault only on this Mac. iCloud Drive keeps it in a folder that syncs between your Macs (and, in the future, other devices signed into the same iCloud account).")
             } header: {
-                Text("Vault Location")
+                Text("Location")
                     .font(.system(size: 13, weight: .semibold))
             }
         }
-        .formStyle(.grouped)
-        .padding()
         .sheet(item: $pendingTargetLocation) { target in
             VaultLocationChangeSheet(targetLocation: target)
         }

@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import SyncKit
 
+/// The "Sync" section of the Vault pane. It is a section hosted by `VaultSettingsPane`, which
+/// supplies the single grouped `Form` (and its scrolling) around it, not a pane of its own.
 struct SyncSettingsPane: View {
     @AppStorage("secondaryDestination") private var secondaryDestinationRawValue: String = SecondaryDestinationOption.none.rawValue
     @AppStorage("secondaryFolderBookmark") private var secondaryFolderBookmarkData: Data?
@@ -36,7 +38,7 @@ struct SyncSettingsPane: View {
     }
 
     var body: some View {
-        Form {
+        Group {
             Section {
                 Picker("Also Sync To", selection: $secondaryDestinationRawValue) {
                     ForEach(SecondaryDestinationOption.allCases) { option in
@@ -62,14 +64,12 @@ struct SyncSettingsPane: View {
                             .foregroundStyle(.secondary)
                     }
                 }
-                SettingsHelperText(text: "Keep an additional copy of the vault in a folder or on an SFTP server, on top of its main location (set under Vault Location). Restart MyPass after changing this.")
+                SettingsHelperText(text: "Keep an additional copy of the vault in a folder or on an SFTP server, on top of its main location (set in the Location section above). Restart MyPass after changing this.")
             } header: {
                 Text("Sync")
                     .font(.system(size: 13, weight: .semibold))
             }
         }
-        .formStyle(.grouped)
-        .padding()
         .onAppear { loadSFTPCredentialsIfAvailable() }
     }
 

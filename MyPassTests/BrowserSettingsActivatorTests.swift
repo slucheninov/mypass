@@ -32,4 +32,12 @@ final class BrowserSettingsActivatorTests: XCTestCase {
     func testDefaultRequestedPaneIsBrowser() {
         XCTAssertEqual(BrowserSettingsActivator.defaultPane, .browser)
     }
+
+    func testCheckForUpdatesOpensAbout() {
+        XCTAssertEqual(BrowserSettingsActivator.checkForUpdatesPane, .about)
+    }
+
+    func testExtensionPairingStillOpensBrowser() {
+        XCTAssertEqual(BrowserSettingsActivator.defaultPane, .browser)
+    }
 }

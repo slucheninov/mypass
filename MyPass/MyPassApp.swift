@@ -399,7 +399,7 @@ struct MyPassApp: App {
             // has registered the action yet.
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
-                    BrowserSettingsActivator.request(pane: .general)
+                    BrowserSettingsActivator.request(pane: BrowserSettingsActivator.checkForUpdatesPane)
                     Task { await updateChecker.check(manual: true) }
                 }
             }

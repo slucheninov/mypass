@@ -12,6 +12,9 @@ enum BrowserSettingsActivator {
     /// The pane the extension pairing flow wants.
     static let defaultPane: SettingsPane = .browser
 
+    /// The pane the app menu's "Check for Updates..." wants: About hosts the update status.
+    static let checkForUpdatesPane: SettingsPane = .about
+
     private static var openSettingsAction: OpenSettingsAction?
     private static var pendingRequest = false
     private static var pendingPane: SettingsPane?
@@ -45,7 +48,7 @@ enum BrowserSettingsActivator {
     /// Stores the pane the Settings window should show; `nil` leaves the stored selection alone.
     static func recordRequestedPane(_ pane: SettingsPane?, in defaults: UserDefaults) {
         guard let pane else { return }
-        defaults.set(pane.rawValue, forKey: "settingsSelectedPane")
+        defaults.set(pane.rawValue, forKey: SettingsPane.storageKey)
     }
 }
 
