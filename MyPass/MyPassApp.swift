@@ -379,6 +379,13 @@ struct MyPassApp: App {
                 Button("Quit MyPass") { AppDelegate.requestTermination() }
                     .keyboardShortcut("q")
             }
+            // Replaces SwiftUI's built-in Settings item (and Cmd-comma): that item calls
+            // `openSettings` directly and would bypass `SettingsWindowPlacer`, so Settings would
+            // open wherever it was last shown instead of over the main window.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { BrowserSettingsActivator.request(pane: nil) }
+                    .keyboardShortcut(",")
+            }
             // The activator is used instead of `SettingsLink` because Commands cannot capture
             // `openSettings`, and the activator also opens the main window first when no scene
             // has registered the action yet.

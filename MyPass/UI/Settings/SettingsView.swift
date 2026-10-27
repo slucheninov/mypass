@@ -27,6 +27,10 @@ struct SettingsView: View {
                 .navigationTitle(selectedPane.detailTitle)
         }
         .frame(minWidth: 660, minHeight: 420)
+        // Keep this when SettingsView is restructured: it is how SettingsWindowPlacer finds the
+        // Settings NSWindow (not by title, which gets localized, nor SwiftUI's private id), so
+        // that window can be centred over the main window and kept on the current Space.
+        .background(SettingsWindowAccessor())
     }
 
     @ViewBuilder

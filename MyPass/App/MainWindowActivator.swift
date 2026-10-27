@@ -105,6 +105,15 @@ enum MainWindowActivator {
         return false
     }
 
+    /// The main window the user can actually see right now: visible, not minimized and on the
+    /// Space being displayed. `SettingsWindowPlacer` centres Settings over it; `nil` makes the
+    /// placer fall back to the display under the pointer.
+    static func visibleMainWindowOnActiveSpace() -> NSWindow? {
+        NSApp.windows.first {
+            isMainAppWindow($0) && $0.isVisible && !$0.isMiniaturized && $0.isOnActiveSpace
+        }
+    }
+
     private static func isMainAppWindow(_ window: NSWindow) -> Bool {
         // Deliberately does NOT test the window level. It used to require `.normal`, which
         // made the whole helper blind to its own main window the moment it was floated:

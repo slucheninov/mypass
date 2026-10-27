@@ -5,7 +5,6 @@ import MyPassKit
 struct MenuBarUnlockedPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
 
     @State private var detailEntryID: UUID?
 
@@ -72,8 +71,7 @@ struct MenuBarUnlockedPanelView: View {
 
             menuRow("Settings…") {
                 MenuBarPanelDismisser.dismiss()
-                NSApp.activate(ignoringOtherApps: true)
-                openSettings()
+                BrowserSettingsActivator.request(pane: nil)
             }
 
             menuRow("Quit MyPass") {
