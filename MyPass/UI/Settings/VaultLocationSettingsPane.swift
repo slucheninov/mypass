@@ -45,14 +45,19 @@ struct VaultLocationSettingsPane: View {
                 Button(currentLocation == .local ? "Move to iCloud Drive…" : "Move to Local…") {
                     pendingTargetLocation = currentLocation == .local ? .iCloudDrive : .local
                 }
+                // Attached to this one Button, not to the root `Group`: inside the Vault pane's
+                // List-backed grouped Form, a modifier on a `Group` is distributed to every child
+                // and Section content flattens into rows, so the sheet could be attached many
+                // times to the same `pendingTargetLocation` binding. The Button is a single,
+                // unconditional row (only its title changes), so the sheet has exactly one host.
+                .sheet(item: $pendingTargetLocation) { target in
+                    VaultLocationChangeSheet(targetLocation: target)
+                }
                 SettingsHelperText(text: "Local keeps the vault only on this Mac. iCloud Drive keeps it in a folder that syncs between your Macs (and, in the future, other devices signed into the same iCloud account).")
             } header: {
                 Text("Location")
                     .font(.system(size: 13, weight: .semibold))
             }
-        }
-        .sheet(item: $pendingTargetLocation) { target in
-            VaultLocationChangeSheet(targetLocation: target)
         }
     }
 }

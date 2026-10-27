@@ -12,6 +12,7 @@ struct BackupsSettingsPane: View {
                 SettingsHelperText(text: "Rotate local backup copies of the vault file so you can recover from a corrupted save.")
             } header: {
                 Text("Backups")
+                    .font(.system(size: 13, weight: .semibold))
             }
         }
     }

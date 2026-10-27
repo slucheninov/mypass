@@ -45,6 +45,14 @@ struct SyncSettingsPane: View {
                         Text(option.rawValue).tag(option.rawValue)
                     }
                 }
+                // Attached to this one Picker, not to the root `Group`: inside the Vault pane's
+                // List-backed grouped Form, a modifier on a `Group` is distributed to every
+                // child and Section content flattens into rows, so it could run once per row,
+                // and again as the SFTP rows appear after switching "Also Sync To". Each run
+                // overwrites the unsaved `sftpUsername` / `sftpPrivateKeyPEM` / `sftpPassphrase`
+                // from the Keychain. The Picker sits outside the `switch`, so it is one
+                // stable row that appears once with the pane.
+                .onAppear { loadSFTPCredentialsIfAvailable() }
                 switch selectedOption {
                 case .none:
                     EmptyView()
@@ -70,7 +78,6 @@ struct SyncSettingsPane: View {
                     .font(.system(size: 13, weight: .semibold))
             }
         }
-        .onAppear { loadSFTPCredentialsIfAvailable() }
     }
 
     private var folderSection: some View {
