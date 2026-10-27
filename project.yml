@@ -1,6 +1,7 @@
 name: MyPass
 options:
   bundleIdPrefix: com.mypass
+  developmentLanguage: en
 # A stable signing identity is required, not a convenience. Ad-hoc signing gives every
 # rebuild a fresh cdhash, and the login-keychain ACL guarding the biometric unlock key
 # is bound to exactly that hash — so each build made macOS prompt for the keychain
@@ -34,6 +35,11 @@ targets:
         MARKETING_VERSION: "0.4.2"
         CURRENT_PROJECT_VERSION: "2"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        # Localization is driven by the string catalogs under MyPass/Resources
+        # (Localizable.xcstrings, InfoPlist.xcstrings): emit per-language .lproj
+        # resources from them and prefer catalogs over legacy .strings files.
+        SWIFT_EMIT_LOC_STRINGS: YES
+        LOCALIZATION_PREFERS_STRING_CATALOGS: YES
     info:
       path: MyPass/Info.plist
       properties:
@@ -41,6 +47,10 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         NSFaceIDUsageDescription: "MyPass uses Touch ID to quickly unlock your password vault."
         LSApplicationCategoryType: public.app-category.utilities
+        # Declares the languages the app ships so the system picks uk/ru for matching users.
+        # NSFaceIDUsageDescription above stays the English source string;
+        # InfoPlist.xcstrings localizes it.
+        CFBundleLocalizations: [en, uk, ru]
   ChromeHost:
     type: tool
     platform: macOS
