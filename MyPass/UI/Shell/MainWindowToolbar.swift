@@ -12,7 +12,7 @@ import MyPassKit
 /// (Edit, the favourite star, Cancel/Save, the ⋮ menu) live in in-column rows instead — see
 /// `EntryActionRow` — so nothing else may contribute window-toolbar items.
 ///
-/// The search field is an explicit `TextField` and not `.searchable`: AppKit always places the
+/// The search field is an explicit `NSSearchField` and not `.searchable`: AppKit always places the
 /// native search item LAST in the toolbar, so the Import menu could never sit to its right. A
 /// single explicit group fixes the order. It still binds `navigationState.searchText`, so the
 /// filtering path (`EntryListQuery`) is unchanged.
@@ -21,6 +21,7 @@ struct MainWindowToolbarModifier: ViewModifier {
     @EnvironmentObject var navigationState: NavigationState
     @EnvironmentObject var vaultSession: VaultSession
     @State private var openExistingVaultURL: URL?
+    @State private var searchFocusRequest = 0
 
     private var currentGroup: KdbxGroup {
         find(uuid: navigationState.selectedGroupID, in: rootGroup) ?? rootGroup
@@ -28,6 +29,17 @@ struct MainWindowToolbarModifier: ViewModifier {
 
     func body(content: Content) -> some View {
         content
+            .background {
+                // The command-F shortcut lives in the window content, not in the toolbar item,
+                // so it stays active whenever the window is key — including when a narrow
+                // window folds the toolbar items into the overflow chevron. `.searchable` used
+                // to provide it for free; a representable field does not.
+                Button("Find") { searchFocusRequest += 1 }
+                    .keyboardShortcut("f", modifiers: .command)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
             .toolbar {
                 ToolbarItemGroup(placement: .primaryAction) {
                     Menu("Add", systemImage: "plus") {
@@ -36,7 +48,7 @@ struct MainWindowToolbarModifier: ViewModifier {
                         Button("Card") { presentCreate(entryType: .card) }
                         Button("Notes") { presentCreate(entryType: .notes) }
                     }
-                    ToolbarSearchField()
+                    ToolbarSearchField(focusRequest: searchFocusRequest)
                     Menu("Import", systemImage: "square.and.arrow.down") {
                         Button("Import CSV…") { importCSV() }
                         Button("Open Existing .kdbx…") { openExistingVault() }
@@ -128,45 +140,74 @@ struct MainWindowToolbarModifier: ViewModifier {
     }
 }
 
-/// Plain text field standing in for `.searchable` (see `MainWindowToolbarModifier` for why).
-/// Fixed width so the toolbar's x positions never depend on the typed text.
-struct ToolbarSearchField: View {
+/// `NSSearchField` standing in for `.searchable` (see `MainWindowToolbarModifier` for why).
+///
+/// It is a real `NSSearchField`, not a styled SwiftUI `TextField`, so the behaviour people
+/// expect from the old `.searchable` field comes for free: Escape clears the text, the cancel
+/// button, the focus ring and the accessibility traits. A hand-rolled field had none of those
+/// (Escape did nothing). Fixed width so the toolbar's x positions never depend on the typed
+/// text.
+///
+/// `focusRequest` is a counter bumped by the command-F button that the modifier keeps in the
+/// window content. Each increase makes the field take first responder. The shortcut must NOT
+/// live in the toolbar item: when the window narrows the item collapses into the overflow
+/// chevron, its hosting view detaches, and a shortcut owned by it would silently vanish. While
+/// the item is collapsed there is no field to focus, so the request is simply a no-op.
+struct ToolbarSearchField: NSViewRepresentable {
     @EnvironmentObject var navigationState: NavigationState
-    @FocusState private var isFocused: Bool
+    let focusRequest: Int
 
-    var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
-            TextField("Search", text: $navigationState.searchText)
-                .textFieldStyle(.plain)
-                .focused($isFocused)
-            if !navigationState.searchText.isEmpty {
-                Button {
-                    navigationState.searchText = ""
-                } label: {
-                    Image(systemName: "xmark.circle.fill")
-                        .foregroundStyle(.secondary)
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
-            }
+    func makeCoordinator() -> Coordinator {
+        Coordinator(navigationState: navigationState)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let field = NSSearchField()
+        field.placeholderString = "Search"
+        // Fire the action on every keystroke (not after a pause) so filtering updates exactly as
+        // the `.searchable` binding did.
+        field.sendsSearchStringImmediately = true
+        field.sendsWholeSearchString = false
+        field.stringValue = navigationState.searchText
+        field.delegate = context.coordinator
+        field.target = context.coordinator
+        field.action = #selector(Coordinator.searchChanged(_:))
+        field.translatesAutoresizingMaskIntoConstraints = false
+        field.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        context.coordinator.lastFocusRequest = focusRequest
+        return field
+    }
+
+    func updateNSView(_ field: NSSearchField, context: Context) {
+        context.coordinator.navigationState = navigationState
+        // Reflect programmatic changes (for example the state being reset) without fighting the
+        // user's typing: only write when the two really differ.
+        if field.stringValue != navigationState.searchText {
+            field.stringValue = navigationState.searchText
         }
-        .padding(.horizontal, 6)
-        .padding(.vertical, 3)
-        .frame(width: 220)
-        .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(Color.secondary.opacity(0.12))
-        )
-        .background {
-            // Zero-size, invisible button whose only job is to own the command-F shortcut.
-            // `.searchable` used to provide it for free; a plain TextField does not.
-            Button("Find") { isFocused = true }
-                .keyboardShortcut("f", modifiers: .command)
-                .opacity(0)
-                .frame(width: 0, height: 0)
-                .accessibilityHidden(true)
+        if context.coordinator.lastFocusRequest != focusRequest {
+            context.coordinator.lastFocusRequest = focusRequest
+            field.window?.makeFirstResponder(field)
+        }
+    }
+
+    final class Coordinator: NSObject, NSSearchFieldDelegate {
+        var navigationState: NavigationState
+        var lastFocusRequest = 0
+
+        init(navigationState: NavigationState) {
+            self.navigationState = navigationState
+        }
+
+        func controlTextDidChange(_ notification: Notification) {
+            guard let field = notification.object as? NSSearchField else { return }
+            navigationState.searchText = field.stringValue
+        }
+
+        /// Fired by the cancel button and by Escape, which clear the field without a text-change
+        /// notification.
+        @objc func searchChanged(_ sender: NSSearchField) {
+            navigationState.searchText = sender.stringValue
         }
     }
 }
