@@ -8,19 +8,6 @@ Last updated: 2026-10-27
 
 ---
 
-## Public readiness and distribution
-
-The repository was prepared for a public release (Apache-2.0 licence, third-party notices,
-README / CONTRIBUTING, issue and pull request templates, `scripts/dev.sh`, CI workflow,
-development packages). Local scripts and GitHub CI tests, packaging and both uploaded
-artifacts are verified. The runtime behaviour of unsigned artifacts remains unverified.
-
-- [ ] Record what actually happens when the unsigned, ad-hoc-sealed `dev.sh package`
-      artifact is launched on a machine that never built it: whether the entitlement-less
-      bundle starts at all, and how the Keychain-backed app-to-host exchange and Touch ID
-      behave. Currently expected to be limited and untested. Signed runtime end-to-end
-      behaviour is a separate manual check that CI cannot cover.
-
 ## Runtime localization
 
 - [ ] Runtime localization for English, Ukrainian and German. The design is approved but
@@ -37,21 +24,3 @@ the name "MyPass" in Google's passkey UI depends on the community registry.
       drafted for the submission are a hand-drawn re-creation of the key mark.
 - [ ] Google shows "MyPass" for newly created passkeys. Manual check; depends on Google
       ingesting the registry.
-
-## Manual verification still owed
-
-- [ ] Real native Browser settings window visual verification. Only mocked popup and
-      browser-check page visual checks were done; no live native-window check has been
-      performed.
-- [ ] Installed extension ↔ real-vault address autofill. Covered by tests and by a popup
-      with mocked bridge responses against a synthetic profile; never walked against a real
-      vault with the installed extension.
-- [ ] Single-instance launch behaviour: walk the single-instance checklist in `RUN.md`
-      (the section on running one MyPass at a time) against a real profile, including the
-      visual saving overlay and the signed-Keychain boundary.
-
-## Deferred follow-ups
-
-- [ ] Remove the "TEMPORARY diagnostic detail" at `MyPass/UI/Settings/SecuritySettingsPane.swift:251`
-      (the raw Swift error shown in the enable-device-unlock alert) once the real-device
-      Keychain failure it was added for is root-caused.
