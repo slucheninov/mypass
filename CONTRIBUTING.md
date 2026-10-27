@@ -46,6 +46,12 @@ make something pass.
 - A GitHub Actions workflow (`.github/workflows/ci.yml`) runs on pull requests, on
   pushes to `master` and on manual dispatch. It is unsigned and reports after the
   fact, so it is not a substitute for running the suite yourself.
+- `.github/workflows/codeql.yml` runs CodeQL on pull requests that target `master`
+  (CI runs on pull requests to any branch), on pushes to `master` and on manual
+  dispatch, plus a weekly schedule. `.coderabbit.yaml` configures CodeRabbit pull request reviews, which run
+  only while the CodeRabbit GitHub App is installed; if no review starts, comment
+  `@coderabbitai review`. Neither result blocks a merge by itself: that is set in the
+  repository's GitHub branch protection, not in these files.
 - New behaviour comes with tests next to the code it covers. The suite has no
   linter or formatter, so match the style of the surrounding code by hand.
 
@@ -104,7 +110,8 @@ the build artifacts contain. In the same pull request:
 
 Do not put passwords, vault files, master keys, tokens or key material in an issue,
 a pull request or a log you attach. Do not describe a security vulnerability in
-detail in a public issue or pull request.
+detail in a public issue or pull request. Report vulnerabilities as described in
+[`SECURITY.md`](SECURITY.md).
 
 ## License
 

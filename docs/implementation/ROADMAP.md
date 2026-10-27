@@ -20,13 +20,6 @@ artifacts are verified. The runtime behaviour of unsigned artifacts remains unve
       bundle starts at all, and how the Keychain-backed app-to-host exchange and Touch ID
       behave. Currently expected to be limited and untested. Signed runtime end-to-end
       behaviour is a separate manual check that CI cannot cover.
-- [ ] Publish `SECURITY.md` (an unpublished local draft exists). It depends on private
-      vulnerability reporting being enableable on the repository plan; until it is, the
-      security contact stays undecided.
-- [ ] Repository publication gates, all needing the owner's explicit authorization to push
-      or change visibility: final secret scan, make the repository public, enable secret
-      scanning, push protection and Dependabot, require approval for fork pull-request
-      workflows, and protect `master` with required pull requests and CI checks.
 
 ## Runtime localization
 

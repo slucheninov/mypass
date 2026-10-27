@@ -1,0 +1,16 @@
+name: MyPass CodeQL configuration
+
+# Used by .github/workflows/codeql.yml for every language.
+
+# `security-extended` is the default security suite plus lower-precision security queries,
+# a reasonable trade for a password manager. Do not also set `queries` in the workflow: that
+# would replace this entry.
+queries:
+  - uses: security-extended
+
+# paths-ignore is honoured for JavaScript (an interpreted language). It does not filter the
+# compiled Swift build. Only third-party code is excluded: jsQR is a vendored, minified
+# library (see THIRD_PARTY_NOTICES.md). The extension's own scripts, shared/ and tests/ are
+# all still analyzed.
+paths-ignore:
+  - ChromeExtension/vendor
