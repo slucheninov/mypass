@@ -995,8 +995,11 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             token: "t", requestId: 43, requestDetailsJson: createFixtureRequestJSON(),
             originUrl: "https://example.com", pairing: pairing
         ))
-        if case .passkeyCreateComplete(_, _, let error) = response {
-            XCTAssertNotEqual(error?.message, "MyPass passkeys are turned off in Settings")
+        // With the toggle at its ON default the create proceeds to the confirmation step
+        // (`passkeyCreatePending`). A guard, not an `if case`: any other response, including
+        // the "turned off in Settings" completion, must fail instead of passing vacuously.
+        guard case .passkeyCreatePending = response else {
+            return XCTFail("expected passkeyCreatePending, got \(response)")
         }
     }
 
