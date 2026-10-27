@@ -66,6 +66,16 @@ final class LanguageRestartController: ObservableObject {
         }
     }
 
+    /// Call when the language picker changes. `.manualRestartNeeded` describes a failed launch
+    /// for the previous choice and would otherwise stick for the rest of the session: it hides
+    /// "Restart Now" and keeps the manual text even after the user switches back to the running
+    /// language. A restart already in progress (`.restarting`) is left alone; it resets itself
+    /// after `resetDelay`, and clearing it early would re-enable a second launch.
+    func languageSelectionChanged() {
+        guard phase == .manualRestartNeeded else { return }
+        phase = .idle
+    }
+
     private func launchFinished(error: Error?) {
         guard error == nil else {
             phase = .manualRestartNeeded

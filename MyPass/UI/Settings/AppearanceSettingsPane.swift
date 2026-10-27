@@ -51,17 +51,22 @@ struct AppearanceSettingsPane: View {
                 }
                 .onChange(of: language) { _, newValue in
                     languageStore.select(newValue)
+                    restartController.languageSelectionChanged()
                 }
-                if restartController.phase == .manualRestartNeeded {
-                    SettingsHelperText(text: "Quit MyPass and open it again to apply the language")
-                } else if restartPending {
-                    HStack {
-                        SettingsHelperText(text: "Restart MyPass to apply the language")
-                        Spacer()
-                        Button("Restart Now") {
-                            restartController.restartNow(selecting: language, store: languageStore)
+                // Both hints only while the chosen language differs from the running one;
+                // a failed launch for a choice the user has since reverted shows nothing.
+                if restartPending {
+                    if restartController.phase == .manualRestartNeeded {
+                        SettingsHelperText(text: "Quit MyPass and open it again to apply the language")
+                    } else {
+                        HStack {
+                            SettingsHelperText(text: "Restart MyPass to apply the language")
+                            Spacer()
+                            Button("Restart Now") {
+                                restartController.restartNow(selecting: language, store: languageStore)
+                            }
+                            .disabled(restartController.phase == .restarting)
                         }
-                        .disabled(restartController.phase == .restarting)
                     }
                 }
             } header: {

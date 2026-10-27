@@ -36,13 +36,13 @@ final class LanguageRestartControllerTests: XCTestCase {
 
     private struct LaunchError: Error {}
 
-    private func waitForPhase(_ phase: LanguageRestartController.Phase, on controller: LanguageRestartController) {
+    private func waitForPhase(_ phase: LanguageRestartController.Phase, on controller: LanguageRestartController, timeout: TimeInterval = 2) {
         let expectation = expectation(description: "phase \(phase)")
         Task { @MainActor in
             while controller.phase != phase { await Task.yield() }
             expectation.fulfill()
         }
-        wait(for: [expectation], timeout: 2)
+        wait(for: [expectation], timeout: timeout)
     }
 
     func testRestartNowStoresTheOverrideBeforeLaunching() {
@@ -64,10 +64,12 @@ final class LanguageRestartControllerTests: XCTestCase {
 
     func testSuccessfulLaunchMovesToRestartingAndResetsAfterTheDelay() {
         let launcher = FakeLauncher()
-        let controller = LanguageRestartController(launcher: launcher, bundleURL: URL(fileURLWithPath: "/x/MyPass.app"), resetDelay: 0.05)
+        let controller = LanguageRestartController(launcher: launcher, bundleURL: URL(fileURLWithPath: "/x/MyPass.app"), resetDelay: 0.5)
         controller.restartNow(selecting: .ukrainian, store: store)
-        waitForPhase(.restarting, on: controller)
-        waitForPhase(.idle, on: controller)
+        // A generous delay and wait: on a loaded runner the polling task must still see
+        // `.restarting` before the reset timer returns the phase to `.idle`.
+        waitForPhase(.restarting, on: controller, timeout: 5)
+        waitForPhase(.idle, on: controller, timeout: 5)
         // The stored choice survives the reset so a retry stays possible.
         XCTAssertEqual(store.storedOverride, .ukrainian)
     }
@@ -79,6 +81,29 @@ final class LanguageRestartControllerTests: XCTestCase {
         controller.restartNow(selecting: .ukrainian, store: store)
         waitForPhase(.manualRestartNeeded, on: controller)
         XCTAssertEqual(store.storedOverride, .ukrainian)
+    }
+
+    func testChangingTheLanguageClearsTheManualRestartHint() {
+        let launcher = FakeLauncher()
+        launcher.error = LaunchError()
+        let controller = LanguageRestartController(launcher: launcher, bundleURL: URL(fileURLWithPath: "/x/MyPass.app"), resetDelay: 30)
+        controller.restartNow(selecting: .ukrainian, store: store)
+        waitForPhase(.manualRestartNeeded, on: controller)
+
+        controller.languageSelectionChanged()
+
+        XCTAssertEqual(controller.phase, .idle)
+    }
+
+    func testChangingTheLanguageDoesNotInterruptARestartInProgress() {
+        let launcher = FakeLauncher()
+        let controller = LanguageRestartController(launcher: launcher, bundleURL: URL(fileURLWithPath: "/x/MyPass.app"), resetDelay: 30)
+        controller.restartNow(selecting: .ukrainian, store: store)
+        waitForPhase(.restarting, on: controller)
+
+        controller.languageSelectionChanged()
+
+        XCTAssertEqual(controller.phase, .restarting)
     }
 
     func testRestartNowNeverRequestsTermination() {
