@@ -12,7 +12,7 @@ User instructions in the chat ALWAYS win. Everything below is the default for wh
 
 | Component | Stack | Notes |
 |---|---|---|
-| macOS app | Swift + SwiftUI, macOS 14.0+ | bundle id `com.mypass.app`, `MARKETING_VERSION 0.4.1` |
+| macOS app | Swift + SwiftUI, macOS 14.0+ | bundle id `com.mypass.app`, `MARKETING_VERSION 0.4.2` |
 | Native messaging host | Swift CLI, target `ChromeHost` | bundle id `com.mypass.chromehost` |
 | Browser extension | Plain JavaScript, MV3, no bundler | `minimum_chrome_version: 127`, pinned extension id `hjijbabodfldconmhdcdphlbgaajkejn` |
 
