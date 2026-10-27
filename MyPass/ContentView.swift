@@ -47,6 +47,9 @@ struct ContentView: View {
             } detail: {
                 DetailColumnView(rootGroup: database.rootGroup)
             }
+            // The window toolbar is owned here, on the split view itself, so it is the same
+            // group in every state — see `MainWindowToolbarModifier`.
+            .modifier(MainWindowToolbarModifier(rootGroup: database.rootGroup))
             .alert(
                 "Save Error",
                 isPresented: Binding(

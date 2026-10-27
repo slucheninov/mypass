@@ -6,7 +6,6 @@ struct EntryListView: View {
     let rootGroup: KdbxGroup
     @EnvironmentObject var navigationState: NavigationState
     @EnvironmentObject var vaultSession: VaultSession
-    @State private var openExistingVaultURL: URL?
 
     private var currentGroup: KdbxGroup {
         find(uuid: navigationState.selectedGroupID, in: rootGroup) ?? rootGroup
@@ -36,16 +35,6 @@ struct EntryListView: View {
         }
     }
 
-    private func presentCreate(entryType: EntryType) {
-        let binUUID = vaultSession.currentDatabase?.recycleBinGroupUUID
-        let defaultGroupID = GroupTreeOperations.clampedDefaultGroupID(
-            currentGroup.uuid,
-            in: rootGroup,
-            recycleBinGroupUUID: binUUID
-        )
-        navigationState.presentCreate(defaultGroupID: defaultGroupID, entryType: entryType)
-    }
-
     var body: some View {
         List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
             let isSelected = navigationState.selectedEntryID == entry.uuid
@@ -65,38 +54,6 @@ struct EntryListView: View {
         }
         .navigationTitle(headerTitle)
         .frame(minWidth: UIShellMetrics.listColumnMinWidth)
-        .searchable(text: $navigationState.searchText)
-        .toolbar {
-            ToolbarItem {
-                Menu("Add", systemImage: "plus") {
-                    Button("Login") { presentCreate(entryType: .login) }
-                    Button("Address") { presentCreate(entryType: .address) }
-                    Button("Card") { presentCreate(entryType: .card) }
-                    Button("Notes") { presentCreate(entryType: .notes) }
-                }
-            }
-            ToolbarItem {
-                Menu("Import", systemImage: "square.and.arrow.down") {
-                    Button("Import CSV…") { importCSV() }
-                    Button("Open Existing .kdbx…") { openExistingVault() }
-                }
-            }
-        }
-        .sheet(isPresented: Binding(
-            get: { openExistingVaultURL != nil },
-            set: { if !$0 { openExistingVaultURL = nil } }
-        )) {
-            if let url = openExistingVaultURL {
-                OpenExistingVaultSheet(
-                    fileURL: url,
-                    onSuccess: { database, password in
-                        openExistingVaultURL = nil
-                        completeOpenExistingVault(fileURL: url, password: password, database: database)
-                    },
-                    onCancel: { openExistingVaultURL = nil }
-                )
-            }
-        }
     }
 
     private func find(uuid: UUID?, in group: KdbxGroup) -> KdbxGroup? {
@@ -106,54 +63,6 @@ struct EntryListView: View {
             if let found = find(uuid: uuid, in: subgroup) { return found }
         }
         return nil
-    }
-
-    private func importCSV() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.commaSeparatedText]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-
-        do {
-            let data = try Data(contentsOf: url)
-            let imported = try CSVImporter.parse(csvData: data)
-            vaultSession.mutate { database in
-                let targetGroup = find(uuid: navigationState.selectedGroupID, in: database.rootGroup) ?? database.rootGroup
-                targetGroup.entries.append(contentsOf: imported)
-            }
-        } catch {
-            // Surface via an alert in a future polish pass; for now the import silently
-            // no-ops on read/parse failure rather than corrupting the vault.
-        }
-    }
-
-    private func openExistingVault() {
-        let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.data]
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        openExistingVaultURL = url
-    }
-
-    /// Called once `OpenExistingVaultSheet` has already proven `password`
-    /// opens the file at `fileURL` — creates the security-scoped bookmark
-    /// this session needs to keep reading `fileURL` across launches, then
-    /// hands off to `VaultSession.retargetToOpenExistingVault` to actually
-    /// switch the primary vault over.
-    private func completeOpenExistingVault(fileURL: URL, password: String, database: KdbxDatabase) {
-        do {
-            let bookmark = try LocalFileVaultStore.createFileBookmark(for: fileURL)
-            try vaultSession.retargetToOpenExistingVault(
-                fileURL: fileURL,
-                bookmarkData: bookmark,
-                password: password,
-                database: database
-            )
-        } catch {
-            NSSound.beep()
-            // A production alert would read: "Could not switch to this vault
-            // file: \(error)".
-        }
     }
 }
 
