@@ -49,6 +49,20 @@ jobs:
       - name: Install xcodegen
         run: brew install xcodegen
 
+      # Swift package SOURCES only (git checkouts and repository clones), never build products.
+      # build/SourcePackages is the -clonedSourcePackagesDirPath of scripts/dev.sh and
+      # scripts/test.sh; the objects live in build/<flavor>/ (DerivedData), which is deliberately
+      # not cached here: the test and package builds always compile from scratch, so a green
+      # run proves a clean build.
+      # The key covers everything that decides which packages are fetched. dev.sh builds with
+      # -onlyUsePackageVersionsFromResolvedFile, so a restored checkout can only be the pinned
+      # revision and a stale or partial cache cannot move a dependency.
+      - name: Cache Swift package sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/SourcePackages
+          key: swiftpm-sources-${{ runner.os }}-${{ hashFiles('project.yml', 'Packages/*/Package.swift', 'Packages/*/Package.resolved') }}
+
       # Every suite runs here: the app, ChromeHost, the three Swift packages and all
       # ChromeExtension/tests/*.test.js scripts. Nothing is skipped to get a green run.
       - name: Test

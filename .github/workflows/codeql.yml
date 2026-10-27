@@ -110,6 +110,24 @@ jobs:
         if: matrix.language == 'swift'
         run: brew install xcodegen
 
+      # Swift package SOURCES only (git checkouts and repository clones), never build products.
+      # build/SourcePackages is the -clonedSourcePackagesDirPath of scripts/dev.sh and
+      # scripts/test.sh; the objects live in build/<flavor>/ (DerivedData), which is deliberately
+      # not cached here: CodeQL extracts Swift by tracing the real compiler calls, so a warm
+      # build would skip compilation and silently shrink what is analyzed.
+      # Measured on the first run: "Resolve Package Graph" plus the package fetch took about 15 of
+      # the 36 minutes of the traced build (the resolve alone sat silent for 13.5 minutes under
+      # the tracer), while the same step takes 35 seconds in ci.yml without it.
+      # The key covers everything that decides which packages are fetched. dev.sh builds with
+      # -onlyUsePackageVersionsFromResolvedFile, so a restored checkout can only be the pinned
+      # revision and a stale or partial cache cannot move a dependency.
+      - name: Cache Swift package sources
+        if: matrix.language == 'swift'
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/SourcePackages
+          key: swiftpm-sources-${{ runner.os }}-${{ hashFiles('project.yml', 'Packages/*/Package.swift', 'Packages/*/Package.resolved') }}
+
       - name: Initialize CodeQL
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
