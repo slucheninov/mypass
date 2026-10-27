@@ -5,6 +5,11 @@ struct GeneralSettingsPane: View {
     @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
     @AppStorage("menuBarClickAction") private var menuBarClickAction = "menu"
     @AppStorage("launchAtLogin") private var launchAtLogin = false
+    /// This is the canonical value used by the bridge. Browser reports are snapshots
+    /// and must never overwrite this preference with a delayed observation. It defaults
+    /// to ON; the shared `PasskeyProxyPreference` helper applies the same fallback to the
+    /// bridge, so an untouched key reads the same here and there.
+    @AppStorage(PasskeyProxyPreference.defaultsKey) private var passkeyProxyEnabled = PasskeyProxyPreference.defaultValue
     @AppStorage("updateCheckEnabled") private var updateCheckEnabled = true
     @EnvironmentObject private var updateChecker: AppUpdateChecker
 
@@ -37,6 +42,15 @@ struct GeneralSettingsPane: View {
                 SettingsHelperText(text: "MyPass opens in the background at login so the vault and extensions are ready. The vault remains locked until you unlock it manually.")
             } header: {
                 Text("Login Item")
+            }
+
+            Section {
+                Toggle("Use MyPass for Chrome passkeys", isOn: $passkeyProxyEnabled)
+                SettingsHelperText(text: passkeyProxyEnabled
+                    ? "Reopen the MyPass browser extension to apply this setting. Then use the website’s sign-in or create-passkey button and approve in MyPass. While MyPass handles passkeys, Chrome’s other passkey choices are unavailable."
+                    : "Turn this on to save and use passkeys in MyPass. Reopen the browser extension after changing this setting.")
+            } header: {
+                Text("Passkeys")
             }
 
             Section {

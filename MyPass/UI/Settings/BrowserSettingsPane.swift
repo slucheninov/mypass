@@ -7,19 +7,9 @@ struct BrowserSettingsPane: View {
     @State private var pairedBrowsers: [PairedBrowser] = []
     @State private var showingHelp = false
     @State private var revokeError: String?
-    /// This is the canonical value used by the bridge. Browser reports are snapshots
-    /// and must never overwrite this preference with a delayed observation.
-    @AppStorage("passkeyProxyEnabled") private var passkeyProxyEnabled = false
 
     var body: some View {
         Form {
-            Section("Passkeys") {
-                Toggle("Use MyPass for Chrome passkeys", isOn: $passkeyProxyEnabled)
-                SettingsHelperText(text: passkeyProxyEnabled
-                    ? "Reopen the MyPass browser extension to apply this setting. Then use the website’s sign-in or create-passkey button and approve in MyPass. While MyPass handles passkeys, Chrome’s other passkey choices are unavailable."
-                    : "Turn this on to save and use passkeys in MyPass. Reopen the browser extension after changing this setting.")
-            }
-
             Section("Browser setup") {
                 Text("Use MyPass as your password manager")
                     .font(.headline)
