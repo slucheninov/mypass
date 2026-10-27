@@ -61,8 +61,19 @@ final class DeviceUnlockPromptCoordinator: ObservableObject {
         guard let vaultSession else { return }
         vaultSession.$state
             .sink { [weak self] state in
-                guard case .locked = state else { return }
-                self?.vaultDidLock()
+                switch state {
+                case .locked:
+                    self?.vaultDidLock()
+                case .unlocked:
+                    // An extension Unlock request that was never consumed (device unlock
+                    // was unavailable, so `UnlockView` skipped it) must not survive the
+                    // vault being unlocked by other means: a Lock within the freshness
+                    // window would otherwise find it still valid and pop a Touch ID
+                    // sheet nobody asked for. Cleared here, not in `vaultDidLock()`:
+                    // `$state` can republish `.locked`, which would wipe a request that
+                    // is still valid for the unlock screen about to appear.
+                    self?.extensionRequestedAt = nil
+                }
             }
             .store(in: &cancellables)
     }

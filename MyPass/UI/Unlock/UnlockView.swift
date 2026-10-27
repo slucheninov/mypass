@@ -123,8 +123,11 @@ struct UnlockView: View {
             // extension Unlock that arrived while the window was closed, before this
             // view existed — `MyPassApp.onUnlockRequested` recorded it on the
             // coordinator and the notification below was dropped for lack of an observer.
-            if !isFirstRun, canShowDeviceUnlockButton,
-               deviceUnlockPromptCoordinator.consumeExtensionUnlockRequest() {
+            // Consume first and let `attemptDeviceUnlock()` decide: when device unlock is
+            // unavailable it shows the "unavailable" message (the user did press Unlock
+            // in the extension) instead of silently skipping and leaving a still-fresh
+            // request behind to fire after a later Lock.
+            if !isFirstRun, deviceUnlockPromptCoordinator.consumeExtensionUnlockRequest() {
                 attemptDeviceUnlock()
             }
         }

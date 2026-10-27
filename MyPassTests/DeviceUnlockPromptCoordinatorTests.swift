@@ -59,6 +59,40 @@ final class DeviceUnlockPromptCoordinatorTests: XCTestCase {
         XCTAssertTrue(coordinator.requestExplicitPrompt())
     }
 
+    // MARK: - Extension unlock request lifetime
+
+    /// The stale-request scenario: the extension's Unlock is noted, the user then unlocks
+    /// with the master password instead (nothing consumed the request because device
+    /// unlock was unavailable), and presses Lock within the freshness window. The old
+    /// request must not survive the unlock and fire a Touch ID sheet after the Lock.
+    /// Driven through the real `$state` subscription, not a direct coordinator call.
+    func testUnlockingTheVaultDropsAPendingExtensionUnlockRequest() throws {
+        let session = VaultSession(fileStore: VaultFileStore(directory: tempDir))
+        let coordinator = DeviceUnlockPromptCoordinator(vaultSession: session)
+
+        coordinator.noteExtensionUnlockRequest()
+        try session.unlock(password: "correct-horse")
+        session.lock()
+
+        XCTAssertFalse(
+            coordinator.consumeExtensionUnlockRequest(),
+            "a request noted before the vault unlocked must not outlive the unlock"
+        )
+    }
+
+    /// `$state` can republish `.locked` (a subscriber attaching, a no-op lock); that must
+    /// not wipe a request that is still valid, or the window-closed extension Unlock
+    /// path would lose its prompt.
+    func testALockedRepublishKeepsAPendingExtensionUnlockRequest() throws {
+        let session = VaultSession(fileStore: VaultFileStore(directory: tempDir))
+        let coordinator = DeviceUnlockPromptCoordinator(vaultSession: session)
+
+        coordinator.noteExtensionUnlockRequest()
+        session.lock()
+
+        XCTAssertTrue(coordinator.consumeExtensionUnlockRequest())
+    }
+
     // MARK: - Stale in-flight self-healing
 
     /// Simulates `DeviceUnlockAuthenticator`'s completion never arriving (the classic
