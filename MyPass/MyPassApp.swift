@@ -26,8 +26,12 @@ struct MyPassApp: App {
     @StateObject private var autoLockController: AutoLockController
     @StateObject private var deviceUnlockPromptCoordinator: DeviceUnlockPromptCoordinator
     @StateObject private var updateChecker: AppUpdateChecker
+    @StateObject private var languageRestartController = LanguageRestartController()
 
     init() {
+        // Freeze the language this process started with before anything can change the
+        // override, so the Language setting can tell a pending change from the running one.
+        _ = AppLanguageStore.launchSelection
         let defaults = UserDefaults.standard
         // Apply the saved theme before any window exists so the first frame is already
         // in the right appearance (no light flash for a Dark choice). `NSApp.appearance`
@@ -427,6 +431,7 @@ struct MyPassApp: App {
             SettingsView()
                 .quitFreezeOverlay()
                 .environmentObject(updateChecker)
+                .environmentObject(languageRestartController)
                 .background(OpenBrowserSettingsOnDemand())
                 .environmentObject(autoLockController)
                 .environmentObject(vaultSession)

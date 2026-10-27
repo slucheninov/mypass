@@ -3888,6 +3888,22 @@
         }
       }
     },
+    "Language" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Язык"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Мова"
+          }
+        }
+      }
+    },
     "Last checked" : {
       "localizations" : {
         "ru" : {
@@ -5857,6 +5873,22 @@
         }
       }
     },
+    "Quit MyPass and open it again to apply the language" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Завершите работу MyPass и откройте его снова, чтобы применить язык"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вийдіть із MyPass і відкрийте його знову, щоб застосувати мову"
+          }
+        }
+      }
+    },
     "Re-grant iCloud Drive Access…" : {
       "localizations" : {
         "ru" : {
@@ -6130,6 +6162,38 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вимагати пароль облікового запису:"
+          }
+        }
+      }
+    },
+    "Restart MyPass to apply the language" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перезапустите MyPass, чтобы применить язык"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перезапустіть MyPass, щоб застосувати мову"
+          }
+        }
+      }
+    },
+    "Restart Now" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перезапустить сейчас"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Перезапустити зараз"
           }
         }
       }
@@ -7783,6 +7847,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Використовувати MyPass без інших менеджерів"
+          }
+        }
+      }
+    },
+    "Use System Default" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Использовать системный"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Використовувати системну"
           }
         }
       }

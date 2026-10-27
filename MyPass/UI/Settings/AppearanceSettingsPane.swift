@@ -2,6 +2,16 @@ import SwiftUI
 
 struct AppearanceSettingsPane: View {
     @AppStorage(AppTheme.storageKey) private var themeRaw = AppTheme.system.rawValue
+    @EnvironmentObject private var restartController: LanguageRestartController
+
+    private let languageStore = AppLanguageStore()
+    /// Mirrors the stored override so the picker redraws; the store (`AppleLanguages` in the
+    /// app's own defaults domain) stays the source of truth.
+    @State private var language = AppLanguageStore().storedOverride
+
+    private var restartPending: Bool {
+        AppLanguageStore.isRestartPending(launch: AppLanguageStore.launchSelection, current: language)
+    }
 
     /// Reads and writes go through `AppTheme(storedRaw:)` so an unknown stored value
     /// shows as "Match System" instead of leaving the picker with no selection.
@@ -26,6 +36,36 @@ struct AppearanceSettingsPane: View {
                 SettingsHelperText(text: "Match System follows the macOS appearance and switches with it.")
             } header: {
                 Text("Theme")
+            }
+
+            Section {
+                Picker("Language", selection: $language) {
+                    ForEach(AppLanguage.allCases) { option in
+                        if let nativeName = option.nativeName {
+                            // Endonym: never translated, so it is rendered verbatim.
+                            Text(verbatim: nativeName).tag(option)
+                        } else {
+                            Text("Use System Default").tag(option)
+                        }
+                    }
+                }
+                .onChange(of: language) { _, newValue in
+                    languageStore.select(newValue)
+                }
+                if restartController.phase == .manualRestartNeeded {
+                    SettingsHelperText(text: "Quit MyPass and open it again to apply the language")
+                } else if restartPending {
+                    HStack {
+                        SettingsHelperText(text: "Restart MyPass to apply the language")
+                        Spacer()
+                        Button("Restart Now") {
+                            restartController.restartNow(selecting: language, store: languageStore)
+                        }
+                        .disabled(restartController.phase == .restarting)
+                    }
+                }
+            } header: {
+                Text("Language")
             }
         }
         .formStyle(.grouped)
