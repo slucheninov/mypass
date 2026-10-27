@@ -113,7 +113,10 @@ struct EntryBrowseActionRow: View {
             moveToGroupMenu
         case .copy(let kind, let isEnabled):
             Button(copyTitle(kind)) {
-                EntryActions.copy(copyValue(kind), entryID: entry.uuid, in: vaultSession)
+                // `nil` (a one-time code that could not be generated) copies nothing:
+                // writing "" would wipe whatever the user has on the clipboard.
+                guard let value = copyValue(kind) else { return }
+                EntryActions.copy(value, entryID: entry.uuid, in: vaultSession)
             }
             .disabled(!isEnabled)
         case .openWebsite:
@@ -173,7 +176,7 @@ struct EntryBrowseActionRow: View {
         }
     }
 
-    private func copyValue(_ kind: EntryActionMenuModel.CopyKind) -> String {
+    private func copyValue(_ kind: EntryActionMenuModel.CopyKind) -> String? {
         switch kind {
         case .username: entry.login
         case .password: entry.password
@@ -183,7 +186,7 @@ struct EntryBrowseActionRow: View {
             // (6 digits, 30 s, SHA-1) -- never the shared secret itself.
             entry.totpSecretBase32.flatMap {
                 TOTPCode.currentCode(secretBase32: $0, digits: 6, period: 30, algorithm: .sha1, now: Date())
-            } ?? ""
+            }
         case .cardNumber: entry.cardNumber
         case .cvv: entry.cvv
         case .note: entry.notesBody

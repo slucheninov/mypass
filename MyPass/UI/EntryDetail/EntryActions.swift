@@ -53,7 +53,12 @@ enum EntryActions {
     /// Same sequence as the detail views' private `copy`: put the value on the general
     /// pasteboard, schedule the auto-clear with the user's interval (the clear only fires
     /// if the pasteboard still holds this value), and record the access on the entry.
+    ///
+    /// An empty value is a no-op: there is nothing to copy, and `clearContents()` followed by
+    /// an empty string would silently wipe whatever the user currently has on the clipboard
+    /// (for example when a one-time code could not be generated).
     static func copy(_ value: String, entryID: UUID, in vaultSession: VaultSession) {
+        guard !value.isEmpty else { return }
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(value, forType: .string)
         ClipboardAutoClear.schedule(
