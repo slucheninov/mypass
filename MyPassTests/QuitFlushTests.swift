@@ -9,6 +9,7 @@ final class ControllableVaultStore: VaultPrimaryStorage {
     private let lock = NSLock()
     private var gate: DispatchSemaphore?
     private var failure: Error?
+    private var saveCompleted: (() -> Void)?
     private(set) var saveCount = 0
 
     init(directory: URL) { inner = VaultFileStore(directory: directory) }
@@ -16,6 +17,12 @@ final class ControllableVaultStore: VaultPrimaryStorage {
     func holdWrites() { lock.lock(); gate = DispatchSemaphore(value: 0); lock.unlock() }
     func releaseWrites() { lock.lock(); let g = gate; gate = nil; lock.unlock(); g?.signal() }
     func failWrites(with error: Error?) { lock.lock(); failure = error; lock.unlock() }
+
+    /// Calls `handler` (on the writing thread) each time a save has reached the inner store, so a
+    /// test can wait for the write it is about to assert on instead of sleeping for an assumed
+    /// duration. The session derives its Argon2 key BEFORE it calls `save`, so the time a write
+    /// takes depends on the machine; the gate above only holds the step after that.
+    func onSaveCompleted(_ handler: (() -> Void)?) { lock.lock(); saveCompleted = handler; lock.unlock() }
 
     func load() throws -> Data? { try inner.load() }
     var primaryVaultFileURL: URL? { inner.primaryVaultFileURL }
@@ -26,6 +33,44 @@ final class ControllableVaultStore: VaultPrimaryStorage {
         if let f { throw f }
         lock.lock(); saveCount += 1; lock.unlock()
         try inner.save(data: data)
+        lock.lock(); let completed = saveCompleted; lock.unlock()
+        completed?()
+    }
+}
+
+/// Records every completion a flush delivers, including a stray second one that arrives after
+/// the test has already stopped waiting (a plain local array copy would hide it).
+final class FlushProbe {
+    let completed: XCTestExpectation
+    private(set) var outcomes: [VaultFlushOutcome] = []
+    private(set) var startedAt = Date()
+    private(set) var firstCompletionAt: Date?
+
+    init(_ completed: XCTestExpectation) { self.completed = completed }
+
+    /// Main thread only, like `flushPendingWrites` itself.
+    func start(_ session: VaultSession, timeout: TimeInterval) {
+        startedAt = Date()
+        session.flushPendingWrites(timeout: timeout) { [self] outcome in
+            if firstCompletionAt == nil { firstCompletionAt = Date() }
+            outcomes.append(outcome)
+            completed.fulfill()
+        }
+    }
+}
+
+/// Upper bound for events that must happen but whose duration depends on the machine (an
+/// Argon2 derivation, a scheduler hop). It only bounds a hang; no test asserts how long
+/// something took against it, so a slow CI runner makes a test slower, never red.
+private let deadlockBound: TimeInterval = 30
+
+extension XCTestCase {
+    /// Starts a flush and returns without running the run loop, so the caller can inspect the
+    /// session in the state the flush left it in before anything asynchronous gets a turn.
+    fileprivate func startFlush(_ session: VaultSession, timeout: TimeInterval = 5) -> FlushProbe {
+        let probe = FlushProbe(expectation(description: "flush completes"))
+        probe.start(session, timeout: timeout)
+        return probe
     }
 }
 
@@ -117,11 +162,15 @@ final class VaultFlushTests: XCTestCase {
 
         session.touchAccess(entryID: entryID)
         XCTAssertTrue(session.hasPendingTouchAccessPersist)
-        let started = Date()
-        XCTAssertEqual(flush(session), [.flushed])
-        XCTAssertLessThan(Date().timeIntervalSince(started), 1.4, "must not sit out the 1.5 s debounce")
-        XCTAssertFalse(session.hasPendingTouchAccessPersist)
-        XCTAssertEqual(store.saveCount, savesBefore + 1)
+        let probe = startFlush(session)
+        // `touchAccess` and `flushPendingWrites` ran back to back on the main thread, so the 1.5 s
+        // debounce block has not had a single run-loop turn to fire. If the debounce is gone now,
+        // the flush itself took the pending touch over and queued the write; had it left the
+        // debounce armed (and so sat it out), this would still be pending.
+        XCTAssertFalse(session.hasPendingTouchAccessPersist, "the flush must take over the debounced touch, not wait for it")
+        wait(for: [probe.completed], timeout: deadlockBound)
+        XCTAssertEqual(probe.outcomes, [.flushed])
+        XCTAssertEqual(store.saveCount, savesBefore + 1, "the touch is on disk when the flush completes")
     }
 
     func testSaveErrorIsPreservedNotSwallowed() throws {
@@ -191,14 +240,26 @@ final class VaultFlushTests: XCTestCase {
         store.holdWrites()
         addEntry(session, title: "stuck")
 
-        let started = Date()
-        let outcomes = flush(session, timeout: 0.3, patience: 3)
-        XCTAssertEqual(outcomes, [.timedOut], "exactly one completion, even after the write later finishes")
-        XCTAssertGreaterThanOrEqual(Date().timeIntervalSince(started), 0.3)
+        // The timer firing at all, inside a bound far above its 0.3 s, shows the main thread was
+        // not blocked by the stuck write.
+        let probe = startFlush(session, timeout: 0.3)
+        wait(for: [probe.completed], timeout: deadlockBound)
+        XCTAssertEqual(probe.outcomes, [.timedOut])
+        let elapsed = try XCTUnwrap(probe.firstCompletionAt).timeIntervalSince(probe.startedAt)
+        XCTAssertGreaterThanOrEqual(elapsed, 0.25, "the timeout must not fire early")
 
+        // Wait for the held write itself, not for an assumed duration: its key derivation can
+        // still be running when the timeout fires, and how long that takes depends on the machine.
+        let landed = expectation(description: "held write reaches the store")
+        store.onSaveCompleted { landed.fulfill() }
         store.releaseWrites()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+        wait(for: [landed], timeout: deadlockBound)
         XCTAssertEqual(try titlesOnDisk(), ["stuck"], "the write still completes after the timeout; nothing is cancelled")
+
+        // A second completion would travel through the main run loop right after the write
+        // drained. Pumping it can only miss a late one, never fail a correct run.
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        XCTAssertEqual(probe.outcomes, [.timedOut], "exactly one completion, even after the write later finishes")
     }
 }
 
@@ -385,12 +446,19 @@ final class VaultFlushQuiescenceTests: XCTestCase {
         store.holdWrites()
         addEntry(session, title: "stuck")
 
-        let outcomes = flush(session, timeout: 0.3, patience: 3)
-        XCTAssertEqual(outcomes, [.timedOut])
+        let probe = startFlush(session, timeout: 0.3)
+        wait(for: [probe.completed], timeout: deadlockBound)
+        XCTAssertEqual(probe.outcomes, [.timedOut])
         XCTAssertTrue(session.isQuitInProgress, "the prompt after a timeout is still part of the quit")
+        let landed = expectation(description: "held write reaches the store")
+        store.onSaveCompleted { landed.fulfill() }
         store.releaseWrites()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.8))
+        wait(for: [landed], timeout: deadlockBound)
         XCTAssertEqual(try titlesOnDisk(), ["stuck"])
+        // Only a late second completion could show up here; pumping can miss one, never fail a correct run.
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        XCTAssertEqual(probe.outcomes, [.timedOut], "the late drain must not complete the flush a second time")
+        XCTAssertTrue(session.isQuitInProgress, "still frozen after the late drain")
     }
 
     func testMigrationIsRefusedWhileQuitIsInProgress() throws {
@@ -457,10 +525,11 @@ final class VaultFlushQuiescenceTests: XCTestCase {
         defer { remote.releaseWrites() }
         addEntry(session, title: "local-first")
 
-        let started = Date()
-        let outcomes = flush(session, timeout: 5, patience: 4)
+        // The remote stays held for the whole flush. A flush that waited for it would end in
+        // `.timedOut` at the 20 s timeout instead of `.flushed`; how long the local write took on
+        // this machine is irrelevant, so no wall-clock threshold is asserted.
+        let outcomes = flush(session, timeout: 20, patience: deadlockBound)
         XCTAssertEqual(outcomes, [.flushed], "the remote upload is atomic and retried on the next launch; it is not a reason to prompt")
-        XCTAssertLessThan(Date().timeIntervalSince(started), 3, "must not sit out the timeout for a sync that is not a local write")
         XCTAssertEqual(try titlesOnDisk(), ["local-first"])
     }
 }
