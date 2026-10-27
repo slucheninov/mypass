@@ -31,7 +31,7 @@ struct MenuBarEntryDetailPanelView: View {
     }
 
     private var displayTitle: String {
-        entry.title.isEmpty ? "(untitled)" : entry.title
+        entry.displayTitle
     }
 
     var body: some View {
@@ -42,8 +42,8 @@ struct MenuBarEntryDetailPanelView: View {
                     heroSection
                     if entry.entryType == .address {
                         VStack(alignment: .leading, spacing: 8) {
-                            Text(entry.addressSummary)
-                            Text([entry.address.addressLine1, entry.address.addressLine2, entry.address.postalCode, entry.address.countryName].filter { !$0.isEmpty }.joined(separator: "\n"))
+                            Text(verbatim: entry.addressSummary)
+                            Text(verbatim: [entry.address.addressLine1, entry.address.addressLine2, entry.address.postalCode, entry.address.countryName].filter { !$0.isEmpty }.joined(separator: "\n"))
                                 .foregroundStyle(.secondary)
                             Button("Edit Address in MyPass", action: openEntryForEdit)
                         }.frame(maxWidth: .infinity, alignment: .leading)
@@ -101,7 +101,7 @@ struct MenuBarEntryDetailPanelView: View {
                 LetterAvatarView(title: displayTitle, size: 44, cornerRadius: 10)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(displayTitle)
+                Text(verbatim: displayTitle)
                     .font(.headline)
                     .lineLimit(2)
                 Text("Last modified: \(entry.lastModificationTime.formatted(date: .abbreviated, time: .shortened))")
@@ -156,7 +156,7 @@ struct MenuBarEntryDetailPanelView: View {
                 copy(entry.password)
                 flashCopied(.password)
             } label: {
-                Text(passwordDisplayText)
+                Text(verbatim: passwordDisplayText)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -174,7 +174,7 @@ struct MenuBarEntryDetailPanelView: View {
 
     private var passwordDisplayText: String {
         if copiedField == .password {
-            return "Copied"
+            return String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value")
         }
         if isPasswordHovered {
             return entry.password
@@ -184,7 +184,7 @@ struct MenuBarEntryDetailPanelView: View {
 
     private func totpRow(secret: String) -> some View {
         let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
-        let displayValue = copiedField == .totp ? "Copied" : code
+        let displayValue = copiedField == .totp ? String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value") : code
 
         return HStack(alignment: .center, spacing: 6) {
             Text("Code")
@@ -196,7 +196,7 @@ struct MenuBarEntryDetailPanelView: View {
                 flashCopied(.totp)
             } label: {
                 HStack(spacing: 6) {
-                    Text(displayValue)
+                    Text(verbatim: displayValue)
                         .font(.system(.body, design: .monospaced))
                         .lineLimit(1)
                     if copiedField != .totp {
@@ -223,7 +223,7 @@ struct MenuBarEntryDetailPanelView: View {
             if let url = URL(string: entry.url), !entry.url.isEmpty {
                 Link(destination: url) {
                     HStack(spacing: 4) {
-                        Text(entry.url)
+                        Text(verbatim: entry.url)
                             .lineLimit(1)
                         Image(systemName: "safari")
                             .font(.caption)
@@ -231,7 +231,7 @@ struct MenuBarEntryDetailPanelView: View {
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
             } else {
-                Text(entry.url)
+                Text(verbatim: entry.url)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
@@ -242,12 +242,12 @@ struct MenuBarEntryDetailPanelView: View {
     }
 
     private func copyableFieldRow(
-        label: String,
+        label: LocalizedStringKey,
         field: CopiedField,
         displayValue: String,
         copyValue: String
     ) -> some View {
-        let shownValue = copiedField == field ? "Copied" : displayValue
+        let shownValue = copiedField == field ? String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value") : displayValue
 
         return HStack(alignment: .center, spacing: 6) {
             Text(label)
@@ -258,7 +258,7 @@ struct MenuBarEntryDetailPanelView: View {
                 copy(copyValue)
                 flashCopied(field)
             } label: {
-                Text(shownValue)
+                Text(verbatim: shownValue)
                     .lineLimit(1)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .contentShape(Rectangle())

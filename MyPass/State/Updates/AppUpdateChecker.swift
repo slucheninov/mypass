@@ -66,12 +66,12 @@ final class AppUpdateChecker: ObservableObject {
 
     var bannerText: String? {
         guard let release = bannerRelease, let current = currentVersion else { return nil }
-        return "MyPass \(release.version) is available (you have \(current))"
+        return String(localized: "MyPass \(release.version.description) is available (you have \(current.description))", comment: "Update banner; first argument is the new version, second the running version")
     }
 
     var menuItemTitle: String? {
         guard let release = bannerRelease else { return nil }
-        return "MyPass \(release.version) available…"
+        return String(localized: "MyPass \(release.version.description) available…", comment: "Menu bar item title announcing a new version; the argument is the version")
     }
 
     // MARK: - Checking
@@ -87,7 +87,7 @@ final class AppUpdateChecker: ObservableObject {
 
         guard let current = currentVersion else {
             os_log("Running version is unparsable; skipping update check", log: Self.log, type: .error)
-            if manual { status = .failed(message: "Cannot determine the running version.") }
+            if manual { status = .failed(message: String(localized: "Cannot determine the running version.", comment: "Update check error")) }
             return
         }
 
@@ -135,15 +135,15 @@ final class AppUpdateChecker: ObservableObject {
         if let feedError = error as? ReleaseFeedError {
             switch feedError {
             case .badStatus(let code) where code == 403 || code == 429:
-                return "GitHub rate limit reached; try again later."
+                return String(localized: "GitHub rate limit reached; try again later.", comment: "Update check error")
             case .badStatus(let code):
-                return "GitHub answered with status \(code)."
+                return String(localized: "GitHub answered with status \(code).", comment: "Update check error; the argument is an HTTP status code")
             case .malformedPayload, .unparsableVersion:
-                return "GitHub returned an unexpected answer."
+                return String(localized: "GitHub returned an unexpected answer.", comment: "Update check error")
             }
         }
-        if error is URLError { return "Could not reach GitHub." }
-        return "GitHub returned an unexpected answer."
+        if error is URLError { return String(localized: "Could not reach GitHub.", comment: "Update check error") }
+        return String(localized: "GitHub returned an unexpected answer.", comment: "Update check error")
     }
 
     // MARK: - Banner

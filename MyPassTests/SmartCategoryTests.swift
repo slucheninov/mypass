@@ -11,14 +11,14 @@ final class SmartCategoryTests: XCTestCase {
     }
 
     func testTitles() {
-        XCTAssertEqual(SmartCategory.all.title, "All")
-        XCTAssertEqual(SmartCategory.favorites.title, "Favorites")
-        XCTAssertEqual(SmartCategory.codes.title, "Codes")
-        XCTAssertEqual(SmartCategory.passkeys.title, "Passkeys")
-        XCTAssertEqual(SmartCategory.cards.title, "Cards")
-        XCTAssertEqual(SmartCategory.notes.title, "Notes")
-        XCTAssertEqual(SmartCategory.security.title, "Security")
-        XCTAssertEqual(SmartCategory.deleted.title, "Deleted")
+        XCTAssertEqual(String(localized: SmartCategory.all.title), "All")
+        XCTAssertEqual(String(localized: SmartCategory.favorites.title), "Favorites")
+        XCTAssertEqual(String(localized: SmartCategory.codes.title), "Codes")
+        XCTAssertEqual(String(localized: SmartCategory.passkeys.title), "Passkeys")
+        XCTAssertEqual(String(localized: SmartCategory.cards.title), "Cards")
+        XCTAssertEqual(String(localized: SmartCategory.notes.title), "Notes")
+        XCTAssertEqual(String(localized: SmartCategory.security.title), "Security")
+        XCTAssertEqual(String(localized: SmartCategory.deleted.title), "Deleted")
     }
 
     func testCountDisplayDelegatesToSmartCategoryCounts() throws {

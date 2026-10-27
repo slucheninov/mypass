@@ -58,17 +58,17 @@ enum PasswordRulesSummary {
         if let minLength = rules.minLength, let maxLength = rules.maxLength {
             needsFragments.append(
                 minLength == maxLength
-                    ? "exactly \(minLength) characters"
-                    : "\(minLength) to \(maxLength) characters"
+                    ? String(localized: "exactly \(minLength) characters", comment: "Password requirements summary fragment: a fixed length")
+                    : String(localized: "\(minLength) to \(maxLength) characters", comment: "Password requirements summary fragment: a length range")
             )
         } else if let minLength = rules.minLength {
-            needsFragments.append("at least \(minLength) characters")
+            needsFragments.append(String(localized: "at least \(minLength) characters", comment: "Password requirements summary fragment: a minimum length"))
         } else if let maxLength = rules.maxLength {
-            needsFragments.append("at most \(maxLength) characters")
+            needsFragments.append(String(localized: "at most \(maxLength) characters", comment: "Password requirements summary fragment: a maximum length"))
         }
 
         if let maxConsecutive = rules.maxConsecutive {
-            needsFragments.append("at most \(maxConsecutive) repeated characters in a row")
+            needsFragments.append(String(localized: "at most \(maxConsecutive) repeated characters in a row", comment: "Password requirements summary fragment"))
         }
 
         needsFragments.append(contentsOf: trailingMultiMemberClauses)
@@ -84,14 +84,14 @@ enum PasswordRulesSummary {
             // the domain as the subject of "only allows" keeps this a
             // real, standalone sentence instead.
             if let permittedNames {
-                return "\(domain) only allows \(permittedNames)."
+                return String(localized: "\(domain) only allows \(permittedNames).", comment: "Password requirements summary: first argument is a website domain, second a list of character classes")
             }
-            return "\(domain) has no specific password requirements."
+            return String(localized: "\(domain) has no specific password requirements.", comment: "Password requirements summary: the argument is a website domain")
         }
 
-        let needsSentence = "\(domain) needs " + joinedWithAnd(needsFragments) + "."
+        let needsSentence = String(localized: "\(domain) needs \(joinedWithAnd(needsFragments)).", comment: "Password requirements summary: first argument is a website domain, second a list of requirements")
         guard let permittedNames else { return needsSentence }
-        return needsSentence + " Only \(permittedNames) are permitted."
+        return needsSentence + " " + String(localized: "Only \(permittedNames) are permitted.", comment: "Password requirements summary: the argument is a list of character classes")
     }
 
     /// The rule's permitted toggle-backed classes, joined into one
@@ -171,21 +171,27 @@ enum PasswordRulesSummary {
         case 1:
             return names[0]
         case 2:
-            return "either \(names[0]) or \(names[1])"
+            return String(localized: "either \(names[0]) or \(names[1])", comment: "Password requirements summary fragment: two alternative character classes")
         default:
-            return "one of " + joined(names, conjunction: "or")
+            return String(localized: "one of \(joined(names, conjunction: .or))", comment: "Password requirements summary fragment: three or more alternative character classes, the argument is the list")
         }
     }
 
     private static func name(for characterClass: PasswordRules.CharacterClass) -> String {
         switch characterClass {
-        case .upper: return "an uppercase letter"
-        case .lower: return "a lowercase letter"
-        case .digit: return "a digit"
-        case .special: return "a symbol"
-        case .asciiPrintable: return "a printable character"
-        case .unicode: return "a unicode character"
-        case .custom(let members): return "a " + customClassNoun(for: members)
+        case .upper: return String(localized: "an uppercase letter", comment: "Password requirements summary: one character class, singular with article")
+        case .lower: return String(localized: "a lowercase letter", comment: "Password requirements summary: one character class, singular with article")
+        case .digit: return String(localized: "a digit", comment: "Password requirements summary: one character class, singular with article")
+        case .special: return String(localized: "a symbol", comment: "Password requirements summary: one character class, singular with article")
+        case .asciiPrintable: return String(localized: "a printable character", comment: "Password requirements summary: one character class, singular with article")
+        case .unicode: return String(localized: "a unicode character", comment: "Password requirements summary: one character class, singular with article")
+        case .custom(let members):
+            // One sentence per noun (not "a " + noun) so a translator can inflect the article.
+            switch customClassNoun(for: members) {
+            case .letter: return String(localized: "a letter", comment: "Password requirements summary: a custom character class made only of letters")
+            case .digit: return String(localized: "a digit", comment: "Password requirements summary: one character class, singular with article")
+            case .symbol: return String(localized: "a symbol", comment: "Password requirements summary: one character class, singular with article")
+            }
         }
     }
 
@@ -204,11 +210,13 @@ enum PasswordRulesSummary {
     /// classes are most commonly used for a bespoke punctuation set
     /// standard `special` doesn't cover, so that fallback is the right
     /// default for a mixed or punctuation-only class).
-    private static func customClassNoun(for members: Set<Character>) -> String {
-        guard !members.isEmpty else { return "symbol" }
-        if members.allSatisfy({ $0.isLetter }) { return "letter" }
-        if members.allSatisfy({ $0.isNumber }) { return "digit" }
-        return "symbol"
+    private enum CustomClassNoun { case letter, digit, symbol }
+
+    private static func customClassNoun(for members: Set<Character>) -> CustomClassNoun {
+        guard !members.isEmpty else { return .symbol }
+        if members.allSatisfy({ $0.isLetter }) { return .letter }
+        if members.allSatisfy({ $0.isNumber }) { return .digit }
+        return .symbol
     }
 
     /// Plural, article-free class names for a list context ("digits and
@@ -221,13 +229,13 @@ enum PasswordRulesSummary {
     /// independently-worded description of the same classes.
     static func pluralName(for characterClass: PasswordRules.CharacterClass) -> String {
         switch characterClass {
-        case .upper: return "uppercase letters"
-        case .lower: return "lowercase letters"
-        case .digit: return "digits"
-        case .special: return "symbols"
-        case .asciiPrintable: return "printable characters"
-        case .unicode: return "unicode characters"
-        case .custom: return "custom characters"
+        case .upper: return String(localized: "uppercase letters", comment: "Password requirements summary: one character class, plural, for lists")
+        case .lower: return String(localized: "lowercase letters", comment: "Password requirements summary: one character class, plural, for lists")
+        case .digit: return String(localized: "digits", comment: "Password requirements summary: one character class, plural, for lists")
+        case .special: return String(localized: "symbols", comment: "Password requirements summary: one character class, plural, for lists")
+        case .asciiPrintable: return String(localized: "printable characters", comment: "Password requirements summary: one character class, plural, for lists")
+        case .unicode: return String(localized: "unicode characters", comment: "Password requirements summary: one character class, plural, for lists")
+        case .custom: return String(localized: "custom characters", comment: "Password requirements summary: one character class, plural, for lists")
         }
     }
 
@@ -239,8 +247,10 @@ enum PasswordRulesSummary {
     /// rather than the two ending up with two different list styles for
     /// what is, to a reader, the identical kind of sentence.
     static func joinedWithAnd(_ items: [String]) -> String {
-        joined(items, conjunction: "and")
+        joined(items, conjunction: .and)
     }
+
+    private enum Conjunction { case and, or }
 
     /// Shared by `joinedWithAnd(_:)` and `requiredClauseFragment(for:)`'s
     /// three-or-more-member "one of A, B or C" phrasing -- the same
@@ -248,9 +258,16 @@ enum PasswordRulesSummary {
     /// different final word, so the two list styles this file renders
     /// (an AND-list of requirements, an OR-list inside one clause) cannot
     /// drift apart from each other structurally.
-    private static func joined(_ items: [String], conjunction: String) -> String {
+    ///
+    /// The final join is a whole localized phrase ("\(head) and \(last)") rather than a
+    /// concatenated English word, so a translator controls the conjunction and its spacing.
+    private static func joined(_ items: [String], conjunction: Conjunction) -> String {
         guard let last = items.last else { return "" }
         guard items.count > 1 else { return last }
-        return items.dropLast().joined(separator: ", ") + " \(conjunction) " + last
+        let head = items.dropLast().joined(separator: ", ")
+        switch conjunction {
+        case .and: return String(localized: "\(head) and \(last)", comment: "Password requirements summary: joins a list of requirements; first argument is the earlier items, second the last item")
+        case .or: return String(localized: "\(head) or \(last)", comment: "Password requirements summary: joins a list of alternatives; first argument is the earlier items, second the last item")
+        }
     }
 }

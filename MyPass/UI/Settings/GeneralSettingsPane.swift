@@ -14,8 +14,6 @@ struct GeneralSettingsPane: View {
     @State private var loginStatusMessage: String?
     @State private var isSyncingLoginItem = false
 
-    private let clickActionOptions = ["menu": "Show a menu"]
-
     var body: some View {
         Form {
             Section {
@@ -35,7 +33,7 @@ struct GeneralSettingsPane: View {
                         setLaunchAtLogin(enabled)
                     }
                 if let loginStatusMessage {
-                    SettingsHelperText(text: loginStatusMessage)
+                    SettingsHelperText(verbatim: loginStatusMessage)
                 }
                 SettingsHelperText(text: "MyPass opens in the background at login so the vault and extensions are ready. The vault remains locked until you unlock it manually.")
             } header: {
@@ -83,7 +81,7 @@ struct GeneralSettingsPane: View {
             loginStatusMessage = nil
         case .requiresApproval:
             launchAtLogin = false
-            loginStatusMessage = "Approval required — open System Settings → General → Login Items and allow MyPass."
+            loginStatusMessage = String(localized: "Approval required — open System Settings → General → Login Items and allow MyPass.", comment: "General settings: shown under the Start at login toggle when macOS needs the user to approve the login item")
         case .notRegistered:
             launchAtLogin = false
             loginStatusMessage = nil
@@ -103,7 +101,7 @@ struct GeneralSettingsPane: View {
         } catch {
             isSyncingLoginItem = true
             launchAtLogin = false
-            loginStatusMessage = "Could not update login item: \(error.localizedDescription)"
+            loginStatusMessage = String(localized: "Could not update login item: \(error.localizedDescription)", comment: "General settings: login item error; the argument is the system error text")
             isSyncingLoginItem = false
         }
     }

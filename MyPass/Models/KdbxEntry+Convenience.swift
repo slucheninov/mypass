@@ -23,6 +23,17 @@ extension KdbxEntry {
         set { setFieldValue(newValue, forKey: "Title", isProtected: false) }
     }
 
+    /// The title to show in the UI: the stored title verbatim, or a localized placeholder when it
+    /// is empty. `title` itself stays the raw vault value (it is what gets saved and searched);
+    /// only this placeholder is interface text. Returned as a `String`, so views must show it with
+    /// `Text(verbatim:)` / a plain `String` rather than expecting a second catalog lookup.
+    var displayTitle: String { Self.displayTitle(for: title) }
+
+    /// Same rule for a title that is not (yet) stored on an entry, such as an edit form's draft.
+    static func displayTitle(for title: String) -> String {
+        title.isEmpty ? String(localized: "(untitled)", comment: "Placeholder shown for an entry that has no title") : title
+    }
+
     var login: String {
         get { fieldValue(forKey: "UserName") }
         set { setFieldValue(newValue, forKey: "UserName", isProtected: false) }

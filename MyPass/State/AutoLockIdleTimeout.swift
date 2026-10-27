@@ -5,7 +5,9 @@ enum AutoLockIdleTimeout: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var pickerLabel: String {
+    /// Computed UI text: a `LocalizedStringResource` so it passes through the string catalog
+    /// (a plain `String` handed to `Text` would be shown verbatim in every language).
+    var pickerLabel: LocalizedStringResource {
         switch self {
         case .immediately: return "Immediately"
         case .oneMinute: return "1 minute"

@@ -9,7 +9,7 @@ import MyPassKit
 struct PasskeyDetailsPopover: View {
     let entry: KdbxEntry
     /// Points at wherever removal lives, for the surface that does not offer it.
-    var footnote: String?
+    var footnote: LocalizedStringKey?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -26,7 +26,7 @@ struct PasskeyDetailsPopover: View {
             } else {
                 // A passkey imported from KeePassXC carries no creation date. Say so,
                 // rather than leaving a gap the user has to interpret.
-                detailLine(label: "Created", value: "Unknown — created outside MyPass")
+                detailLine(label: "Created", value: String(localized: "Unknown — created outside MyPass", comment: "Passkey details: creation date of a passkey imported from another app"))
             }
             if let credentialId = entry.passkeyCredentialId {
                 detailLine(label: "Credential ID", value: PasskeyBase64URL.encode(credentialId))
@@ -42,12 +42,12 @@ struct PasskeyDetailsPopover: View {
         .frame(width: 320, alignment: .leading)
     }
 
-    private func detailLine(label: String, value: String) -> some View {
+    private func detailLine(label: LocalizedStringKey, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.caption)
                 .foregroundStyle(.secondary)
-            Text(value)
+            Text(verbatim: value)
                 .font(.system(.caption, design: .monospaced))
                 .textSelection(.enabled)
         }

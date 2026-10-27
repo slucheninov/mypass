@@ -7,15 +7,20 @@ struct AddressDetailView: View {
     @EnvironmentObject private var vaultSession: VaultSession
     @EnvironmentObject private var navigationState: NavigationState
 
+    /// Labels are interface text, resolved with `String(localized:)` here because the rows are
+    /// plain tuples that feed both a row label and the "Copy <label>" menu item. The values are
+    /// vault data and stay as stored, except the address type, which is one of three stored
+    /// English identifiers (Home / Work / Other) and is shown through `addressLabelTitle`.
     private var rows: [(label: String, value: String)] {
         let a = entry.address
+        func label(_ resource: LocalizedStringResource) -> String { String(localized: resource) }
         return [
-            ("Type", a.label), ("Full Name", a.fullName), ("Given Name", a.givenName),
-            ("Family Name", a.familyName), ("Organization", a.organization),
-            ("Address Line 1", a.addressLine1), ("Address Line 2", a.addressLine2),
-            ("City", a.city), ("Region", a.region), ("Postal Code", a.postalCode),
-            ("Country", a.countryName.isEmpty ? a.countryCode : a.countryName),
-            ("Phone", a.phone), ("Email", a.email), ("Notes", entry.notes)
+            (label("Type"), KdbxEntry.addressLabelTitle(a.label)), (label("Full Name"), a.fullName), (label("Given Name"), a.givenName),
+            (label("Family Name"), a.familyName), (label("Organization"), a.organization),
+            (label("Address Line 1"), a.addressLine1), (label("Address Line 2"), a.addressLine2),
+            (label("City"), a.city), (label("Region"), a.region), (label("Postal Code"), a.postalCode),
+            (label("Country"), a.countryName.isEmpty ? a.countryCode : a.countryName),
+            (label("Phone"), a.phone), (label("Email"), a.email), (label("Notes"), entry.notes)
         ].filter { !$0.1.isEmpty }
     }
 
@@ -23,15 +28,15 @@ struct AddressDetailView: View {
         ScrollView {
             VStack(spacing: 20) {
                 Image(systemName: "house.fill").font(.system(size: 42)).foregroundStyle(.teal).padding(.top, 24)
-                Text(entry.title).font(.title2.bold()).multilineTextAlignment(.center)
+                Text(verbatim: entry.title).font(.title2.bold()).multilineTextAlignment(.center)
                 DetailFieldsCard {
                     ForEach(rows, id: \.label) { row in
-                        DetailFieldRow(label: row.label, value: row.value)
+                        DetailFieldRow(verbatimLabel: row.label, value: row.value)
                             .contextMenu { Button("Copy \(row.label)") { copy(row.value) } }
                         DetailFieldDivider()
                     }
                     ForEach(entry.additionalFields, id: \.key) { field in
-                        DetailFieldRow(label: field.key, value: field.isProtected ? "••••••••" : field.value)
+                        DetailFieldRow(verbatimLabel: field.key, value: field.isProtected ? "••••••••" : field.value)
                             .contextMenu { Button("Copy \(field.key)") { copy(field.value) } }
                     }
                 }

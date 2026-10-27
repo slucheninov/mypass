@@ -20,7 +20,7 @@ struct OpenExistingVaultSheet: View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Open Existing Vault")
                 .font(.headline)
-            Text(fileURL.lastPathComponent)
+            Text(verbatim: fileURL.lastPathComponent)
                 .font(.system(size: 12))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
@@ -62,7 +62,7 @@ struct OpenExistingVaultSheet: View {
             onSuccess(database, password)
             dismiss()
         } catch {
-            errorMessage = "Incorrect password, or this file isn't a valid .kdbx vault MyPass can open."
+            errorMessage = String(localized: "Incorrect password, or this file isn't a valid .kdbx vault MyPass can open.", comment: "Open existing vault sheet: inline error")
         }
     }
 }

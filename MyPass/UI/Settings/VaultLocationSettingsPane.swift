@@ -19,8 +19,10 @@ struct VaultLocationSettingsPane: View {
     var body: some View {
         Group {
             Section {
-                LabeledContent("Current Location", value: currentLocation.rawValue)
-                Text(vaultSession.primaryVaultPathDisplay)
+                LabeledContent("Current Location") {
+                    Text(currentLocation.title)
+                }
+                Text(verbatim: vaultSession.primaryVaultPathDisplay)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)

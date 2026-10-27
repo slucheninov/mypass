@@ -14,7 +14,10 @@ enum SettingsPane: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var title: String {
+    /// A `LocalizedStringResource`, not a `String`: the title is computed, so a plain `String`
+    /// would reach `Text` / `Label` as already-final text and never pass through the string
+    /// catalog. As a resource it is resolved against the app's language at the point it is shown.
+    var title: LocalizedStringResource {
         switch self {
         case .general: return "General"
         case .vault: return "Vault"
@@ -36,7 +39,7 @@ enum SettingsPane: String, CaseIterable, Identifiable {
         }
     }
 
-    var detailTitle: String { title }
+    var detailTitle: LocalizedStringResource { title }
 
     /// Maps a stored selection to a pane. Vault Location, Sync and Backups used to be three
     /// separate panes and are now sections of `.vault`, so a profile that last left Settings on

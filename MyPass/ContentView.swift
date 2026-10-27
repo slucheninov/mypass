@@ -57,7 +57,8 @@ struct ContentView: View {
                     set: { if !$0 { vaultSession.acknowledgeSaveError() } }
                 ),
                 actions: {},
-                message: { Text(vaultSession.lastSaveError ?? "") }
+                // Already localized where `VaultSession` produced it.
+                message: { Text(verbatim: vaultSession.lastSaveError ?? "") }
             )
             .onAppear {
                 // Covers both the closed-window case (proposal set before ContentView —
@@ -153,7 +154,9 @@ private struct DetailColumnView: View {
         let categoryMode = navigationState.isCategoryMode
         let count = EntryListQuery.entries(root: rootGroup, database: vaultSession.currentDatabase, navigation: navigationState).count
         return ScopeOverviewView(
-            title: categoryMode ? category.title : group.name,
+            title: categoryMode
+                ? String(localized: category.title)
+                : GroupTreeOperations.displayName(for: group, recycleBinGroupUUID: vaultSession.currentDatabase?.recycleBinGroupUUID),
             symbolName: categoryMode ? category.symbolName : "folder",
             emoji: categoryMode ? nil : group.emoji,
             accentColor: categoryMode ? category.accentColor : .secondary,

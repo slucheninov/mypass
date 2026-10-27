@@ -148,9 +148,10 @@ struct EntryBrowseActionRow: View {
                     Button {
                         EntryActions.move(entryID: entry.uuid, toGroup: group.uuid, in: vaultSession)
                     } label: {
-                        // Group names are vault data: shown verbatim, never localized.
+                        // Group names are vault data: shown verbatim, never localized (only the
+                        // Recycle Bin, which is not selectable here anyway, has a localized label).
                         HStack {
-                            Text(verbatim: group.name)
+                            Text(verbatim: GroupTreeOperations.displayName(for: group, recycleBinGroupUUID: database.recycleBinGroupUUID))
                             if group.uuid == currentGroupID {
                                 Image(systemName: "checkmark")
                             }

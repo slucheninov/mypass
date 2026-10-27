@@ -59,7 +59,7 @@ struct GroupSidebarView: View {
 
             Section {
                 if let uuid = recycleBinGroupUUID, let bin = rootGroup.subgroups.first(where: { $0.uuid == uuid }) {
-                    Text(GroupTreeOperations.recycleBinGroupName)
+                    Text(verbatim: GroupTreeOperations.recycleBinDisplayName)
                         .tag(bin.uuid)
                         .contextMenu {
                             Button("Empty Recycle Bin…", role: .destructive) {
@@ -68,7 +68,7 @@ struct GroupSidebarView: View {
                             .disabled(EntrySearch.allEntries(in: bin).isEmpty)
                         }
                 } else {
-                    Text(GroupTreeOperations.recycleBinGroupName)
+                    Text(verbatim: GroupTreeOperations.recycleBinDisplayName)
                         .foregroundStyle(.secondary)
                 }
             }
@@ -143,12 +143,12 @@ struct GroupSidebarView: View {
     private func groupRow(_ group: KdbxGroup) -> some View {
         HStack(spacing: 8) {
             if let emoji = group.emoji {
-                Text(emoji)
+                Text(verbatim: emoji)
             } else {
                 Image(systemName: "folder")
                     .foregroundStyle(.secondary)
             }
-            Text(group.name)
+            Text(verbatim: GroupTreeOperations.displayName(for: group, recycleBinGroupUUID: recycleBinGroupUUID))
             Spacer(minLength: 0)
             Text("\(group.entries.count)")
                 .font(.caption)
@@ -203,12 +203,15 @@ struct GroupSidebarView: View {
 }
 
 private struct SidebarSectionHeader: View {
-    let title: String
+    let title: LocalizedStringKey
     var trailing: (() -> AnyView)? = nil
 
     var body: some View {
         HStack {
-            Text(title.uppercased())
+            // `textCase` (not `String.uppercased()`) so the key is looked up first and the
+            // translation is then upper-cased with the user's language rules.
+            Text(title)
+                .textCase(.uppercase)
                 .font(.system(size: 11, weight: .semibold))
                 .foregroundStyle(.secondary)
             Spacer()
@@ -235,7 +238,7 @@ private struct SmartCategorySidebarRow: View {
                 Text(category.title)
                     .foregroundStyle(.primary)
                 Spacer(minLength: 4)
-                Text(countText)
+                Text(verbatim: countText)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

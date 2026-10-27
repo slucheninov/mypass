@@ -20,7 +20,8 @@ struct UpdateStatusView: View {
             Button("View release") { NSWorkspace.shared.open(release.url) }
                 .buttonStyle(.link)
         case .failed(let message):
-            Text(message).foregroundStyle(.red)
+            // `message` was localized by `AppUpdateChecker` when it was produced.
+            Text(verbatim: message).foregroundStyle(.red)
         }
     }
 }

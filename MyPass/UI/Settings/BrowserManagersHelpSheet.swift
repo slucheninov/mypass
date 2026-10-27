@@ -50,11 +50,15 @@ struct BrowserManagersHelpSheet: View {
         .frame(width: 590, height: 570)
     }
 
-    private func helpSection(_ title: String, steps: [String], source: String) -> some View {
+    /// `title` and `steps` are `LocalizedStringResource`s (not `String`s): they are built from
+    /// literals at the call sites and `Text(String)` would show them untranslated.
+    private func helpSection(_ title: LocalizedStringResource, steps: [LocalizedStringResource], source: String) -> some View {
         VStack(alignment: .leading, spacing: 8) {
             Text(title).font(.headline)
             ForEach(Array(steps.enumerated()), id: \.offset) { index, step in
-                Text("\(index + 1). \(step)")
+                // The step is resolved first, then dropped into one numbered line (the number is not part of
+                // the translated sentence).
+                Text("\(index + 1). \(String(localized: step))")
             }
             Link("Official help", destination: URL(string: source)!)
         }
@@ -62,7 +66,7 @@ struct BrowserManagersHelpSheet: View {
 
     private func copyAddress(_ address: String) -> some View {
         HStack {
-            Text(address).font(.system(.body, design: .monospaced)).textSelection(.enabled)
+            Text(verbatim: address).font(.system(.body, design: .monospaced)).textSelection(.enabled)
             Spacer()
             Button("Copy address") {
                 NSPasteboard.general.clearContents()

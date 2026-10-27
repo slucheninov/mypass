@@ -31,7 +31,7 @@ final class SettingsPaneTests: XCTestCase {
 
     func testEveryPaneHasATitleAndSymbol() {
         for pane in SettingsPane.allCases {
-            XCTAssertFalse(pane.title.isEmpty, pane.rawValue)
+            XCTAssertFalse(String(localized: pane.title).isEmpty, pane.rawValue)
             XCTAssertFalse(pane.symbolName.isEmpty, pane.rawValue)
         }
     }

@@ -8,7 +8,7 @@ struct LargeTypePopover: View {
     var isMonospaced: Bool = true
 
     var body: some View {
-        Text(text)
+        Text(verbatim: text)
             .font(.system(size: 48, weight: .medium, design: isMonospaced ? .monospaced : .rounded))
             .padding(32)
             .frame(minWidth: 200)

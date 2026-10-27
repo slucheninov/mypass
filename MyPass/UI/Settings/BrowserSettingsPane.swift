@@ -19,7 +19,7 @@ struct BrowserSettingsPane: View {
             }
 
             Section("Paired browsers") {
-                if let revokeError { Text(revokeError).foregroundStyle(.red) }
+                if let revokeError { Text(verbatim: revokeError).foregroundStyle(.red) }
                 if pairedBrowsers.isEmpty {
                     Text("No paired browsers. Open the MyPass browser extension to connect.")
                         .foregroundStyle(.secondary)
@@ -27,7 +27,7 @@ struct BrowserSettingsPane: View {
                 ForEach(pairedBrowsers) { browser in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(browser.label).font(.headline)
+                            Text(verbatim: browser.label).font(.headline)
                             Spacer()
                             Button("Revoke") {
                                 do {
@@ -36,17 +36,17 @@ struct BrowserSettingsPane: View {
                                     diagnostics.remove(browserID: browser.id)
                                     pairedBrowsers = pairingStoreModel.refresh()
                                 } catch {
-                                    revokeError = "Could not revoke this browser. Try again."
+                                    revokeError = String(localized: "Could not revoke this browser. Try again.", comment: "Browser settings: error after a failed revoke")
                                 }
                             }
                         }
-                        Text("Paired " + browser.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        Text("Paired \(browser.createdAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption).foregroundStyle(.secondary)
                         if let snapshot = diagnostics.snapshots[browser.id] {
-                            Text(snapshot.passkeyStatus)
-                            Text(snapshot.passwordSavingStatus)
-                            Text(snapshot.managerStatus)
-                            Text("Last report received " + snapshot.receivedAt.formatted(date: .abbreviated, time: .standard))
+                            Text(verbatim: snapshot.passkeyStatus)
+                            Text(verbatim: snapshot.passwordSavingStatus)
+                            Text(verbatim: snapshot.managerStatus)
+                            Text("Last report received \(snapshot.receivedAt.formatted(date: .abbreviated, time: .standard))")
                                 .font(.caption).foregroundStyle(.secondary)
                             SettingsHelperText(text: "This is the last reported state, not a live check. Reopen the extension and choose Check this browser after changing another manager.")
                         } else {

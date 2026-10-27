@@ -46,7 +46,9 @@ struct WebsitesSheet: View {
             List {
                 ForEach(rows.indices, id: \.self) { index in
                     HStack {
-                        Text(index == 0 ? "Primary" : "")
+                        Group {
+                            if index == 0 { Text("Primary") } else { Text(verbatim: "") }
+                        }
                             .font(.caption)
                             .foregroundStyle(.secondary)
                             .frame(width: 56, alignment: .leading)

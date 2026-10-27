@@ -6,7 +6,7 @@ struct MenuBarRecentEntryRow: View {
     let action: () -> Void
 
     private var displayTitle: String {
-        entry.title.isEmpty ? "(untitled)" : entry.title
+        entry.displayTitle
     }
 
     var body: some View {
@@ -18,11 +18,11 @@ struct MenuBarRecentEntryRow: View {
                     LetterAvatarView(title: displayTitle, size: 28, cornerRadius: 6)
                 }
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(displayTitle)
+                    Text(verbatim: displayTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
                     if entry.entryType == .address || !entry.login.isEmpty {
-                        Text(entry.entryType == .address ? entry.addressSummary : entry.login)
+                        Text(verbatim: entry.entryType == .address ? entry.addressSummary : entry.login)
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

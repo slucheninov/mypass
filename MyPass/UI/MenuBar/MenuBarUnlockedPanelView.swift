@@ -84,7 +84,7 @@ struct MenuBarUnlockedPanelView: View {
     }
 
     @ViewBuilder
-    private func menuRow(_ title: String, action: @escaping () -> Void) -> some View {
+    private func menuRow(_ title: LocalizedStringKey, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack {
                 Text(title)

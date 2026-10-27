@@ -163,7 +163,8 @@ struct ToolbarSearchField: NSViewRepresentable {
 
     func makeNSView(context: Context) -> NSSearchField {
         let field = NSSearchField()
-        field.placeholderString = "Search"
+        // AppKit does not localize literals: this goes through the string catalog explicitly.
+        field.placeholderString = String(localized: "Search", comment: "Placeholder of the toolbar search field")
         // Fire the action on every keystroke (not after a pause) so filtering updates exactly as
         // the `.searchable` binding did.
         field.sendsSearchStringImmediately = true

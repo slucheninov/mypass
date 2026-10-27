@@ -78,7 +78,7 @@ struct EntryDetailView: View {
               let location = GroupTreeOperations.entryLocation(entryID: entry.uuid, in: database.rootGroup) else {
             return nil
         }
-        return location.group.name
+        return GroupTreeOperations.displayName(for: location.group, recycleBinGroupUUID: database.recycleBinGroupUUID)
     }
 
     var body: some View {
@@ -87,12 +87,12 @@ struct EntryDetailView: View {
                 VStack(spacing: 20) {
                     VStack(spacing: 12) {
                         LetterAvatarView(
-                            title: entry.title.isEmpty ? "(untitled)" : entry.title,
+                            title: entry.displayTitle,
                             size: UIShellMetrics.detailHeroIconSize,
                             cornerRadius: UIShellMetrics.detailHeroIconCornerRadius,
                             letterScale: UIShellMetrics.detailHeroLetterScale
                         )
-                        Text(entry.title.isEmpty ? "(untitled)" : entry.title)
+                        Text(verbatim: entry.displayTitle)
                             .font(.system(size: 22, weight: .bold))
                             .multilineTextAlignment(.center)
                     }
@@ -178,7 +178,7 @@ struct EntryDetailView: View {
                                                 moveToGroup(group.uuid, entryID: entry.uuid)
                                             } label: {
                                                 HStack {
-                                                    Text(group.name)
+                                                    Text(verbatim: GroupTreeOperations.displayName(for: group, recycleBinGroupUUID: database.recycleBinGroupUUID))
                                                     if group.uuid == currentGroupID {
                                                         Image(systemName: "checkmark")
                                                     }
@@ -287,12 +287,12 @@ struct EntryDetailView: View {
     }
 
     private func copyableFieldRow(
-        label: String,
+        label: LocalizedStringKey,
         field: CopiedField,
         displayValue: String,
         copyValue: String
     ) -> some View {
-        let shownValue = copiedField == field ? "Copied" : displayValue
+        let shownValue = copiedField == field ? String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value") : displayValue
 
         return HStack(alignment: .center, spacing: 12) {
             Text(label)
@@ -302,7 +302,7 @@ struct EntryDetailView: View {
                 copy(copyValue)
                 flashCopied(field)
             } label: {
-                Text(shownValue)
+                Text(verbatim: shownValue)
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .contentShape(Rectangle())
@@ -317,7 +317,7 @@ struct EntryDetailView: View {
 
     private func passwordRow(for entry: KdbxEntry) -> some View {
         let displayText: String = {
-            if copiedField == .password { return "Copied" }
+            if copiedField == .password { return String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value") }
             if isPasswordRevealed { return entry.password }
             return String(repeating: "•", count: max(entry.password.count, 8))
         }()
@@ -330,7 +330,7 @@ struct EntryDetailView: View {
                 copy(entry.password)
                 flashCopied(.password)
             } label: {
-                Text(displayText)
+                Text(verbatim: displayText)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .contentShape(Rectangle())
             }
@@ -356,7 +356,7 @@ struct EntryDetailView: View {
             Text("Website")
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            Text(domain)
+            Text(verbatim: domain)
                 .foregroundStyle(Color.accentColor)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
@@ -370,7 +370,7 @@ struct EntryDetailView: View {
         let fieldCase = CopiedField.extra(field.key)
         let isRevealed = revealedExtraFields.contains(field.key)
         let displayText: String = {
-            if copiedField == fieldCase { return "Copied" }
+            if copiedField == fieldCase { return String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value") }
             if field.isProtected && !isRevealed {
                 return String(repeating: "•", count: max(field.value.count, 8))
             }
@@ -378,14 +378,15 @@ struct EntryDetailView: View {
         }()
 
         return HStack(alignment: .center, spacing: 12) {
-            Text(field.key)
+            // Custom field names are vault data: shown exactly as stored.
+            Text(verbatim: field.key)
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
             Button {
                 copy(field.value)
                 flashCopied(fieldCase)
             } label: {
-                Text(displayText)
+                Text(verbatim: displayText)
                     .multilineTextAlignment(.trailing)
                     .frame(maxWidth: .infinity, alignment: .trailing)
                     .contentShape(Rectangle())
@@ -413,7 +414,7 @@ struct EntryDetailView: View {
 
     private func totpRow(secret: String) -> some View {
         let code = currentTOTPCode(secret: secret)
-        let displayValue = copiedField == .totp ? "Copied" : code
+        let displayValue = copiedField == .totp ? String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value") : code
 
         return HStack(alignment: .center, spacing: 12) {
             Text("Verification Code")
@@ -424,7 +425,7 @@ struct EntryDetailView: View {
                 flashCopied(.totp)
             } label: {
                 HStack(spacing: 8) {
-                    Text(displayValue)
+                    Text(verbatim: displayValue)
                         .font(.system(.body, design: .monospaced))
                     if copiedField != .totp {
                         TOTPCountdownRingView(period: 30, now: now)
@@ -489,7 +490,7 @@ struct EntryDetailView: View {
             Text("Passkey")
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            Text(passkeyCreatedDescription(entry.passkeyCreatedAt))
+            Text(verbatim: passkeyCreatedDescription(entry.passkeyCreatedAt))
                 .frame(maxWidth: .infinity, alignment: .trailing)
             Button("Show") { showPasskeyDetails = true }
                 .buttonStyle(.link)
@@ -506,8 +507,8 @@ struct EntryDetailView: View {
     /// A passkey imported from KeePassXC carries no creation date — say so plainly
     /// rather than showing a date invented from the entry's own timestamps.
     private func passkeyCreatedDescription(_ created: Date?) -> String {
-        guard let created else { return "Added" }
-        return "Added \(created.formatted(date: .abbreviated, time: .omitted))"
+        guard let created else { return String(localized: "Added", comment: "Passkey row: shown when the passkey has no creation date") }
+        return String(localized: "Added \(created.formatted(date: .abbreviated, time: .omitted))", comment: "Passkey row; the argument is the date the passkey was added")
     }
 
     private func moveToGroup(_ groupID: UUID, entryID: UUID) {
@@ -550,15 +551,29 @@ struct DetailFieldDivider: View {
 }
 
 struct DetailFieldRow: View {
-    let label: String
+    /// Held as a `Text` so the two initialisers decide the localization path: interface labels
+    /// ("Group", "Cardholder") come in as a `LocalizedStringKey` and reach the string catalog;
+    /// vault-originated labels (custom field names) use `init(verbatimLabel:)` and are shown
+    /// exactly as stored.
+    private let label: Text
     let value: String
+
+    init(label: LocalizedStringKey, value: String) {
+        self.label = Text(label)
+        self.value = value
+    }
+
+    init(verbatimLabel: String, value: String) {
+        self.label = Text(verbatim: verbatimLabel)
+        self.value = value
+    }
 
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
-            Text(label)
+            label
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            Text(value)
+            Text(verbatim: value)
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }

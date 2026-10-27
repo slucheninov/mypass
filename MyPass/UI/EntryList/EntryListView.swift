@@ -15,15 +15,18 @@ struct EntryListView: View {
         EntryListQuery.entries(root: rootGroup, database: vaultSession.currentDatabase, navigation: navigationState)
     }
 
+    /// A plain `String` for `.navigationTitle`, so the category title is resolved here with
+    /// `String(localized:)` and the group name goes through `displayName` (vault names verbatim,
+    /// only the Recycle Bin localized).
     private var headerTitle: String {
         if navigationState.isCategoryMode {
-            return navigationState.selectedSmartCategory.title
+            return String(localized: navigationState.selectedSmartCategory.title)
         }
-        return currentGroup.name
+        return GroupTreeOperations.displayName(for: currentGroup, recycleBinGroupUUID: vaultSession.currentDatabase?.recycleBinGroupUUID)
     }
 
     private func displayTitle(for entry: KdbxEntry) -> String {
-        entry.title.isEmpty ? "(untitled)" : entry.title
+        entry.displayTitle
     }
 
     private func toggleFavorite(_ entry: KdbxEntry) {
@@ -75,11 +78,11 @@ private struct EntryListRow: View {
         HStack(spacing: 12) {
             leadingIcon
             VStack(alignment: .leading, spacing: 2) {
-                Text(title)
+                Text(verbatim: title)
                     .font(.body.weight(.semibold))
                     .foregroundStyle(.primary)
                 if !subtitle.isEmpty {
-                    Text(subtitle)
+                    Text(verbatim: subtitle)
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
                 }

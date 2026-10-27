@@ -250,7 +250,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
     var currentPrimaryStore: VaultPrimaryStorage { fileStore }
 
     var primaryVaultPathDisplay: String {
-        fileStore.primaryVaultFileURL?.path ?? "Path unavailable"
+        fileStore.primaryVaultFileURL?.path ?? String(localized: "Path unavailable", comment: "Vault settings: shown instead of the vault file path when there is none")
     }
 
     func loadVaultData() throws -> Data? {
@@ -438,7 +438,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
                 }
             } catch {
                 DispatchQueue.main.async { [weak self] in
-                    self?.lastSaveError = "Could not reload vault from iCloud: \(error)"
+                    self?.lastSaveError = String(localized: "Could not reload vault from iCloud: \(String(describing: error))", comment: "Save error alert; the argument is the underlying error")
                 }
             }
         }
@@ -812,9 +812,9 @@ final class VaultSession: ObservableObject, VaultFlushing {
         } catch {
             let warning: String
             if let path = oldStore.primaryVaultFileURL?.path {
-                warning = "The vault was switched, but the old copy at \(path) could not be removed."
+                warning = String(localized: "The vault was switched, but the old copy at \(path) could not be removed.", comment: "Save error alert; the argument is a file path")
             } else {
-                warning = "The vault was switched, but the old copy could not be removed."
+                warning = String(localized: "The vault was switched, but the old copy could not be removed.", comment: "Save error alert")
             }
             lastSaveError = warning
             return warning
@@ -838,7 +838,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
         do {
             result = try syncEngine.sync(local: db, password: password, cipher: .aes256, compression: .gzip)
         } catch {
-            lastSaveError = "Failed to sync vault: \(error)"
+            lastSaveError = String(localized: "Failed to sync vault: \(String(describing: error))", comment: "Save error alert; the argument is the underlying error")
             return db
         }
         guard case .merged(let mergedDatabase) = result else { return db }
@@ -848,7 +848,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
             recordSuccessfulWrite(data, database: mergedDatabase)
             noteSynchronousDurableWrite()
         } catch {
-            lastSaveError = "Failed to save merged changes locally: \(error)"
+            lastSaveError = String(localized: "Failed to save merged changes locally: \(String(describing: error))", comment: "Save error alert; the argument is the underlying error")
         }
         return mergedDatabase
     }
@@ -912,7 +912,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
             do {
                 data = try snapshot.save(password: sessionPassword, cipher: .aes256, compression: .gzip)
             } catch {
-                let message = "Failed to save changes: \(error)"
+                let message = String(localized: "Failed to save changes: \(String(describing: error))", comment: "Save error alert; the argument is the underlying error")
                 self.finishLocalWrite(generation: generation, result: .failed(message))
                 DispatchQueue.main.async { [weak self] in
                     self?.lastSaveError = message
@@ -923,7 +923,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
             do {
                 try fileStore.save(data: data)
             } catch {
-                let message = "Failed to save changes: \(error)"
+                let message = String(localized: "Failed to save changes: \(String(describing: error))", comment: "Save error alert; the argument is the underlying error")
                 self.finishLocalWrite(generation: generation, result: .failed(message))
                 DispatchQueue.main.async { [weak self] in
                     self?.lastSaveError = message
@@ -951,7 +951,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
             } catch {
                 DispatchQueue.main.async { [weak self] in
                     self?.hasDirtyLocalChanges = false
-                    self?.lastSaveError = "Local save completed, but sync failed: \(error)"
+                    self?.lastSaveError = String(localized: "Local save completed, but sync failed: \(String(describing: error))", comment: "Save error alert; the argument is the underlying error")
                 }
             }
         }

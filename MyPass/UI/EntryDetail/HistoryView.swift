@@ -70,9 +70,9 @@ private struct HistoryVersionRow: View {
                 Image(systemName: "pencil").font(.system(size: 14)).foregroundStyle(.secondary)
             }
             VStack(alignment: .leading, spacing: 2) {
-                Text(rowTitle)
+                Text(verbatim: rowTitle)
                     .font(.body.weight(.medium))
-                Text(HistoryView.relativeFormatter.localizedString(for: version.lastModificationTime, relativeTo: Date()))
+                Text(verbatim: HistoryView.relativeFormatter.localizedString(for: version.lastModificationTime, relativeTo: Date()))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -83,8 +83,8 @@ private struct HistoryVersionRow: View {
     }
 
     private var rowTitle: String {
-        if version.password != currentEntry.password { return "Password updated" }
+        if version.password != currentEntry.password { return String(localized: "Password updated", comment: "Entry history row title") }
         if !version.title.isEmpty { return version.title }
-        return "Password updated"
+        return String(localized: "Password updated", comment: "Entry history row title")
     }
 }

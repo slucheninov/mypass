@@ -14,7 +14,8 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
 
     var id: String { rawValue }
 
-    var title: String {
+    /// A `LocalizedStringResource` so the computed title passes through the string catalog.
+    var title: LocalizedStringResource {
         switch self {
         case .all: return "All"
         case .favorites: return "Favorites"

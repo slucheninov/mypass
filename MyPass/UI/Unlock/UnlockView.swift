@@ -23,11 +23,14 @@ struct UnlockView: View {
         self.biometricKeyStore = biometricKeyStore
     }
 
+    /// A `String` built with `String(localized:)` (not a literal handed to `Button`): the label is
+    /// computed from two toggles, and the `(false, false)` case is empty, which a
+    /// `LocalizedStringResource` would extract into the catalog as an empty key.
     private var deviceUnlockButtonLabel: String {
         switch (touchIDEnabled, macPasswordEnabled) {
-        case (true, true): return "Unlock with Touch ID or Password"
-        case (true, false): return "Touch ID"
-        case (false, true): return "Unlock with Mac Password"
+        case (true, true): return String(localized: "Unlock with Touch ID or Password", comment: "Unlock screen: device unlock button when both Touch ID and Mac password are enabled")
+        case (true, false): return String(localized: "Touch ID", comment: "Unlock screen: device unlock button label")
+        case (false, true): return String(localized: "Unlock with Mac Password", comment: "Unlock screen: device unlock button when only the Mac password is enabled")
         case (false, false): return ""
         }
     }
@@ -80,7 +83,8 @@ struct UnlockView: View {
             KeyboardLayoutIndicator()
 
             if let errorMessage {
-                Text(errorMessage)
+                // Already localized where it is set.
+                Text(verbatim: errorMessage)
                     .foregroundStyle(.red)
                     .font(.caption)
                     .multilineTextAlignment(.center)
@@ -160,7 +164,7 @@ struct UnlockView: View {
             lastDeviceUnlockTimestamp = now
             lastFullPasswordEntryTimestamp = now
         } catch {
-            errorMessage = "Incorrect password or corrupted file."
+            errorMessage = String(localized: "Incorrect password or corrupted file.", comment: "Unlock screen: inline message")
         }
     }
 
@@ -191,7 +195,7 @@ struct UnlockView: View {
             lastDeviceUnlockTimestamp = now
             lastFullPasswordEntryTimestamp = now
         } catch {
-            errorMessage = "Could not switch to this vault file."
+            errorMessage = String(localized: "Could not switch to this vault file.", comment: "Unlock screen: inline message")
         }
     }
 
@@ -207,7 +211,7 @@ struct UnlockView: View {
 
         guard canShowDeviceUnlockButton else {
             deviceUnlockPromptCoordinator.promptFinished()
-            errorMessage = "Device unlock is unavailable. Enter your master password."
+            errorMessage = String(localized: "Device unlock is unavailable. Enter your master password.", comment: "Unlock screen: inline message")
             return false
         }
         guard let accessControl = DeviceUnlockAccessControl.forToggles(
@@ -215,7 +219,7 @@ struct UnlockView: View {
             macPasswordEnabled: macPasswordEnabled
         ) else {
             deviceUnlockPromptCoordinator.promptFinished()
-            errorMessage = "Device unlock is unavailable. Enter your master password."
+            errorMessage = String(localized: "Device unlock is unavailable. Enter your master password.", comment: "Unlock screen: inline message")
             return false
         }
         DeviceUnlockAuthenticator.authenticate(accessControl: accessControl) { success in
@@ -223,7 +227,7 @@ struct UnlockView: View {
             guard success else {
                 // The attempt was deliberate, so a cancelled or failed Touch ID gets
                 // feedback instead of silently doing nothing.
-                errorMessage = "Device unlock didn't complete. Try again or enter your master password."
+                errorMessage = String(localized: "Device unlock didn't complete. Try again or enter your master password.", comment: "Unlock screen: inline message")
                 return
             }
             do {
@@ -233,7 +237,7 @@ struct UnlockView: View {
                 errorMessage = nil
                 lastDeviceUnlockTimestamp = Date().timeIntervalSince1970
             } catch {
-                errorMessage = "Device unlock is unavailable. Enter your master password."
+                errorMessage = String(localized: "Device unlock is unavailable. Enter your master password.", comment: "Unlock screen: inline message")
             }
         }
         return true

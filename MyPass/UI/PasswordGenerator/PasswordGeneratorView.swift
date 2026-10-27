@@ -156,7 +156,7 @@ struct PasswordGeneratorView: View {
             return nil
         }
         let names = PasswordRulesSummary.joinedWithAnd(conflict.map(PasswordRulesSummary.pluralName(for:)))
-        return "\(siteDomain) only allows \(names). Enable one of them to generate a password."
+        return String(localized: "\(siteDomain) only allows \(names). Enable one of them to generate a password.", comment: "Password generator warning: first argument is a website domain, second a list of character classes")
     }
 
     /// The slider's value, clamped into the active rule's range for display
@@ -197,7 +197,7 @@ struct PasswordGeneratorView: View {
                         Label("\(siteDomain) has password requirements", systemImage: "info.circle")
                     }
                     .popover(isPresented: $showRuleExplanation) {
-                        Text(PasswordRulesSummary.describe(ruleForDomain, domain: siteDomain))
+                        Text(verbatim: PasswordRulesSummary.describe(ruleForDomain, domain: siteDomain))
                             .padding()
                             .frame(width: 260)
                     }
@@ -209,7 +209,7 @@ struct PasswordGeneratorView: View {
             }
 
             if let allowedClassesConflictMessage {
-                Text(allowedClassesConflictMessage)
+                Text(verbatim: allowedClassesConflictMessage)
                     .foregroundStyle(.orange)
                     .font(.caption)
             }
@@ -231,14 +231,15 @@ struct PasswordGeneratorView: View {
                 .disabled(allowedClassesConflictMessage != nil)
 
             if let errorMessage {
-                Text(errorMessage)
+                // Already localized where it is set.
+                Text(verbatim: errorMessage)
                     .foregroundStyle(.red)
                     .font(.caption)
             }
 
             if !generatedPassword.isEmpty {
                 HStack {
-                    Text(generatedPassword)
+                    Text(verbatim: generatedPassword)
                         .font(.system(.body, design: .monospaced))
                     Button("Copy", systemImage: "doc.on.doc") {
                         NSPasteboard.general.clearContents()
@@ -267,11 +268,11 @@ struct PasswordGeneratorView: View {
             generatedPassword = try PasswordGeneratorSession.generate(userOptions: userOptions, rule: activeRule)
             errorMessage = nil
         } catch PasswordGeneratorError.noCharacterClassSelected {
-            errorMessage = "Select at least one character class."
+            errorMessage = String(localized: "Select at least one character class.", comment: "Password generator: inline message")
         } catch PasswordGeneratorError.unsatisfiableRules {
-            errorMessage = "This site's requirements conflict with your current options."
+            errorMessage = String(localized: "This site's requirements conflict with your current options.", comment: "Password generator: inline message")
         } catch {
-            errorMessage = "Failed to generate password."
+            errorMessage = String(localized: "Failed to generate password.", comment: "Password generator: inline message")
         }
     }
 }

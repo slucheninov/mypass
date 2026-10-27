@@ -3,7 +3,20 @@ import MyPassKit
 import ExtensionBridgeKit
 
 extension KdbxEntry {
+    /// The stored address type identifiers. They are written to the vault and sent to the
+    /// extension, so they stay English forever; `addressLabelTitle(_:)` is what the UI shows.
     static let addressLabels = ["Home", "Work", "Other"]
+
+    /// The text to show for a stored address type. Unknown values (which `storedAddress` already
+    /// folds into "Other") are returned as stored rather than guessed at.
+    static func addressLabelTitle(_ storedLabel: String) -> String {
+        switch storedLabel {
+        case "Home": return String(localized: "Home", comment: "Address type")
+        case "Work": return String(localized: "Work", comment: "Address type")
+        case "Other": return String(localized: "Other", comment: "Address type")
+        default: return storedLabel
+        }
+    }
     static let addressFields: [(String, WritableKeyPath<ExtensionAddress, String>)] = [
         ("label", \.label),
         ("fullName", \.fullName),
@@ -51,7 +64,7 @@ extension KdbxEntry {
     }
 
     var addressSummary: String {
-        [address.label, address.fullName, address.city].filter { !$0.isEmpty }.joined(separator: " · ")
+        [Self.addressLabelTitle(address.label), address.fullName, address.city].filter { !$0.isEmpty }.joined(separator: " · ")
     }
 }
 

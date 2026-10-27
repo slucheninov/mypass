@@ -33,6 +33,8 @@ struct LetterAvatarView: View {
                 .foregroundStyle(.white)
         }
         .frame(width: size, height: size)
-        .accessibilityLabel(Text("Icon for \(title.isEmpty ? "untitled entry" : title)"))
+        // Two whole sentences instead of one interpolated ternary: a literal mixed with a
+        // `String` inside the interpolation would leave "untitled entry" out of the catalog.
+        .accessibilityLabel(title.isEmpty ? Text("Icon for untitled entry") : Text("Icon for \(title)"))
     }
 }

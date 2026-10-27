@@ -2,7 +2,8 @@ import SwiftUI
 import AppKit
 
 struct ShortcutRecorderField: View {
-    let label: String
+    /// `LocalizedStringKey` so a literal at the call site goes through the string catalog.
+    let label: LocalizedStringKey
     let storageKey: String
     let defaultValue: String
 
@@ -10,7 +11,7 @@ struct ShortcutRecorderField: View {
     @State private var isRecording = false
     @State private var monitor: Any?
 
-    init(label: String, storageKey: String, defaultValue: String) {
+    init(label: LocalizedStringKey, storageKey: String, defaultValue: String) {
         self.label = label
         self.storageKey = storageKey
         self.defaultValue = defaultValue
@@ -22,8 +23,16 @@ struct ShortcutRecorderField: View {
             Text(label)
             Spacer()
             Button(action: beginRecording) {
-                Text(isRecording ? "Press shortcut…" : ShortcutCodec.displayString(forStorage: storedValue))
-                    .frame(minWidth: 80, alignment: .trailing)
+                // Not a ternary inside `Text(...)`: mixing a literal with a `String` makes the whole
+                // expression a `String`, and `Text(String)` would skip the string catalog.
+                Group {
+                    if isRecording {
+                        Text("Press shortcut…")
+                    } else {
+                        Text(verbatim: ShortcutCodec.displayString(forStorage: storedValue))
+                    }
+                }
+                .frame(minWidth: 80, alignment: .trailing)
             }
             .buttonStyle(.bordered)
             Button("Clear") { storedValue = "" }

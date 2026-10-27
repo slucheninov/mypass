@@ -122,7 +122,26 @@ enum GroupTreeOperations {
 }
 
 extension GroupTreeOperations {
+    /// The name WRITTEN to the vault for a Recycle Bin group. It is stored data (and one of the
+    /// names `isRecycleBinGroup` recognises), so it stays English forever and is never localized;
+    /// the UI shows `recycleBinDisplayName` instead.
     static let recycleBinGroupName = "Recycle Bin"
+
+    /// The localized label shown in the UI for the Recycle Bin. A computed property on purpose
+    /// (not a stored constant) so it is resolved against the app's language when used.
+    static var recycleBinDisplayName: String {
+        String(localized: "Recycle Bin", comment: "Name shown for the Recycle Bin group in the sidebar and group lists")
+    }
+
+    /// What the UI shows for a group name. Vault-originated names are shown exactly as stored;
+    /// only the Recycle Bin (identified like everywhere else by `isTheRecycleBin`: the tracked
+    /// UUID wins, the name check is only the fallback when no UUID is tracked) gets the localized
+    /// label. The stored name is untouched, so a file saved in one language still reads
+    /// "Recycle Bin" when opened in another. Every place that renders a group name goes through
+    /// this, so a group called "Recycle Bin" that is NOT the tracked bin is shown verbatim.
+    static func displayName(for group: KdbxGroup, recycleBinGroupUUID: UUID?) -> String {
+        isTheRecycleBin(group, recycleBinGroupUUID: recycleBinGroupUUID) ? recycleBinDisplayName : group.name
+    }
     /// Legacy name used by vaults created before the English UI migration.
     static let legacyRecycleBinGroupName = "Корзина"
 

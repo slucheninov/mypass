@@ -26,8 +26,9 @@ enum AppTheme: String, CaseIterable, Identifiable {
         self = storedRaw.flatMap(AppTheme.init(rawValue:)) ?? .system
     }
 
-    /// Menu title shown in the picker.
-    var title: String {
+    /// Menu title shown in the picker. A `LocalizedStringResource` so the computed title
+    /// passes through the string catalog instead of being shown verbatim.
+    var title: LocalizedStringResource {
         switch self {
         case .system: return "Match System"
         case .light: return "Light"
