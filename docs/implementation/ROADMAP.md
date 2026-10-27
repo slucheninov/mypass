@@ -4,7 +4,7 @@
 implemented and its tests pass, or, for manual-only items, once the manual check has
 actually been walked. History lives in `git log`, not here.
 
-Last updated: 2026-10-25
+Last updated: 2026-10-27
 
 ---
 
@@ -12,14 +12,9 @@ Last updated: 2026-10-25
 
 The repository was prepared for a public release (Apache-2.0 licence, third-party notices,
 README / CONTRIBUTING, issue and pull request templates, `scripts/dev.sh`, CI workflow,
-development packages). The local half is verified by running the scripts; the remote half
-and the runtime behaviour of unsigned artifacts are not.
+development packages). Local scripts and GitHub CI tests, packaging and both uploaded
+artifacts are verified. The runtime behaviour of unsigned artifacts remains unverified.
 
-- [ ] Verify a real run of `.github/workflows/ci.yml` on GitHub (pull request, push to
-      `master` or manual dispatch) and read its result: tests, packaging and both
-      uploaded artifacts. Open question that only a run can answer: the CI image ships
-      Xcode 26.6 while local development uses Xcode 27.0; the fallback is the Preview
-      `xcode-27` runner label. Pushing needs the owner's authorization.
 - [ ] Record what actually happens when the unsigned, ad-hoc-sealed `dev.sh package`
       artifact is launched on a machine that never built it: whether the entitlement-less
       bundle starts at all, and how the Keychain-backed app-to-host exchange and Touch ID
