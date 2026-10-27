@@ -46,6 +46,12 @@ final class RecycleBinDisplayNameTests: XCTestCase {
         }
     }
 
+    func testLocalizedLabelIsEnglishUnderTheEnglishTestLanguage() {
+        // The suite runs with -testLanguage en (scripts/test.sh), so this also guards the
+        // source string of the label that the Ukrainian and Russian catalogs translate.
+        XCTAssertEqual(GroupTreeOperations.recycleBinDisplayName, "Recycle Bin")
+    }
+
     func testStoredConstantStaysEnglish() {
         XCTAssertEqual(GroupTreeOperations.recycleBinGroupName, "Recycle Bin")
     }

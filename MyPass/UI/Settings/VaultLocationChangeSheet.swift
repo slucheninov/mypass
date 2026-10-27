@@ -183,7 +183,7 @@ struct VaultLocationChangeSheet: View {
 
         case .finished:
             VStack(alignment: .leading, spacing: 8) {
-                Label(successMessage ?? String(localized: "Done."), systemImage: "checkmark.circle.fill")
+                Label(successMessage ?? String(localized: "Done.", comment: "Vault location change sheet: fallback success message shown when the move finished without a more specific message"), systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -194,7 +194,7 @@ struct VaultLocationChangeSheet: View {
     private var strategyChooser: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let probe, probe.exists {
-                Text("That location already contains a vault\(Self.describe(probe)). Choose what to do with it.")
+                Text(verbatim: Self.existingVaultMessage(for: probe))
                     .fixedSize(horizontal: false, vertical: true)
                 Picker("", selection: $strategy) {
                     ForEach([VaultMigrationStrategy.merge, .adoptRemote, .overwriteRemote]) { option in
@@ -574,15 +574,23 @@ struct VaultLocationChangeSheet: View {
         return failingBookmark == persistedBookmark
     }
 
-    static func describe(_ probe: VaultMigrationTargetProbe) -> String {
-        var parts: [String] = []
-        if let byteCount = probe.byteCount {
-            parts.append(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))
+    /// The "that location already contains a vault" sentence. The size and the modification date
+    /// are optional, so there is one whole localized sentence per combination instead of a
+    /// sentence stitched together from fragments: a translator sees (and can word, punctuate and
+    /// order) each full sentence, rather than inheriting English " (" / ", " separators.
+    static func existingVaultMessage(for probe: VaultMigrationTargetProbe) -> String {
+        let size = probe.byteCount.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }
+        let modified = probe.modificationDate?.formatted(date: .abbreviated, time: .shortened)
+        switch (size, modified) {
+        case let (size?, modified?):
+            return String(localized: "That location already contains a vault (\(size), modified \(modified)). Choose what to do with it.", comment: "Vault location change sheet: message when the target already holds a vault. First placeholder is the file size (for example 4 KB), second is the last modification date and time")
+        case let (size?, nil):
+            return String(localized: "That location already contains a vault (\(size)). Choose what to do with it.", comment: "Vault location change sheet: message when the target already holds a vault. The placeholder is the file size (for example 4 KB); the modification date is unknown")
+        case let (nil, modified?):
+            return String(localized: "That location already contains a vault (modified \(modified)). Choose what to do with it.", comment: "Vault location change sheet: message when the target already holds a vault. The placeholder is the last modification date and time; the file size is unknown")
+        case (nil, nil):
+            return String(localized: "That location already contains a vault. Choose what to do with it.", comment: "Vault location change sheet: message when the target already holds a vault and neither its size nor its modification date is known")
         }
-        if let modificationDate = probe.modificationDate {
-            parts.append(String(localized: "modified \(modificationDate.formatted(date: .abbreviated, time: .shortened))", comment: "Vault location change sheet: part of a parenthesised description of the existing vault, e.g. (4 KB, modified Oct 27)"))
-        }
-        return parts.isEmpty ? "" : " (\(parts.joined(separator: ", ")))"
     }
 
     static func title(for strategy: VaultMigrationStrategy) -> String {

@@ -56,20 +56,38 @@ final class VaultLocationChangeSheetMessageTests: XCTestCase {
         XCTAssertTrue(explanation.localizedCaseInsensitiveContains("both sides"), explanation)
     }
 
-    func testProbeDescriptionIncludesSizeAndDate() {
+    func testExistingVaultMessageIncludesSizeAndDate() {
         let probe = VaultMigrationTargetProbe(
             exists: true,
             modificationDate: Date(timeIntervalSince1970: 1_700_000_000),
             byteCount: 4096
         )
-        let description = VaultLocationChangeSheet.describe(probe)
-        XCTAssertTrue(description.contains("KB"), description)
-        XCTAssertTrue(description.localizedCaseInsensitiveContains("modified"), description)
+        let message = VaultLocationChangeSheet.existingVaultMessage(for: probe)
+        XCTAssertTrue(message.contains("KB"), message)
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("modified"), message)
+        XCTAssertTrue(message.hasSuffix("Choose what to do with it."), message)
     }
 
-    func testProbeDescriptionIsEmptyWithoutMetadata() {
+    func testExistingVaultMessageWithSizeOnlyOmitsTheDate() {
+        let probe = VaultMigrationTargetProbe(exists: true, modificationDate: nil, byteCount: 4096)
+        let message = VaultLocationChangeSheet.existingVaultMessage(for: probe)
+        XCTAssertTrue(message.contains("KB"), message)
+        XCTAssertFalse(message.localizedCaseInsensitiveContains("modified"), message)
+    }
+
+    func testExistingVaultMessageWithDateOnlyOmitsTheSize() {
+        let probe = VaultMigrationTargetProbe(exists: true, modificationDate: Date(timeIntervalSince1970: 1_700_000_000), byteCount: nil)
+        let message = VaultLocationChangeSheet.existingVaultMessage(for: probe)
+        XCTAssertTrue(message.localizedCaseInsensitiveContains("(modified"), message)
+        XCTAssertFalse(message.contains("KB"), message)
+    }
+
+    func testExistingVaultMessageWithoutMetadataHasNoParenthesis() {
         let probe = VaultMigrationTargetProbe(exists: true, modificationDate: nil, byteCount: nil)
-        XCTAssertEqual(VaultLocationChangeSheet.describe(probe), "")
+        XCTAssertEqual(
+            VaultLocationChangeSheet.existingVaultMessage(for: probe),
+            "That location already contains a vault. Choose what to do with it."
+        )
     }
 
     // MARK: - Download timeout unwrapping (wrapped by VaultMigrationService)
