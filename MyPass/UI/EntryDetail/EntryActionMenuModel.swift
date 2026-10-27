@@ -11,7 +11,7 @@ import MyPassKit
 /// Empty username / password stay in the menu as *disabled* items rather than being
 /// hidden, so a Login entry keeps the same menu shape whatever it contains. The
 /// one-time code and the Open Website item are different: they are shown only when the
-/// entry actually has a TOTP secret / a URL, because a permanently dead item for a
+/// entry actually has a TOTP secret / a website (the primary URL or an additional one), because a permanently dead item for a
 /// feature the entry does not use is just noise.
 struct EntryActionMenuModel: Equatable {
     enum CopyKind: Equatable {
@@ -44,7 +44,7 @@ struct EntryActionMenuModel: Equatable {
             if entry.totpSecretBase32 != nil {
                 copyGroup.append(.copy(.code, isEnabled: true))
             }
-            if !entry.url.isEmpty {
+            if entry.primaryWebsiteURL != nil {
                 copyGroup.append(.openWebsite)
             }
         case .card:

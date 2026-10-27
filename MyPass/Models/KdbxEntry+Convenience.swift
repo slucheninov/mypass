@@ -155,6 +155,11 @@ public extension KdbxEntry {
         }
     }
 
+    /// The website that Open Website / Copy Website act on: the first of `urls`. Reading
+    /// `url` directly would be "" for an entry whose only addresses are `KP2A_URL` extras,
+    /// even though the detail view already shows a Website row for it.
+    var primaryWebsiteURL: String? { urls.first }
+
     /// Non-standard fields to render as browse/edit custom-field rows. `KP2A_URL` is never
     /// present here — it lives in `stringArrays`, a separate collection from `fields`.
     var additionalFields: [KdbxField] {

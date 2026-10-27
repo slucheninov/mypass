@@ -44,6 +44,16 @@ final class EntryActionMenuModelTests: XCTestCase {
         XCTAssertEqual(sections(entry)[1], [.copy(.username, isEnabled: true), .copy(.password, isEnabled: true)])
     }
 
+    func testLoginWithEmptyPrimaryUrlButAdditionalUrlOffersOpenWebsite() {
+        var entry = makeEntry()
+        entry.login = "alice"
+        entry.password = "pw"
+        entry.urls = ["", "https://extra.example.com"]
+        XCTAssertEqual(entry.url, "")
+        XCTAssertEqual(entry.urls, ["https://extra.example.com"])
+        XCTAssertEqual(sections(entry)[1], [.copy(.username, isEnabled: true), .copy(.password, isEnabled: true), .openWebsite])
+    }
+
     func testEmptyUsernameAndPasswordAreDisabledNotHidden() {
         let entry = makeEntry()
         XCTAssertEqual(sections(entry)[1], [.copy(.username, isEnabled: false), .copy(.password, isEnabled: false)])

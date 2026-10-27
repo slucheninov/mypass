@@ -120,7 +120,10 @@ struct EntryBrowseActionRow: View {
             }
             .disabled(!isEnabled)
         case .openWebsite:
-            Button("Open Website") { EntryActions.openWebsite(entry.url) }
+            Button("Open Website") {
+                guard let website = entry.primaryWebsiteURL else { return }
+                EntryActions.openWebsite(website)
+            }
         case .viewHistory:
             Button("View History") { showHistory = true }
         case .delete:

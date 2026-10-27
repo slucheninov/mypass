@@ -160,8 +160,12 @@ struct EntryDetailView: View {
                             DetailFieldDivider()
                             websiteRow(for: entry)
                                 .contextMenu {
-                                    Button("Open Website") { openWebsite(entry.url) }
-                                    Button("Copy Website") { copy(entry.url) }
+                                    Button("Open Website") {
+                                        if let website = entry.primaryWebsiteURL { openWebsite(website) }
+                                    }
+                                    Button("Copy Website") {
+                                        if let website = entry.primaryWebsiteURL { copy(website) }
+                                    }
                                     Button("Change Website") { showWebsitesSheet = true }
                                 }
                         }
@@ -350,7 +354,8 @@ struct EntryDetailView: View {
     }
 
     private func websiteRow(for entry: KdbxEntry) -> some View {
-        let domain = EntryURLDisplay.domain(from: entry.url) ?? entry.url
+        let website = entry.primaryWebsiteURL ?? ""
+        let domain = EntryURLDisplay.domain(from: website) ?? website
 
         return HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text("Website")
