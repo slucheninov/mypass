@@ -249,12 +249,49 @@
   // A login submit raises at most one prompt per distinct credential pair per 120 s (the
   // prompt's own lifetime): a re-submitted identical form must not keep re-opening the popup
   // after the user dismissed it. Returns whether a request was sent.
+  //
+  // The dedupe state must not keep the password itself (it would sit in this page's memory long
+  // after the prompt was saved, dismissed or expired). It keeps a fingerprint of the password
+  // under a random per-document salt, so a CHANGED password still counts as a new credential, and
+  // the entry is dropped when its 120 s are up. The salt lives only in memory, is never sent
+  // anywhere and is not shared between documents, so the fingerprint is not a reusable password
+  // hash; it is also not a security primitive, only a way not to hold the plaintext.
+  function passwordFingerprint(state, password) {
+    if (!state.dedupeSalt) {
+      const seed = new Uint32Array(2);
+      if (typeof crypto !== 'undefined' && crypto && typeof crypto.getRandomValues === 'function') {
+        crypto.getRandomValues(seed);
+      } else {
+        seed[0] = Math.random() * 0x100000000;
+        seed[1] = Math.random() * 0x100000000;
+      }
+      state.dedupeSalt = [seed[0], seed[1]];
+    }
+    // Two salted 32-bit multiply-xor passes (FNV-1a / murmur style): 64 bits of state.
+    let h1 = state.dedupeSalt[0] ^ 0x811c9dc5;
+    let h2 = state.dedupeSalt[1] ^ 0x1b873593;
+    for (let i = 0; i < password.length; i += 1) {
+      const c = password.charCodeAt(i);
+      h1 = Math.imul(h1 ^ c, 0x01000193);
+      h2 = Math.imul(h2 ^ c, 0x85ebca6b);
+      h2 ^= h2 >>> 13;
+    }
+    return (h1 >>> 0).toString(16) + '.' + (h2 >>> 0).toString(16) + '.' + password.length;
+  }
+
   function requestSavePrompt(url, username, password, state, sendMessage, now) {
     const at = typeof now === 'number' ? now : Date.now();
-    const key = url + '\u0000' + username + '\u0000' + password;
+    const key = url + '\u0000' + username + '\u0000' + passwordFingerprint(state, password);
     const last = state.lastLoginPrompt;
     if (last && last.key === key && at - last.at < PROMPT_DEDUPE_MS) return false;
-    state.lastLoginPrompt = { key, at };
+    const entry = { key, at };
+    state.lastLoginPrompt = entry;
+    // Drop the entry once the prompt's lifetime is over. The identity check keeps a newer
+    // submit's entry; unref lets a test runner exit without waiting for the timer.
+    const timer = setTimeout(() => {
+      if (state.lastLoginPrompt === entry) state.lastLoginPrompt = null;
+    }, PROMPT_DEDUPE_MS);
+    if (timer && typeof timer.unref === 'function') timer.unref();
     sendMessage({ type: 'requestPrompt', kind: 'saveLogin', url, username, password });
     return true;
   }

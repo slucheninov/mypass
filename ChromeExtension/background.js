@@ -1061,8 +1061,16 @@ function sessionRemoveKey(key) {
   });
 }
 
+// Reads the live records AND removes the expired ones from storage. Filtering alone would leave an
+// expired password or seed sitting in session storage until some later write; here the pruned
+// list is written back (deleting the key and the "!" badge when nothing is left). Every caller
+// already holds the promptStateQueue, so the write-back cannot interleave with another
+// read-modify-write.
 async function readPrompts(now) {
-  return promptRecords.prune(await sessionGetValue(promptRecords.PROMPT_STORAGE_KEY), now === undefined ? Date.now() : now);
+  const raw = await sessionGetValue(promptRecords.PROMPT_STORAGE_KEY);
+  const live = promptRecords.prune(raw, now === undefined ? Date.now() : now);
+  if (raw !== undefined && (!Array.isArray(raw) || live.length !== raw.length)) await writePrompts(live);
+  return live;
 }
 
 // Writing an empty list removes the key and the "!" badge that said a prompt was waiting.
@@ -1070,9 +1078,39 @@ async function writePrompts(list) {
   if (!list.length) {
     await sessionRemoveKey(promptRecords.PROMPT_STORAGE_KEY);
     clearPromptBadge();
+    syncPromptExpiryAlarm(list);
     return;
   }
   await sessionSetValue(promptRecords.PROMPT_STORAGE_KEY, list);
+  syncPromptExpiryAlarm(list);
+}
+
+// A setTimeout would die with the service worker, so the sweep that deletes an expired record is
+// a chrome.alarms alarm armed for the soonest expiry (alarms survive worker suspension and wake
+// the worker). Best effort, not a hard wall-clock guarantee: Chrome may fire an alarm up to
+// ~30 s late, and nothing can run while the browser itself is suspended or closed (session
+// storage is memory-only, so a browser exit drops it anyway). The record is still rejected as
+// expired the moment it is read, whenever the sweep actually runs.
+const PROMPT_EXPIRY_ALARM = "mypass-prompt-expiry";
+function syncPromptExpiryAlarm(list) {
+  if (!chrome.alarms || typeof chrome.alarms.create !== "function") return;
+  try {
+    if (!list.length) {
+      if (typeof chrome.alarms.clear === "function") chrome.alarms.clear(PROMPT_EXPIRY_ALARM);
+      return;
+    }
+    const soonest = Math.min(...list.map((record) => record.expiresAt));
+    chrome.alarms.create(PROMPT_EXPIRY_ALARM, { when: Math.max(soonest, Date.now() + 1000) });
+  } catch (_) {}
+}
+
+// Deletes expired records from storage (readPrompts persists the pruning) and re-arms the alarm for
+// whatever is left. Used by the alarm and by worker start.
+function sweepExpiredPrompts() {
+  return withPromptState(async () => {
+    const list = await readPrompts();
+    syncPromptExpiryAlarm(list);
+  });
 }
 
 // Atomically records "this tab just opened browser UI" and tells the caller whether it was the
@@ -1463,11 +1501,15 @@ function wirePromptCleanup() {
       }).catch(() => {});
     });
   }
-  // Sweep on worker start: expired records are dropped even if no prompt is ever opened again.
-  withPromptState(async () => {
-    const stored = await sessionGetValue(promptRecords.PROMPT_STORAGE_KEY);
-    if (Array.isArray(stored)) await writePrompts(promptRecords.prune(stored, Date.now()));
-  }).catch(() => {});
+  // The expiry alarm wakes a suspended worker to delete records that ran out.
+  if (chrome.alarms && chrome.alarms.onAlarm && typeof chrome.alarms.onAlarm.addListener === "function") {
+    chrome.alarms.onAlarm.addListener((alarm) => {
+      if (alarm && alarm.name === PROMPT_EXPIRY_ALARM) sweepExpiredPrompts().catch(() => {});
+    });
+  }
+  // Sweep on worker start: expired records are dropped even if no prompt is ever opened again, and
+  // the alarm is re-armed for any record that is still pending.
+  sweepExpiredPrompts().catch(() => {});
 }
 if (typeof chrome !== "undefined" && chrome.runtime && chrome.storage) wirePromptCleanup();
 
@@ -1926,6 +1968,9 @@ if (typeof module !== "undefined") {
     getPromptForUi,
     consumePrompt,
     readPrompts,
+    writePrompts,
+    sweepExpiredPrompts,
+    PROMPT_EXPIRY_ALARM,
     PROMPT_WINDOW_KEY,
     PROMPT_BADGE_TEXT,
     PROMPT_AUTO_OPEN_MS
