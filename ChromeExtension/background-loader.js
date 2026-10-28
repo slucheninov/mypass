@@ -11,4 +11,6 @@ importScripts('shared/url-match.js');
 importScripts('shared/password-generator.js');
 importScripts('shared/security-watch.js');
 importScripts('shared/notification-settings.js');
+importScripts('shared/autofill-settings.js');
+importScripts('shared/prompt-record.js');
 importScripts('background.js');

@@ -112,7 +112,7 @@ const {
   isBase32PasteSecret,
   renderTotpPicker,
   routeTotpCandidate,
-  restorePendingTotpCandidate,
+  requestPendingPrompt,
   handleAddTotpClick,
   requestPageTotpCandidate
 } = require('../popup.js');
@@ -220,134 +220,43 @@ console.log('totpPicker.test.js: paste validation OK');
   console.log('totpPicker.test.js: picker row click reports success outcome OK');
 })();
 
-// --- additive: restorePendingTotpCandidate is sequenced after the primary
-// getCredentials flow, not raced against it — it now takes the primary flow's
-// classified response kind and only acts when that kind is 'credentialList'
-// (vault unlocked and paired for the *current* tab). ---
-
-// (b) primary=credentialList + pending candidate with >1 matches for the pending URL:
-// prefills the input, renders the picker, and removes the stored key.
+// --- the 2FA save prompt no longer travels through storage the popup reads: the old
+// `pendingTotpCandidate` key (written by the content script) is gone, and a pending prompt is
+// asked of the background by tab id (requestPendingPrompt). ---
 (() => {
-  let removedKeys = null;
-  global.chrome.storage.local.get = (_keys, cb) => {
-    cb({ pendingTotpCandidate: { url: 'https://pending.example.com', otpauthOrSecret: 'JBSWY3DPEHPK3PXP' } });
+  const storageReads = [];
+  const realLocalGet = global.chrome.storage.local.get;
+  global.chrome.storage.local.get = (keys, cb) => { storageReads.push(keys); realLocalGet(keys, cb); };
+  const asked = [];
+  global.window = { close() { global.__closed = (global.__closed || 0) + 1; } };
+  const promptView = {
+    id: 'p-1', kind: 'saveTotp', origin: 'https://example.com', label: 'Example:alice',
+    secretDetected: true, expiresAt: Date.now() + 60000, state: 'ready',
+    accounts: [{ id: 'x', title: 'Xray', username: 'u', hasTotp: false }, { id: 'y', title: 'Yankee', username: 'v', hasTotp: true }]
   };
-  global.chrome.storage.local.remove = (keys, cb) => {
-    removedKeys = keys;
-    if (cb) cb();
+  let reply = { type: 'prompt', prompt: promptView };
+  global.chrome.runtime.sendMessage = (msg, cb) => {
+    asked.push(msg);
+    if (cb) cb(msg.type === 'getPrompt' ? reply : { type: 'ok' });
   };
-  global.chrome.runtime.sendMessage = (_msg, cb) => {
-    cb({
-      type: 'credentialList',
-      credentials: [
-        { id: 'x', title: 'Xray', hasTotp: false },
-        { id: 'y', title: 'Yankee', hasTotp: true }
-      ]
-    });
-  };
-  elements.list.children = [];
-  elements['totp-paste-input'].value = '';
-  elements['add-totp-section'].hidden = true;
 
-  restorePendingTotpCandidate('credentialList');
+  requestPendingPrompt(false);
+  assert.deepStrictEqual(asked[0], { type: 'getPrompt', tabId: 1 }, 'asks the background for the popup tab only');
+  assert.strictEqual(elements['prompt-panel'].hidden, false, 'a pending prompt takes over the popup');
+  assert.ok(elements['prompt-card-root'].children.length > 0, 'the card is rendered into the prompt panel');
+  assert.ok(storageReads.every((keys) => !JSON.stringify(keys).includes('pendingTotpCandidate')),
+    'the popup no longer reads pendingTotpCandidate');
 
-  assert.strictEqual(elements['totp-paste-input'].value, 'JBSWY3DPEHPK3PXP', 'restores pasted secret into input');
-  assert.strictEqual(elements.list.children.length, 2, 'multi-match pending candidate renders picker rows');
-  assert.deepStrictEqual(removedKeys, ['pendingTotpCandidate'], 'pending candidate cleared after restore');
-  assert.strictEqual(elements['add-totp-section'].hidden, false, 'restore proceed path unhides the Add 2FA section');
+  reply = { type: 'noPrompt' };
+  requestPendingPrompt(false);
+  assert.strictEqual(elements['prompt-panel'].hidden, true, 'prompt released when nothing is pending');
 
-  console.log('totpPicker.test.js: restorePendingTotpCandidate(credentialList) multi-match OK');
-})();
+  global.__closed = 0;
+  requestPendingPrompt(true);
+  assert.strictEqual(global.__closed, 1, 'after an answer, an empty queue closes the popup');
+  global.chrome.storage.local.get = realLocalGet;
 
-// (b2) primary=credentialList, but the inner re-check getCredentials for the *pending*
-// URL comes back locked (vault re-locked mid-flight): must not render a picker and must
-// NOT remove the stored key — same "never drop a pending candidate on anything but a
-// confirmed credentialList response" rule as the outer locked-path semantics (Finding 5).
-(() => {
-  let removedKeys = null;
-  global.chrome.storage.local.get = (_keys, cb) => {
-    cb({ pendingTotpCandidate: { url: 'https://pending.example.com', otpauthOrSecret: 'JBSWY3DPEHPK3PXP' } });
-  };
-  global.chrome.storage.local.remove = (keys, cb) => {
-    removedKeys = keys;
-    if (cb) cb();
-  };
-  global.chrome.runtime.sendMessage = (_msg, cb) => {
-    cb({ type: 'locked' });
-  };
-  elements.list.children = [];
-  elements['add-totp-section'].hidden = true;
-
-  restorePendingTotpCandidate('credentialList');
-
-  assert.strictEqual(elements.list.children.length, 0, 'no picker rendered when the inner re-check is locked');
-  assert.strictEqual(removedKeys, null, 'candidate key is kept when the vault re-locks mid-flight');
-  assert.strictEqual(
-    elements['add-totp-section'].hidden,
-    false,
-    'section still unhides on the prefill step, even though the inner re-check later found the vault locked'
-  );
-
-  console.log('totpPicker.test.js: restorePendingTotpCandidate keeps key when inner re-check is locked OK');
-})();
-
-// (a) primary=locked: must not prefill, must not render a picker, and must NOT remove
-// the stored candidate — it has to survive to the next popup open after unlock.
-(() => {
-  let removeCalled = false;
-  global.chrome.storage.local.get = (_keys, cb) => {
-    cb({ pendingTotpCandidate: { url: 'https://pending.example.com', otpauthOrSecret: 'JBSWY3DPEHPK3PXP' } });
-  };
-  global.chrome.storage.local.remove = (_keys, cb) => {
-    removeCalled = true;
-    if (cb) cb();
-  };
-  let sendMessageCalled = false;
-  global.chrome.runtime.sendMessage = () => { sendMessageCalled = true; };
-  elements.list.children = [];
-  elements['totp-paste-input'].value = '';
-  elements['add-totp-section'].hidden = true;
-
-  restorePendingTotpCandidate('locked');
-
-  assert.strictEqual(elements['totp-paste-input'].value, '', 'locked primary flow does not prefill the input');
-  assert.strictEqual(elements.list.children.length, 0, 'locked primary flow does not render a picker');
-  assert.strictEqual(sendMessageCalled, false, 'locked primary flow does not re-check getCredentials for the pending URL');
-  assert.strictEqual(removeCalled, false, 'locked primary flow leaves the stored candidate in place');
-  assert.strictEqual(elements['add-totp-section'].hidden, true, 'locked primary flow leaves the Add 2FA section hidden');
-
-  console.log('totpPicker.test.js: restorePendingTotpCandidate(locked) leaves candidate untouched OK');
-})();
-
-// Same gating for pairingRequired and error primary kinds — the candidate must survive.
-['pairingRequired', 'error'].forEach((primaryKind) => {
-  let removeCalled = false;
-  global.chrome.storage.local.get = (_keys, cb) => {
-    cb({ pendingTotpCandidate: { url: 'https://pending.example.com', otpauthOrSecret: 'JBSWY3DPEHPK3PXP' } });
-  };
-  global.chrome.storage.local.remove = (_keys, cb) => {
-    removeCalled = true;
-    if (cb) cb();
-  };
-  global.chrome.runtime.sendMessage = () => {};
-
-  restorePendingTotpCandidate(primaryKind);
-
-  assert.strictEqual(removeCalled, false, `${primaryKind} primary flow leaves the stored candidate in place`);
-});
-console.log('totpPicker.test.js: restorePendingTotpCandidate(pairingRequired/error) leaves candidate untouched OK');
-
-// --- additive: restorePendingTotpCandidate is a no-op when nothing is pending. ---
-(() => {
-  global.chrome.storage.local.get = (_keys, cb) => cb({});
-  let sendMessageCalled = false;
-  global.chrome.runtime.sendMessage = () => { sendMessageCalled = true; };
-
-  restorePendingTotpCandidate('credentialList');
-
-  assert.strictEqual(sendMessageCalled, false, 'no pending candidate means no getCredentials lookup');
-
-  console.log('totpPicker.test.js: restorePendingTotpCandidate no-op when nothing pending OK');
+  console.log('totpPicker.test.js: requestPendingPrompt takes over, releases and closes OK');
 })();
 
 // --- additive: handleAddTotpClick must never fire a blind proposeSaveTotp when the

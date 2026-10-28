@@ -132,16 +132,18 @@ assert.strictEqual(detectBrowserName(), 'Chromium browser');
 {
   const { handleRuntimeMessage } = require('../background.js');
 
+  // The old content-script "open the popup for the picker" message is gone: prompts go through
+  // requestPrompt, which the background binds to the authenticated sender.
   let openPopupCalled = false;
   global.chrome.action = { openPopup: () => { openPopupCalled = true; return Promise.resolve(); } };
-  const pickerResult = handleRuntimeMessage({ type: 'openPopupForTotpPicker' }, {}, () => {});
-  assert.strictEqual(pickerResult, false);
-  assert.strictEqual(openPopupCalled, true, 'openPopupForTotpPicker triggers chrome.action.openPopup');
+  const legacy = handleRuntimeMessage({ type: 'openPopupForTotpPicker' }, {}, () => {});
+  assert.strictEqual(openPopupCalled, false, 'openPopupForTotpPicker no longer opens the popup');
+  assert.strictEqual(legacy, false, 'and is dropped as an unknown type');
 
   const keepChannelOpen = handleRuntimeMessage(
     { type: 'proposeSaveTotp', url: 'https://example.com', otpauthOrSecret: 'JBSWY3DP' }, {}, () => {}
   );
   assert.strictEqual(keepChannelOpen, true, 'proposeSaveTotp is a known type routed through native messaging');
 
-  console.log('pairing.test.js: proposeSaveTotp + openPopupForTotpPicker routing OK');
+  console.log('pairing.test.js: proposeSaveTotp routing OK');
 }

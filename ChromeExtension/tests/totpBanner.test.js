@@ -1,5 +1,5 @@
 // Covers three parked follow-ups of the TOTP save banner:
-//   3a — event.isTrusted gating on the Save/Dismiss banner buttons (trustedClickHandler).
+//   3a — trustedClickHandler, and the save/2FA offers now being requestPrompt messages.
 //   3b — per-image QR decode memoization (WeakMap cache in decodeQrFromImage).
 //   3c — img.onload rescan (observeTotpCandidates' capture-phase 'load' listener), plus
 //        review fix round 1: the listener must go dead with the extension context, and must
@@ -51,189 +51,64 @@ function fakeElement(tag) {
 }
 console.log('totpBanner.test.js: trustedClickHandler OK');
 
-// --- 3a integration: showTotpSaveBanner gates Save AND Dismiss on isTrusted ---
+// --- 3a: the page no longer renders a save banner at all. A login submit / a detected 2FA secret
+// becomes a requestPrompt message to the background (which owns the record, validates the sender,
+// re-reads the offerSave* switches and shows the popup). There is nothing in the page's DOM for page
+// script to click, so no isTrusted gate is needed on these sends; the in-page controls that remain
+// (inline icon, picker, settings row, generate row) keep theirs. ---
 {
-  global.location = { href: 'https://example.com/login' };
-  let sentMessages = [];
-  global.chrome = {
-    runtime: {
-      id: 'test-extension-id',
-      sendMessage: (message, callback) => {
-        sentMessages.push(message);
-        if (typeof callback === 'function') {
-          callback({ type: 'credentialList', credentials: [] });
-        }
-      },
-    },
-  };
+  const content = require('../content.js');
+  assert.strictEqual(content.showSaveBanner, undefined, 'the bottom save banner is gone');
+  assert.strictEqual(content.showTotpSaveBanner, undefined, 'the bottom 2FA banner is gone');
 
-  const createdElements = [];
-  global.document = {
-    createElement: (tag) => {
-      const el = fakeElement(tag);
-      createdElements.push(el);
-      return el;
-    },
-    body: { appendChild: () => {} },
-  };
+  const sent = [];
+  const send = (message) => sent.push(message);
+  const state = { lastLoginPrompt: null };
+  assert.strictEqual(content.requestSavePrompt('https://example.com/login', 'alice', 'hunter2', state, send, 1000), true);
+  assert.deepStrictEqual(sent[0], {
+    type: 'requestPrompt', kind: 'saveLogin', url: 'https://example.com/login', username: 'alice', password: 'hunter2'
+  });
+  assert.strictEqual(content.requestSavePrompt('https://example.com/login', 'alice', 'hunter2', state, send, 60000), false,
+    'the same credentials do not re-open the popup within its 120 s lifetime');
+  assert.strictEqual(sent.length, 1);
+  assert.strictEqual(content.requestSavePrompt('https://example.com/login', 'alice', 'other-pass', state, send, 61000), true,
+    'a different password is a new offer');
+  assert.strictEqual(content.requestSavePrompt('https://example.com/login', 'alice', 'hunter2', state, send, 1000 + 120000), true,
+    'and the same pair is offered again once the first prompt has expired');
+  assert.ok(!JSON.stringify(Object.keys(state)).includes('banner'), 'no banner state is kept');
 
-  const { showTotpSaveBanner } = require('../content.js');
-
-  const state = { totpBannerShown: false, totpBannerDismissed: null };
-  showTotpSaveBanner('https://example.com/login', 'otpauth://totp/Example:alice?secret=JBSWY3DP', state, 3);
-
-  const banner = createdElements.find((el) => el.tag === 'div');
-  const saveButton = createdElements.find((el) => el.tag === 'button' && el.textContent === 'Save');
-  const closeButton = createdElements.find((el) => el.tag === 'button' && el.textContent === '×');
-  assert.ok(banner, 'showTotpSaveBanner creates the banner div');
-  assert.ok(saveButton, 'showTotpSaveBanner creates a Save button');
-  assert.ok(closeButton, 'showTotpSaveBanner creates a Dismiss (×) button');
-
-  // Save — untrusted then trusted.
-  saveButton.dispatch('click', { isTrusted: false });
-  assert.strictEqual(sentMessages.length, 0, 'an untrusted click on Save sends nothing');
-  assert.strictEqual(state.totpBannerShown, true, 'an untrusted click leaves the banner state untouched');
-  assert.strictEqual(banner.removed, false, 'an untrusted click on Save does not remove the banner');
-
-  saveButton.dispatch('click', { isTrusted: true });
-  // The stub's getCredentials callback answers synchronously with an empty credentialList,
-  // so routeBannerCredentialsResponse follows up with proposeSaveTotp in the same tick —
-  // both messages are the trusted click's doing.
-  assert.strictEqual(sentMessages.length, 2, 'a trusted click on Save sends getCredentials, then proposeSaveTotp for the empty-match response');
-  assert.strictEqual(sentMessages[0].type, 'getCredentials');
-  assert.strictEqual(sentMessages[1].type, 'proposeSaveTotp');
-  assert.strictEqual(state.totpBannerShown, false, 'a trusted Save click clears totpBannerShown');
+  const totpSent = [];
+  const totpState = { totpBannerDismissed: null };
+  content.requestTotpPrompt('https://example.com/2fa', 'otpauth://totp/Example:alice?secret=JBSWY3DP', totpState, 3, (m) => totpSent.push(m));
+  assert.deepStrictEqual(totpSent[0], {
+    type: 'requestPrompt', kind: 'saveTotp', url: 'https://example.com/2fa', otpauthOrSecret: 'otpauth://totp/Example:alice?secret=JBSWY3DP'
+  });
+  assert.deepStrictEqual(totpState.totpBannerDismissed, { priority: 3 },
+    'offering records the candidate priority so an equal-or-weaker one is not re-offered');
+  assert.strictEqual(content.shouldShowTotpBanner({ candidate: 'x', priority: 3 }, totpState), false, 'same priority is suppressed');
+  assert.strictEqual(content.shouldShowTotpBanner({ candidate: 'x', priority: 1 }, totpState), true, 'a stronger candidate is offered');
 }
-console.log('totpBanner.test.js: showTotpSaveBanner Save button isTrusted gating OK');
-
-// --- 3a integration: showTotpSaveBanner Dismiss (×) button, isolated from the Save button ---
+// A submit raises a save prompt (browser UI) only for a real person: isTrusted alone is not
+// enough, because form.requestSubmit() dispatches a trusted submit from page code (verified in
+// Chrome: isTrusted=true, navigator.userActivation.isActive=false). The second condition is the
+// browser-set, unforgeable user activation.
 {
-  global.location = { href: 'https://example.com/login' };
-  let sentMessages = [];
-  global.chrome = {
-    runtime: {
-      id: 'test-extension-id',
-      sendMessage: (message) => { sentMessages.push(message); },
-    },
-  };
-
-  const createdElements = [];
-  global.document = {
-    createElement: (tag) => {
-      const el = fakeElement(tag);
-      createdElements.push(el);
-      return el;
-    },
-    body: { appendChild: () => {} },
-  };
-
-  const { showTotpSaveBanner } = require('../content.js');
-
-  const state = { totpBannerShown: false, totpBannerDismissed: null };
-  showTotpSaveBanner('https://example.com/login', 'otpauth://totp/Example:bob?secret=ABCDEFGH', state, 2);
-
-  const banner = createdElements.find((el) => el.tag === 'div');
-  const closeButton = createdElements.find((el) => el.tag === 'button' && el.textContent === '×');
-  assert.ok(closeButton, 'showTotpSaveBanner creates a Dismiss (×) button');
-
-  closeButton.dispatch('click', { isTrusted: false });
-  assert.strictEqual(sentMessages.length, 0, 'an untrusted Dismiss click sends nothing');
-  assert.strictEqual(state.totpBannerDismissed, null, 'an untrusted Dismiss click leaves totpBannerDismissed untouched');
-  assert.strictEqual(state.totpBannerShown, true, 'an untrusted Dismiss click leaves totpBannerShown untouched');
-  assert.strictEqual(banner.removed, false, 'an untrusted Dismiss click does not remove the banner');
-
-  closeButton.dispatch('click', { isTrusted: true });
-  assert.strictEqual(sentMessages.length, 0, 'Dismiss never sends a message, trusted or not');
-  assert.deepStrictEqual(state.totpBannerDismissed, { priority: 2 }, 'a trusted Dismiss click records the dismissal at the detected priority');
-  assert.strictEqual(state.totpBannerShown, false, 'a trusted Dismiss click clears totpBannerShown');
-  assert.strictEqual(banner.removed, true, 'a trusted Dismiss click removes the banner');
+  const content = require('../content.js');
+  const trusted = { isTrusted: true };
+  const synthetic = { isTrusted: false };
+  const active = { userActivation: { isActive: true, hasBeenActive: true } };
+  const idleAfterEarlierClick = { userActivation: { isActive: false, hasBeenActive: true } };
+  assert.strictEqual(content.isUserSubmit(trusted, active), true, 'a click / Enter submit inside a live activation');
+  assert.strictEqual(content.isUserSubmit(trusted, idleAfterEarlierClick), false,
+    'requestSubmit() long after any click: trusted but no live activation (hasBeenActive is sticky and must not count)');
+  assert.strictEqual(content.isUserSubmit(trusted, {}), false, 'no userActivation API: fail closed');
+  assert.strictEqual(content.isUserSubmit(trusted, null), false);
+  assert.strictEqual(content.isUserSubmit(synthetic, active), false, 'a dispatched submit event is refused even inside an activation');
+  assert.strictEqual(content.isUserSubmit(null, active), false);
+  assert.strictEqual(content.hasLiveUserActivation({ userActivation: { isActive: 'yes' } }), false, 'only the boolean true counts');
+  assert.strictEqual(content.hasLiveUserActivation(active), true);
 }
-console.log('totpBanner.test.js: showTotpSaveBanner Dismiss button isTrusted gating OK');
-
-// --- 3a integration: showSaveBanner gates Save AND Dismiss on isTrusted ---
-{
-  global.location = { href: 'https://example.com/login' };
-  const createdElements = [];
-  global.document = {
-    createElement: (tag) => {
-      const el = fakeElement(tag);
-      createdElements.push(el);
-      return el;
-    },
-    body: { appendChild: () => {} },
-  };
-  let sentMessages = [];
-  global.chrome = {
-    runtime: {
-      id: 'test-extension-id',
-      sendMessage: (message) => {
-        sentMessages.push(message);
-      },
-    },
-  };
-
-  const { showSaveBanner } = require('../content.js');
-
-  const state = { bannerShown: false };
-  showSaveBanner('https://example.com/login', 'alice', 'hunter2', state);
-
-  const banner = createdElements.find((el) => el.tag === 'div');
-  const saveButton = createdElements.find((el) => el.tag === 'button' && el.textContent === 'Save');
-  assert.ok(banner, 'showSaveBanner creates the banner div');
-  assert.ok(saveButton, 'showSaveBanner creates a Save button');
-
-  saveButton.dispatch('click', { isTrusted: false });
-  assert.strictEqual(sentMessages.length, 0, 'an untrusted click on the password-save banner sends nothing');
-  assert.strictEqual(state.bannerShown, true, 'an untrusted click leaves bannerShown untouched');
-  assert.strictEqual(banner.removed, false, 'an untrusted click on Save does not remove the banner');
-
-  saveButton.dispatch('click', { isTrusted: true });
-  assert.strictEqual(sentMessages.length, 1, 'a trusted click sends proposeSaveLogin');
-  assert.strictEqual(sentMessages[0].type, 'proposeSaveLogin');
-  assert.strictEqual(state.bannerShown, false, 'a trusted Save click clears bannerShown');
-}
-console.log('totpBanner.test.js: showSaveBanner Save button isTrusted gating OK');
-
-// --- 3a integration: showSaveBanner Dismiss (×) button, isolated from the Save button ---
-{
-  global.location = { href: 'https://example.com/login' };
-  const createdElements = [];
-  global.document = {
-    createElement: (tag) => {
-      const el = fakeElement(tag);
-      createdElements.push(el);
-      return el;
-    },
-    body: { appendChild: () => {} },
-  };
-  let sentMessages = [];
-  global.chrome = {
-    runtime: {
-      id: 'test-extension-id',
-      sendMessage: (message) => { sentMessages.push(message); },
-    },
-  };
-
-  const { showSaveBanner } = require('../content.js');
-
-  const state = { bannerShown: false };
-  showSaveBanner('https://example.com/login', 'carol', 'swordfish', state);
-
-  const banner = createdElements.find((el) => el.tag === 'div');
-  const closeButton = createdElements.find((el) => el.tag === 'button' && el.textContent === '×');
-  assert.ok(closeButton, 'showSaveBanner creates a Dismiss (×) button');
-
-  closeButton.dispatch('click', { isTrusted: false });
-  assert.strictEqual(sentMessages.length, 0, 'an untrusted Dismiss click sends nothing');
-  assert.strictEqual(state.bannerShown, true, 'an untrusted Dismiss click leaves bannerShown untouched');
-  assert.strictEqual(banner.removed, false, 'an untrusted Dismiss click does not remove the banner');
-
-  closeButton.dispatch('click', { isTrusted: true });
-  assert.strictEqual(sentMessages.length, 0, 'Dismiss never sends a message, trusted or not');
-  assert.strictEqual(state.bannerShown, false, 'a trusted Dismiss click clears bannerShown');
-  assert.strictEqual(banner.removed, true, 'a trusted Dismiss click removes the banner');
-}
-console.log('totpBanner.test.js: showSaveBanner Dismiss button isTrusted gating OK');
+console.log('totpBanner.test.js: save/2FA requests replace the bottom banners OK');
 
 // --- 3b: per-image QR decode memoization ---
 {
@@ -339,7 +214,7 @@ console.log('totpBanner.test.js: decodeQrFromImage memoization OK');
   const { observeTotpCandidates, decodeQrFromImage } = require('../content.js');
 
   let mutationCalls = 0;
-  const state = { totpBannerShown: false, totpBannerDismissed: null, vaultLocked: false };
+  const state = { totpBannerDismissed: null, vaultLocked: false };
   observeTotpCandidates(state, () => { mutationCalls += 1; }, true);
 
   assert.strictEqual(loadListeners.length, 1, 'observeTotpCandidates attaches exactly one capture-phase load listener when QR scanning is enabled for this frame');

@@ -158,6 +158,9 @@ const notificationSettings = typeof require === 'function'
 const appearanceSettings = typeof require === 'function'
   ? require('./shared/appearance-settings.js')
   : window.mypassAppearanceSettings;
+const promptCardApi = typeof require === 'function'
+  ? require('./shared/prompt-card.js')
+  : window.mypassPromptCard;
 const appearanceTheme = typeof require === 'function'
   ? require('./shared/theme.js')
   : window.mypassTheme;
@@ -456,12 +459,12 @@ function describeSaveProposalOutcome(response) {
 
 // Assigned once the DOM is wired up below: renderTotpPicker needs `listEl` and
 // `buildLetterAvatarElement`, routeTotpCandidate needs renderTotpPicker, and
-// restorePendingTotpCandidate needs `totpPasteInput`/`showPanel`. Declared here (rather
+// requestPendingPrompt needs `showPanel` and the prompt panel. Declared here (rather
 // than only inside the DOM block) so module.exports at the bottom of this file can see them.
 let renderCredentials = null;
 let renderTotpPicker = null;
 let routeTotpCandidate = null;
-let restorePendingTotpCandidate = null;
+let requestPendingPrompt = null;
 let handleAddTotpClick = null;
 let requestPageTotpCandidate = null;
 let requestPageNewPasswordField = null;
@@ -565,6 +568,13 @@ if (typeof document !== 'undefined') {
   const pairingErrorEl = document.getElementById('pairing-error');
 
   const passkeyCheckingPanel = document.getElementById('passkey-checking-panel');
+  // A save-login / save-2FA / settings prompt raised by the page for this tab. Like a passkey
+  // ceremony it owns the popup while it is shown; a ceremony still outranks it.
+  const promptPanel = document.getElementById('prompt-panel');
+  const promptCardRoot = document.getElementById('prompt-card-root');
+  let promptOwnsPopup = false;
+  let promptController = null;
+  let promptRevision = 0;
   let pendingPasskeyOwnsPopup = false;
   let visiblePasskeyFailure = null;
   let activePasskeyRequestId = null;
@@ -654,7 +664,8 @@ if (typeof document !== 'undefined') {
     passkeySavePanel,
     passkeyReplacePanel,
     passkeyUsePanel,
-    passkeyPickerPanel
+    passkeyPickerPanel,
+    promptPanel
   ];
 
   const PASSKEY_PANELS = ['passkey-failure', 'passkey-checking', 'passkey-save', 'passkey-replace', 'passkey-use', 'passkey-picker'];
@@ -675,16 +686,17 @@ if (typeof document !== 'undefined') {
 
   function showPanel(name) {
     if (pendingPasskeyOwnsPopup && !PASSKEY_PANELS.includes(name)) return;
+    if (promptOwnsPopup && name !== 'prompt' && !PASSKEY_PANELS.includes(name)) return;
     for (const section of PANEL_SECTIONS) {
       section.hidden = true;
     }
     openMypassHelper.hidden = true;
     // Approval owns the popup; unrelated actions must not interrupt a ceremony.
-    if (PASSKEY_PANELS.includes(name)) {
+    if (PASSKEY_PANELS.includes(name) || name === 'prompt') {
       addTotpSection.hidden = true;
       generatePasswordSection.hidden = true;
     }
-    document.getElementById('passkey-diagnostics').hidden = PASSKEY_PANELS.includes(name);
+    document.getElementById('passkey-diagnostics').hidden = PASSKEY_PANELS.includes(name) || name === 'prompt';
     document.getElementById('site-passkey-hint').hidden = true;
     // Search, categories, and new-item stay on the browse panels. The gear also
     // stays on lock, pairing, and "app not found", because Check this browser
@@ -702,6 +714,9 @@ if (typeof document !== 'undefined') {
       addEntryMenu.hidden = true;
     }
     switch (name) {
+      case 'prompt':
+        promptPanel.hidden = false;
+        break;
       case 'passkey-failure':
         document.getElementById('passkey-failure-panel').hidden = false;
         break;
@@ -1064,7 +1079,7 @@ if (typeof document !== 'undefined') {
   }
 
   function handleCredentialsResponse(response, url) {
-    if (pendingPasskeyOwnsPopup) return;
+    if (pendingPasskeyOwnsPopup || promptOwnsPopup) return;
     const kind = bridgeStatus.classifyGetCredentialsResponse(response);
     matchedSiteCredentials = kind === 'credentialList' && popupContext.kind === 'site'
       ? response.credentials : [];
@@ -1073,13 +1088,11 @@ if (typeof document !== 'undefined') {
       if (shouldShowAppUnavailableActions(kind)) {
         showAppUnavailableActions(url, response);
       }
-      restorePendingTotpCandidate(kind);
       return;
     }
     hideAppUnavailableActions();
     if (kind === 'locked') {
       presentLockedPanel();
-      restorePendingTotpCandidate(kind);
       return;
     }
     if (kind === 'pairingRequired') {
@@ -1091,7 +1104,6 @@ if (typeof document !== 'undefined') {
           revealCodeEntry();
         }
       });
-      restorePendingTotpCandidate(kind);
       return;
     }
     if (kind === 'credentialList') {
@@ -1102,7 +1114,6 @@ if (typeof document !== 'undefined') {
       if (response.credentials.length === 0) {
         showPanel('empty');
         hideIdentifierOffer();
-        restorePendingTotpCandidate(kind);
         return;
       }
       showPanel('credential-list');
@@ -1118,10 +1129,6 @@ if (typeof document !== 'undefined') {
         if (!passkeyOnly) hint.hidden = true;
       }
     }
-    // Only reached for a non-empty credentialList — the primary panel is already
-    // showing the current tab's credentials by the time this runs, so a picker
-    // rendered below (for a *different*, pending URL) cannot race it.
-    restorePendingTotpCandidate(kind);
   }
 
   let unlockPollTimer = null;
@@ -1383,44 +1390,6 @@ if (typeof document !== 'undefined') {
     });
   };
 
-  // Sequenced (not raced) with the primary getCredentials flow: called from
-  // handleCredentialsResponse once the panel for the *current* tab has already been
-  // decided and shown, with that decision's classified kind passed in. Running this
-  // concurrently with the primary flow (e.g. both fired from popup init) let whichever
-  // chrome.runtime.sendMessage callback resolved last silently win — a late pending-
-  // candidate lookup could override a just-shown locked/pairing panel, or the primary
-  // flow could wipe an already-rendered picker.
-  restorePendingTotpCandidate = function (primaryKind) {
-    const area = getPairingStorageArea();
-    if (!area || !area.get) return;
-    area.get(['pendingTotpCandidate'], (result) => {
-      const pending = result && result.pendingTotpCandidate;
-      if (!pending) return;
-      if (primaryKind !== 'credentialList') {
-        // Vault isn't unlocked/paired for the current tab yet — leave the stored
-        // candidate and the paste input untouched so it survives to the next popup
-        // open (after the user unlocks/pairs) instead of fighting the locked/
-        // pairing/error panel that was just shown.
-        return;
-      }
-      totpPasteInput.value = pending.otpauthOrSecret;
-      addTotpSection.hidden = false;
-      chrome.runtime.sendMessage({ type: 'getCredentials', url: pending.url }, (response) => {
-        if (!response || response.type !== 'credentialList') {
-          // The vault re-locked (or otherwise stopped being unlocked/paired) between
-          // this popup opening and this inner re-check resolving — keep the stored
-          // candidate so it survives to the next popup open, same as the outer
-          // locked-path semantics above.
-          return;
-        }
-        if (response.credentials.length > 1) {
-          renderTotpPicker(response.credentials, pending.url, pending.otpauthOrSecret);
-        }
-        area.remove(['pendingTotpCandidate']);
-      });
-    });
-  };
-
   // --- Passkey ceremony panels ---------------------------------------------------
   // The pending record lives in chrome.storage.session (written by background.js), not
   // in this popup's memory: the popup is opened fresh by chrome.action.openPopup() after
@@ -1584,8 +1553,7 @@ if (typeof document !== 'undefined') {
   };
 
   // Returns whether a ceremony took over the popup, so the caller can skip the ordinary
-  // credential-list flow entirely rather than racing it — the same sequencing mistake
-  // restorePendingTotpCandidate was fixed for.
+  // credential-list flow entirely rather than racing it.
   rehydratePendingPasskeyCeremony = function (cb) {
     const area = getPairingStorageArea();
     if (!area || !area.get) {
@@ -1828,8 +1796,7 @@ if (typeof document !== 'undefined') {
   addTotpBtn.onclick = () => handleAddTotpClick(currentTabUrl);
 
   // The Add-2FA section starts hidden (popup.html) and only appears when there is an
-  // actual 2FA candidate in context: either detected on the current page (this function)
-  // or restored from a pending multi-match picker (restorePendingTotpCandidate). It must
+  // actual 2FA candidate in context: detected on the current page (this function). It must
   // stay hidden on ordinary pages, chrome:// pages, and tabs with no content script.
   function hideIdentifierOffer() {
     if (identifierOfferEl) identifierOfferEl.hidden = true;
@@ -2054,6 +2021,81 @@ if (typeof document !== 'undefined') {
     });
   });
 
+  // --- Page prompts (save login / save 2FA / settings) ---------------------------------
+  // The background owns the record and its secret; this popup only draws the redacted view it is
+  // given and answers with { promptId, action }. Asked for the tab this popup was opened for
+  // (currentWindow is correct here: unlike prompt.html, this page IS the toolbar popup of that
+  // window), so a prompt raised in another tab is never shown against this one.
+  const promptApi = {
+    send: (message, cb) => chrome.runtime.sendMessage(message, (response) => {
+      void chrome.runtime.lastError;
+      cb(response);
+    }),
+    settings: promptCardApi.chromeSettingsStore(chrome, autofillSettings),
+    setTimer: (fn, ms) => setTimeout(fn, ms),
+    clearTimer: (id) => clearTimeout(id),
+    now: () => Date.now(),
+    done: () => requestPendingPrompt(true),
+    reload: () => requestPendingPrompt(false)
+  };
+
+  function releasePrompt() {
+    promptOwnsPopup = false;
+    if (promptController) {
+      promptController.dispose();
+      promptController = null;
+    }
+  }
+
+  function showPromptCard(view) {
+    if (pendingPasskeyOwnsPopup) return;
+    if (promptController) promptController.dispose();
+    promptOwnsPopup = true;
+    browseRequestId += 1;
+    showPanel('prompt');
+    promptController = promptCardApi.render(document, promptCardRoot, view, promptApi);
+  }
+
+  // closeWhenEmpty: after the user answered, an empty queue means the job is done and the popup
+  // closes (like a finished ceremony). Everywhere else an empty answer just hands the popup back
+  // to the ordinary list.
+  requestPendingPrompt = function (closeWhenEmpty, knownTab) {
+    const revision = ++promptRevision;
+    const withTab = (tab) => {
+      if (!tab || typeof tab.id !== 'number') {
+        if (closeWhenEmpty) window.close();
+        return;
+      }
+      chrome.runtime.sendMessage({ type: 'getPrompt', tabId: tab.id }, (response) => {
+        void chrome.runtime.lastError;
+        if (revision !== promptRevision) return;
+        if (response && response.type === 'prompt') {
+          showPromptCard(response.prompt);
+          return;
+        }
+        const hadPrompt = promptOwnsPopup;
+        releasePrompt();
+        if (closeWhenEmpty) window.close();
+        else if (hadPrompt) resumeOrdinaryPopup();
+      });
+    };
+    if (knownTab) { withTab(knownTab); return; }
+    chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+      void chrome.runtime.lastError;
+      withTab(tabs && tabs[0]);
+    });
+  };
+
+  // A prompt arriving, expiring or being dropped while this popup is open. A save in flight is
+  // never interrupted, and the card already showing a still-pending prompt is left as it is.
+  if (chrome.storage.onChanged) chrome.storage.onChanged.addListener((changes, areaName) => {
+    if (areaName !== 'session' || !changes.pendingPrompts) return;
+    if (promptController && promptController.busy()) return;
+    const list = changes.pendingPrompts.newValue;
+    if (promptController && Array.isArray(list) && list.some((r) => r && r.id === promptController.id)) return;
+    requestPendingPrompt(false);
+  });
+
   // A pending ceremony is checked first and, when present, owns the popup outright: the
   // popup was opened *by* that ceremony, and the user is being asked to make a security
   // decision. Running the ordinary credential lookup alongside it would let whichever
@@ -2065,6 +2107,7 @@ if (typeof document !== 'undefined') {
   // notice a regression at this call site (e.g. refreshPasskeyProxy() moving back below the
   // `if (tookOver) return;` line).
   function resumeOrdinaryPopup() {
+    releasePrompt();
     emptyTitleEl.textContent = 'Loading…';
     showPanel('empty');
     initPasskeySettingsToggle();
@@ -2074,11 +2117,15 @@ if (typeof document !== 'undefined') {
     initAppearanceSettings();
     if (ordinaryPopupInitialized) {
       reloadCurrentContext();
+      requestPendingPrompt(false);
       return;
     }
     ordinaryPopupInitialized = true;
     chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
       if (!pendingPasskeyOwnsPopup) loadForActiveTab(tabs[0]);
+      // Not awaited: the ordinary list shows at once and a pending prompt takes over when the
+      // background answers, so a slow app lookup cannot delay the popup.
+      requestPendingPrompt(false, tabs[0]);
     });
   }
 
@@ -2162,7 +2209,7 @@ if (typeof module !== 'undefined') {
     describeSaveProposalOutcome,
     renderTotpPicker,
     routeTotpCandidate,
-    restorePendingTotpCandidate,
+    requestPendingPrompt,
     handleAddTotpClick,
     requestPageTotpCandidate,
     requestPageNewPasswordField,

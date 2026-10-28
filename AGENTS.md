@@ -12,7 +12,7 @@ User instructions in the chat ALWAYS win. Everything below is the default for wh
 
 | Component | Stack | Notes |
 |---|---|---|
-| macOS app | Swift + SwiftUI, macOS 14.0+ | bundle id `com.mypass.app`, `MARKETING_VERSION 0.5.0` |
+| macOS app | Swift + SwiftUI, macOS 14.0+ | bundle id `com.mypass.app`, `MARKETING_VERSION 0.5.1` |
 | Native messaging host | Swift CLI, target `ChromeHost` | bundle id `com.mypass.chromehost` |
 | Browser extension | Plain JavaScript, MV3, no bundler | `minimum_chrome_version: 127`, pinned extension id `hjijbabodfldconmhdcdphlbgaajkejn` |
 
@@ -53,7 +53,7 @@ brew install xcodegen                          # prerequisite, plus Xcode
 ./scripts/test.sh [--ci] [--no-js]             # full suite
 ```
 
-`scripts/test.sh` runs `xcodebuild test -scheme MyPass`, then `swift test` in each of the three packages, then every `ChromeExtension/tests/*.test.js` suite (31 today, discovered by glob; each in its own `node` process, failures aggregated). There is no JS test framework — each test file is a plain node script. Without `node` a local run fails unless `--no-js` is passed, which prints that the JS suites were not run. `--ci` rejects `--no-js`, requires every tool, and builds unsigned through command-line overrides only (`project.yml` is untouched). `--no-js` is never a way to report a change as tested when it touches `ChromeExtension/`. Hosted app tests run with `-testLanguage en` so assertions see English text, and `LocalizationCatalogTests` fails when any catalog key lacks a translated `uk` or `ru` entry.
+`scripts/test.sh` runs `xcodebuild test -scheme MyPass`, then `swift test` in each of the three packages, then every `ChromeExtension/tests/*.test.js` suite (36 today, discovered by glob; each in its own `node` process, failures aggregated). There is no JS test framework — each test file is a plain node script. Without `node` a local run fails unless `--no-js` is passed, which prints that the JS suites were not run. `--ci` rejects `--no-js`, requires every tool, and builds unsigned through command-line overrides only (`project.yml` is untouched). `--no-js` is never a way to report a change as tested when it touches `ChromeExtension/`. Hosted app tests run with `-testLanguage en` so assertions see English text, and `LocalizationCatalogTests` fails when any catalog key lacks a translated `uk` or `ru` entry.
 
 Local builds keep the stable team signing from `project.yml`. Unsigned output exists only behind explicit flags (`--unsigned`, `--ci`, `package`); unsigned artifacts are for development and inspection, and Touch ID and the Keychain-backed app-to-host exchange are expected to be limited there (untested).
 
@@ -76,8 +76,9 @@ The extension has no build step. Load `ChromeExtension/` unpacked and reload it 
 - **Bridge protocol.** `ExtensionBridgeMessages.swift` holds a 15-case request enum with hand-written `Codable`. Every request carries a per-launch token and an optional pairing token. Switches over it are deliberately exhaustive with no `default` — add the new case everywhere rather than silencing the compiler.
 - **Pairing.** A 6-digit code shown in the app, valid 120 seconds, entered in the popup. Per-browser pairings are revocable in Settings, Browser tab.
 - **Passkeys.** The extension proxies create and get ceremonies through Chrome's `webAuthenticationProxy` API to `PasskeyCeremony.swift`. Credentials live in KeePassXC-compatible `KPEX_PASSKEY_*` custom fields, hidden from the normal custom-field UI. The app-side toggle is authoritative over the extension's state.
-- **Domain matching** uses the bundled Public Suffix List for registrable-domain comparison, never naive suffix heuristics. Frame-level matching is hostname-only, and save banners are top-frame only.
+- **Domain matching** uses the bundled Public Suffix List for registrable-domain comparison, never naive suffix heuristics. Frame-level matching is hostname-only, and save prompts are top-frame only.
 - **Sync.** `SyncKit` exposes a pluggable `StorageBackend` with SFTP, iCloud Drive and local folder implementations, plus `MergeEngine` and `SyncCheckpointStore` for three-way merge.
+- **In-browser prompts.** Save-login, save-2FA and the picker's settings row are not page banners. The content script only sends `requestPrompt` / `openMyPassSettings`; `background.js` validates the sender (tab, frame, documentId, url), re-reads `offerSaveLogin` / `offerSaveTotp`, and keeps the pending record (secret included) in `chrome.storage.session` for 120 s (`shared/prompt-record.js`). `openMyPassPrompt` tries `action.openPopup`, then one `prompt.html` window, then the `!` badge; `popup.html` and `prompt.html` render the same redacted card (`shared/prompt-card.js`) and answer with `{ promptId, action }` only. Passkey ceremonies use the same opener but never the window. Only a trusted submit with a live `navigator.userActivation` may raise a save-login prompt, at most one auto-opened surface per tab per 30 s; the gesture-less 2FA sweep is badge-only; a captured save-login survives a same-origin (scheme, host, port) navigation of its tab, nothing else does.
 - **Content script safety.** The inline fill icon lives in a closed shadow root, defends against hostile page CSS with `!important`, gates actions on `event.isTrusted`, and never mutates the site's own `<input>` elements.
 
 ## Conventions

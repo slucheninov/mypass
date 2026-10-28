@@ -1,7 +1,7 @@
 const assert = require('node:assert');
 const {
   detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
-  detectTotpCandidateWithPriority, shouldShowTotpBanner, routeBannerCredentialsResponse,
+  detectTotpCandidateWithPriority, shouldShowTotpBanner, requestTotpPrompt, requestSavePrompt,
   buildTotpCandidateQueryResponse,
 } = require('../content.js');
 
@@ -236,56 +236,38 @@ assert.strictEqual(shouldShowTotpBanner({ candidate: 'x', priority: 1 }, { vault
 
 console.log('totpDetection.test.js: OK');
 
-// --- routeBannerCredentialsResponse: gates the Save-banner's proposeSaveTotp send on the
-// actual getCredentials response (Finding 1), and records the dismissed priority on every
-// Save click so the MutationObserver's redetection of the banner.remove() mutation doesn't
-// re-show the same banner (Finding 2). ---
+// --- requestTotpPrompt / requestSavePrompt: the offers are requests to the background now; the
+// background (not this script) checks lock/pairing state, matches accounts and asks the user.
+// What stays here is the dismissal memory: an offered priority suppresses equal-or-weaker ones
+// (the MutationObserver would otherwise re-detect the same candidate ~400 ms later). ---
 
 (() => {
-  const state = { vaultLocked: false, totpBannerDismissed: null };
+  const state = { totpBannerDismissed: null };
   const sent = [];
-  routeBannerCredentialsResponse(
-    { type: 'locked' }, 'https://example.com', 'JBSWY3DP', state, 1,
-    (message) => sent.push(message)
-  );
-  assert.strictEqual(sent.length, 0, 'locked response must not send proposeSaveTotp');
-  assert.strictEqual(state.vaultLocked, true, 'locked response marks the vault locked');
-  assert.deepStrictEqual(state.totpBannerDismissed, { priority: 1 }, 'Save click records the dismissed priority even when locked');
+  requestTotpPrompt('https://example.com', 'JBSWY3DP', state, 2, (message) => sent.push(message));
+  assert.deepStrictEqual(sent, [{ type: 'requestPrompt', kind: 'saveTotp', url: 'https://example.com', otpauthOrSecret: 'JBSWY3DP' }]);
+  assert.deepStrictEqual(state.totpBannerDismissed, { priority: 2 }, 'the offered priority is remembered');
+  assert.strictEqual(shouldShowTotpBanner({ candidate: 'JBSWY3DP', priority: 2 }, state), false, 'not re-offered');
+  assert.strictEqual(shouldShowTotpBanner({ candidate: 'x', priority: 1 }, state), true, 'a stronger candidate still is');
 })();
 
 (() => {
-  const state = { vaultLocked: true, totpBannerDismissed: null };
   const sent = [];
-  routeBannerCredentialsResponse(
-    { type: 'credentialList', credentials: [] }, 'https://example.com', 'JBSWY3DP', state, 2,
-    (message) => sent.push(message)
-  );
-  assert.strictEqual(sent.length, 1, 'a real credentialList response with zero matches still proposes a save');
-  assert.strictEqual(sent[0].type, 'proposeSaveTotp');
-  assert.strictEqual(sent[0].entryId, undefined, 'zero matches sends no entryId');
-  assert.strictEqual(state.vaultLocked, false, 'credentialList response clears vaultLocked');
-  assert.deepStrictEqual(state.totpBannerDismissed, { priority: 2 }, 'Save click records the dismissed priority');
+  const state = { lastLoginPrompt: null };
+  assert.strictEqual(requestSavePrompt('https://example.com', 'a', 'b', state, (m) => sent.push(m), 5), true);
+  assert.strictEqual(sent[0].kind, 'saveLogin');
+  assert.strictEqual(requestSavePrompt('https://example.com', 'a', 'b', state, (m) => sent.push(m), 6), false);
+  assert.strictEqual(sent.length, 1);
 })();
 
-(() => {
-  const state = { vaultLocked: false, totpBannerDismissed: null };
-  const sent = [];
-  routeBannerCredentialsResponse(
-    { type: 'pairingRequired' }, 'https://example.com', 'JBSWY3DP', state, 1,
-    (message) => sent.push(message)
-  );
-  assert.strictEqual(sent.length, 0, 'pairingRequired must not send proposeSaveTotp');
-  assert.strictEqual(state.vaultLocked, false, 'pairingRequired does not change vaultLocked');
-})();
-
-console.log('totpDetection.test.js: routeBannerCredentialsResponse gating OK');
+console.log('totpDetection.test.js: requestTotpPrompt / requestSavePrompt OK');
 
 // --- buildTotpCandidateQueryResponse: what the content script's onMessage listener
 // answers a popup's `{ type: 'queryTotpCandidate' }` request with. The listener itself
 // lives inside content.js's browser-only wiring guard (chrome/document both defined) and
 // isn't reachable from this require (chrome/document are undefined at this point in the
 // file), so this exercises the extracted response-building logic directly — same pattern
-// as routeBannerCredentialsResponse above. ---
+// as requestTotpPrompt above. ---
 
 assert.deepStrictEqual(
   buildTotpCandidateQueryResponse(combinedDoc),

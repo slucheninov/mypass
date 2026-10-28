@@ -68,6 +68,7 @@ assert.deepStrictEqual(
     'shared/autofill-settings.js',
     'shared/address-form.js',
     'shared/totp-detection.js',
+    'shared/placement.js',
     'content.js',
   ],
   'shared scripts load before content.js, which reads them'

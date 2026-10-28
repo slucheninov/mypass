@@ -195,9 +195,22 @@ function findOtpField(root) {
   return bestScore >= MIN_OTP_FIELD_SCORE ? best : null;
 }
 
+// offsetParent is null both for display:none AND for position:fixed elements, so on its own it
+// wrongly excluded rendered fixed-position fields (a pinned login bar, a sticky modal form),
+// which then never got an icon. The fast path keeps today's behaviour for every field that has an
+// offsetParent; only when it is null do we ask whether the element still has a layout box that is
+// not visibility:hidden. Elements without those APIs (test doubles) stay "not rendered".
+function isFieldRendered(input) {
+  if (input.offsetParent !== null && input.offsetParent !== undefined) return true;
+  if (typeof input.getClientRects !== 'function' || input.getClientRects().length === 0) return false;
+  const view = input.ownerDocument && input.ownerDocument.defaultView;
+  const style = view && typeof view.getComputedStyle === 'function' ? view.getComputedStyle(input) : null;
+  return !(style && style.visibility === 'hidden');
+}
+
 function isFieldVisible(input) {
   if (!input) return false;
-  if (input.offsetParent === null) return false;
+  if (!isFieldRendered(input)) return false;
   const disabled = input.getAttribute('disabled') !== null || input.disabled === true;
   const readOnly = input.getAttribute('readonly') !== null || input.readOnly === true;
   return !disabled && !readOnly;

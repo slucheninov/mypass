@@ -141,6 +141,15 @@ const notificationSettings = typeof require === 'function'
   ? require('./shared/notification-settings.js')
   : mypassNotificationSettings;
 
+// autofill-settings.js and prompt-record.js are importScripts'd before this file; the bag names
+// stay unqualified so they do not collide with the vars those scripts declared.
+const autofillSettings = typeof require === 'function'
+  ? require('./shared/autofill-settings.js')
+  : mypassAutofillSettings;
+const promptRecords = typeof require === 'function'
+  ? require('./shared/prompt-record.js')
+  : mypassPromptRecord;
+
 // Pure decision function so the branch selection is unit-testable without a chrome.tabs
 // mock. `manifest.json` grants only `activeTab` (no `host_permissions`), and Chrome only
 // grants activeTab after a gesture on the extension itself (toolbar icon, context menu,
@@ -694,8 +703,51 @@ function showBasicNotification(id, message) {
   } catch (_) {}
 }
 
+// Passkey ceremonies and the save / 2FA / settings prompts all surface through this one
+// function, so the three behaviours cannot drift apart. Order:
+//   1. the toolbar popup (action.openPopup). It rejects in a window with no toolbar, in an
+//      inactive window, or under policy; any rejection simply means "try the next surface".
+//   2. a separate extension window on prompt.html (prompts only; popup.html must not be reused,
+//      it looks the "active tab" up with currentWindow and would aim at the window itself).
+//   3. the badge, plus whatever `onUnavailable` does (the passkey notification).
+// `badgeOnly` skips 1 and 2 entirely (badge, and the record waits for an explicit open of the
+// extension): used for everything the PAGE started without a user gesture, because both
+// action.openPopup and a focused window are browser UI a page could otherwise summon at will.
+// A passkey passes `badge: "KEY"` (set first, as it always was), `windowFallback: false` and its
+// notification as `onUnavailable`, so its `passkeyConfirmation` gate is unchanged.
+async function openMyPassPrompt(spec) {
+  const record = (spec && spec.record) || null;
+  if (spec && spec.badge) showPasskeyBadge(spec.badge);
+  // A prompt for a tab the user is not looking at must not raise a popup over something else
+  // (openPopup shows the popup for the window's ACTIVE tab) or steal focus with a new window.
+  if (record && spec.badgeOnly === true) {
+    showPromptBadge();
+    return "badge";
+  }
+  if (record && !(await isPromptTabVisible(record))) {
+    showPromptBadge();
+    return "badge";
+  }
+  if (await tryOpenActionPopup(record && record.windowId)) return "popup";
+  if (spec && spec.windowFallback === true && record && (await openPromptWindow(record))) return "window";
+  if (spec && typeof spec.onUnavailable === "function") spec.onUnavailable();
+  if (record) showPromptBadge();
+  return "badge";
+}
+
+function tryOpenActionPopup(windowId) {
+  if (!chrome.action || typeof chrome.action.openPopup !== "function") return Promise.resolve(false);
+  try {
+    const opened = typeof windowId === "number"
+      ? chrome.action.openPopup({ windowId })
+      : chrome.action.openPopup();
+    return Promise.resolve(opened).then(() => true, () => false);
+  } catch (_) {
+    return Promise.resolve(false);
+  }
+}
+
 function openPasskeyPopup() {
-  showPasskeyBadge("KEY");
   const notify = () => {
     readNotificationSettings().then((settings) => {
       if (!settings.passkeyConfirmation) return;
@@ -705,9 +757,7 @@ function openPasskeyPopup() {
       );
     }).catch(() => {});
   };
-  if (chrome.action && typeof chrome.action.openPopup === "function") {
-    chrome.action.openPopup().catch(notify);
-  } else notify();
+  return openMyPassPrompt({ badge: "KEY", windowFallback: false, onUnavailable: notify });
 }
 
 // Chrome rejects malformed responseJson without settling the website's request.
@@ -954,6 +1004,525 @@ async function fillSelectedAddress(message) {
       ? result.code : 'address_page_changed');
 }
 
+// --- Pending prompts: save a login, save a 2FA seed, open settings ---------------------------
+//
+// The background owns every prompt record. A content script only *asks* (requestPrompt /
+// openMyPassSettings); the secret then lives in this worker's chrome.storage.session record and
+// is never sent to the popup or the prompt window, which receive promptRecords.redactedView() and
+// answer with `{ promptId, action }` only. chrome.storage.session is memory-only and survives
+// service-worker termination (the user has up to 120 s to answer); the content script never
+// writes to it, so nothing here depends on the session area being reachable from a page context.
+//
+// Never log a record, a message that carries one, or a native request/response for one: logs for
+// this feature may carry the kind, the prompt id and an error code only.
+const PROMPT_WINDOW_KEY = "promptWindowId";
+const PROMPT_BADGE_TEXT = "!";
+const PROMPT_WINDOW_SIZE = { width: 420, height: 560 };
+// A tab may open MyPass browser UI on its own initiative at most once per this window; every
+// later prompt from the same tab only moves the badge. A site that fires many submits (or a
+// script that re-triggers one) therefore cannot re-open or re-focus the popup / window in a loop.
+const PROMPT_AUTO_OPEN_KEY = "promptAutoOpenAt";
+const PROMPT_AUTO_OPEN_MS = 30000;
+let promptStateQueue = Promise.resolve();
+let promptWindowQueue = Promise.resolve();
+
+// All reads-modify-writes of the record list go through one queue, like withPasskeyState, so two
+// simultaneous requests cannot overwrite each other and a record can be consumed only once.
+function withPromptState(operation) {
+  const result = promptStateQueue.then(operation);
+  promptStateQueue = result.catch(() => {});
+  return result;
+}
+
+function withPromptWindow(operation) {
+  const result = promptWindowQueue.then(operation);
+  promptWindowQueue = result.catch(() => {});
+  return result;
+}
+
+function sessionGetValue(key) {
+  return new Promise((resolve) => {
+    if (!chrome.storage || !chrome.storage.session) { resolve(undefined); return; }
+    chrome.storage.session.get([key], (stored) => resolve(stored ? stored[key] : undefined));
+  });
+}
+
+function sessionSetValue(key, value) {
+  return new Promise((resolve) => {
+    if (!chrome.storage || !chrome.storage.session) { resolve(); return; }
+    chrome.storage.session.set({ [key]: value }, () => resolve());
+  });
+}
+
+function sessionRemoveKey(key) {
+  return new Promise((resolve) => {
+    if (!chrome.storage || !chrome.storage.session) { resolve(); return; }
+    chrome.storage.session.remove([key], () => resolve());
+  });
+}
+
+// Reads the live records AND removes the expired ones from storage. Filtering alone would leave an
+// expired password or seed sitting in session storage until some later write; here the pruned
+// list is written back (deleting the key and the "!" badge when nothing is left). Every caller
+// already holds the promptStateQueue, so the write-back cannot interleave with another
+// read-modify-write.
+async function readPrompts(now) {
+  const raw = await sessionGetValue(promptRecords.PROMPT_STORAGE_KEY);
+  const live = promptRecords.prune(raw, now === undefined ? Date.now() : now);
+  if (raw !== undefined && (!Array.isArray(raw) || live.length !== raw.length)) await writePrompts(live);
+  return live;
+}
+
+// Writing an empty list removes the key and the "!" badge that said a prompt was waiting.
+async function writePrompts(list) {
+  if (!list.length) {
+    await sessionRemoveKey(promptRecords.PROMPT_STORAGE_KEY);
+    clearPromptBadge();
+    syncPromptExpiryAlarm(list);
+    return;
+  }
+  await sessionSetValue(promptRecords.PROMPT_STORAGE_KEY, list);
+  syncPromptExpiryAlarm(list);
+}
+
+// A setTimeout would die with the service worker, so the sweep that deletes an expired record is
+// a chrome.alarms alarm armed for the soonest expiry (alarms survive worker suspension and wake
+// the worker). Best effort, not a hard wall-clock guarantee: Chrome may fire an alarm up to
+// ~30 s late, and nothing can run while the browser itself is suspended or closed (session
+// storage is memory-only, so a browser exit drops it anyway). The record is still rejected as
+// expired the moment it is read, whenever the sweep actually runs.
+const PROMPT_EXPIRY_ALARM = "mypass-prompt-expiry";
+function syncPromptExpiryAlarm(list) {
+  if (!chrome.alarms || typeof chrome.alarms.create !== "function") return;
+  try {
+    if (!list.length) {
+      if (typeof chrome.alarms.clear === "function") chrome.alarms.clear(PROMPT_EXPIRY_ALARM);
+      return;
+    }
+    const soonest = Math.min(...list.map((record) => record.expiresAt));
+    chrome.alarms.create(PROMPT_EXPIRY_ALARM, { when: Math.max(soonest, Date.now() + 1000) });
+  } catch (_) {}
+}
+
+// Deletes expired records from storage (readPrompts persists the pruning) and re-arms the alarm for
+// whatever is left. Used by the alarm and by worker start.
+function sweepExpiredPrompts() {
+  return withPromptState(async () => {
+    const list = await readPrompts();
+    syncPromptExpiryAlarm(list);
+  });
+}
+
+// Atomically records "this tab just opened browser UI" and tells the caller whether it was the
+// first in the window. Kept in chrome.storage.session (the worker may be stopped in between) and
+// serialized with the prompt records. Entries expire by themselves; a closed tab's is removed.
+function claimAutoOpen(tabId, now) {
+  return withPromptState(async () => {
+    const stored = await sessionGetValue(PROMPT_AUTO_OPEN_KEY);
+    const active = {};
+    if (stored && typeof stored === "object") {
+      for (const [key, at] of Object.entries(stored)) {
+        if (typeof at === "number" && at <= now && now - at < PROMPT_AUTO_OPEN_MS) active[key] = at;
+      }
+    }
+    const claimed = active[tabId] === undefined;
+    if (claimed) active[tabId] = now;
+    if (Object.keys(active).length) await sessionSetValue(PROMPT_AUTO_OPEN_KEY, active);
+    else await sessionRemoveKey(PROMPT_AUTO_OPEN_KEY);
+    return claimed;
+  });
+}
+
+function showPromptBadge() {
+  showPasskeyBadge(PROMPT_BADGE_TEXT);
+}
+
+// Clears only our own "!" so a pending passkey's "KEY" badge is never wiped by a prompt ending.
+function clearPromptBadge() {
+  if (!chrome.action || typeof chrome.action.getBadgeText !== "function") return;
+  try {
+    Promise.resolve(chrome.action.getBadgeText({})).then((text) => {
+      if (text === PROMPT_BADGE_TEXT) showPasskeyBadge("");
+    }).catch(() => {});
+  } catch (_) {}
+}
+
+function readAutofillSettings() {
+  return new Promise((resolve) => {
+    const fallback = autofillSettings.defaultAutofillSettings();
+    if (!chrome.storage || !chrome.storage.local) { resolve(fallback); return; }
+    chrome.storage.local.get([autofillSettings.AUTOFILL_SETTINGS_KEY], (stored) => {
+      resolve(autofillSettings.normalizeAutofillSettings(stored && stored[autofillSettings.AUTOFILL_SETTINGS_KEY]));
+    });
+  });
+}
+
+// A content script of this extension: Chrome fills sender.tab and sender.id for it, and the url is
+// the website's. An extension page opened in a tab (tabs.create) also has sender.tab, hence the
+// isMyPassPage exclusion.
+function isContentScriptSender(sender) {
+  return !!(sender && sender.tab && sender.id === chrome.runtime.id && !isMyPassPage(sender));
+}
+
+// The two surfaces allowed to show and answer a prompt: the toolbar popup and the prompt window.
+function isPromptUiSender(sender) {
+  if (!sender || sender.id !== chrome.runtime.id || typeof sender.url !== "string") return false;
+  return sender.url === chrome.runtime.getURL("popup.html")
+    || sender.url.split(/[?#]/)[0] === chrome.runtime.getURL("prompt.html");
+}
+
+async function isPromptTabVisible(record) {
+  if (!chrome.tabs || typeof chrome.tabs.get !== "function") return true;
+  try {
+    const tab = await chrome.tabs.get(record.tabId);
+    if (!tab || tab.active !== true) return false;
+    if (chrome.windows && typeof chrome.windows.get === "function" && typeof tab.windowId === "number") {
+      const owner = await chrome.windows.get(tab.windowId);
+      if (owner && owner.focused === false) return false;
+    }
+    return true;
+  } catch (_) {
+    return false;
+  }
+}
+
+async function createPrompt(kind, message, sender) {
+  if (!isContentScriptSender(sender)) return { type: "error", code: "prompt_unauthorized" };
+  if (kind === "saveLogin" || kind === "saveTotp") {
+    // The message names the page it came from; it must be the page Chrome says sent it.
+    if (!urlMatch.hostnameMatches(message.url, sender.url)) return { type: "error", code: "prompt_origin_mismatch" };
+    // The settings are re-read here, not trusted from the content script: a switch turned off
+    // in the popup must stop prompts even from a page that loaded before it was changed.
+    const settings = await readAutofillSettings();
+    if (kind === "saveLogin" && !settings.offerSaveLogin) return { type: "ok", created: false };
+    if (kind === "saveTotp" && !settings.offerSaveTotp) return { type: "ok", created: false };
+  }
+  const payload = kind === "saveLogin"
+    ? { username: message.username, password: message.password }
+    : kind === "saveTotp" ? { otpauthOrSecret: message.otpauthOrSecret } : {};
+  const record = promptRecords.create(kind, sender, payload, Date.now());
+  if (!record) return { type: "error", code: "prompt_rejected" };
+  let stored = true;
+  await withPromptState(async () => {
+    const list = await readPrompts();
+    // A 2FA seed is found by the page-load / mutation sweep, so page script could keep
+    // changing it. While a record for this very document is pending (possibly on screen right
+    // now), the first snapshot stays; a new document (navigation) starts afresh.
+    if (kind === "saveTotp" && list.some((r) => r.kind === "saveTotp" && r.tabId === record.tabId && r.documentId === record.documentId)) {
+      stored = false;
+      return;
+    }
+    await writePrompts(promptRecords.upsert(list, record));
+  });
+  if (!stored) return { type: "ok", created: false };
+  // Who may open browser UI:
+  //   settings  - a trusted click on the picker row: always.
+  //   saveLogin - a trusted submit that also had a live user activation (content.js), at most
+  //               once per tab per PROMPT_AUTO_OPEN_MS.
+  //   saveTotp  - found by the sweep with no gesture at all: never. Badge only; the card is
+  //               there when the user opens the extension.
+  const mayOpen = kind === "settings"
+    || (kind === "saveLogin" && await claimAutoOpen(record.tabId, Date.now()));
+  await openMyPassPrompt({ record, windowFallback: true, badgeOnly: !mayOpen });
+  return { type: "ok", created: true };
+}
+
+function markPromptSurface(promptId, surface) {
+  return withPromptState(async () => {
+    const list = await readPrompts();
+    const next = list.map((record) => {
+      if (record.id === promptId) return { ...record, surface };
+      // The single reusable window owns only its current card. Older cards stay pending.
+      if (surface === "window" && record.surface === "window") return { ...record, surface: "" };
+      return record;
+    });
+    await writePrompts(next);
+  });
+}
+
+// One window, reused. Two calls never produce two windows: the serialized check-then-create
+// below sees the window the first call stored. The id is kept in chrome.storage.session because
+// the worker can be terminated while the window is still open.
+function openPromptWindow(record) {
+  if (!chrome.windows || typeof chrome.windows.create !== "function") return Promise.resolve(false);
+  return withPromptWindow(async () => {
+    const existing = await sessionGetValue(PROMPT_WINDOW_KEY);
+    if (typeof existing === "number" && typeof chrome.windows.update === "function") {
+      try {
+        const tabs = await chrome.tabs.query({ windowId: existing, active: true });
+        if (!tabs[0] || typeof tabs[0].id !== "number") throw new Error("Prompt window has no active tab");
+        await chrome.tabs.update(tabs[0].id, {
+          url: chrome.runtime.getURL("prompt.html?prompt=" + encodeURIComponent(record.id))
+        });
+        await chrome.windows.update(existing, { focused: true });
+        await markPromptSurface(record.id, "window");
+        return true;
+      } catch (_) {
+        await sessionRemoveKey(PROMPT_WINDOW_KEY);
+      }
+    }
+    try {
+      const created = await chrome.windows.create({
+        url: chrome.runtime.getURL("prompt.html?prompt=" + encodeURIComponent(record.id)),
+        type: "popup",
+        focused: true,
+        width: PROMPT_WINDOW_SIZE.width,
+        height: PROMPT_WINDOW_SIZE.height
+      });
+      if (!created || typeof created.id !== "number") return false;
+      await sessionSetValue(PROMPT_WINDOW_KEY, created.id);
+      await markPromptSurface(record.id, "window");
+      return true;
+    } catch (_) {
+      return false;
+    }
+  });
+}
+
+// Asks the exact document that raised the prompt (tab + frame + documentId) whether it is still
+// there. A navigated document gets a new documentId, so the message fails: that failure is the
+// success case of this guard, the same property sendApplyFillToSender relies on. The reply's own
+// url is compared with the recorded one, so a same-document pushState to another host fails too.
+function verifyPromptDocument(record) {
+  return new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(
+        record.tabId,
+        { type: "promptStillValid" },
+        { frameId: record.frameId, documentId: record.documentId },
+        (response) => {
+          if (chrome.runtime.lastError) { resolve(false); return; }
+          resolve(!!response && response.type === "ok" && urlMatch.hostnameMatches(record.pageUrl, response.url));
+        }
+      );
+    } catch (_) {
+      resolve(false);
+    }
+  });
+}
+
+// The live top frame of a tab, for a prompt whose source document has been replaced: what the
+// current document itself reports as location.href (read by our own content script in its
+// isolated world, which a page cannot answer for), and tab.url when Chrome exposes it. This
+// extension has neither the `tabs` permission nor host permissions, so tab.url is only
+// populated while activeTab is granted (the user opened the popup on that tab); the content
+// script's report is therefore the check that always works, and tab.url must agree when present.
+// A closed tab or a tab with no MyPass content script (chrome://, error page) gives null.
+async function readLiveTopFrame(tabId) {
+  let tab;
+  try {
+    tab = await chrome.tabs.get(tabId);
+  } catch (_) {
+    return null;
+  }
+  if (!tab) return null;
+  const reportedUrl = await new Promise((resolve) => {
+    try {
+      chrome.tabs.sendMessage(tabId, { type: "promptStillValid" }, { frameId: 0 }, (response) => {
+        if (chrome.runtime.lastError) { resolve(null); return; }
+        resolve(response && response.type === "ok" && typeof response.url === "string" ? response.url : null);
+      });
+    } catch (_) {
+      resolve(null);
+    }
+  });
+  if (!reportedUrl) return null;
+  return { reportedUrl, tabUrl: typeof tab.url === "string" ? tab.url : "" };
+}
+
+// The page check shown before a prompt is displayed (getPrompt) and again before it is used
+// (consumePrompt). Strict document binding first; only a top-frame saveLogin that lost its
+// document to a navigation (the classic form POST) may fall back to "same ORIGIN, same tab, still
+// within the TTL" - see promptRecords.survivesNavigation. The record keeps the URL it was
+// captured on, and that URL (not the new page's) is what the native save receives.
+async function verifyPromptPage(record) {
+  if (await verifyPromptDocument(record)) return true;
+  if (!promptRecords.survivesNavigation(record)) return false;
+  const live = await readLiveTopFrame(record.tabId);
+  if (!live || !promptRecords.liveOriginMatches(record, live.reportedUrl)) return false;
+  return !live.tabUrl || promptRecords.liveOriginMatches(record, live.tabUrl);
+}
+
+function dropPrompt(promptId) {
+  return withPromptState(async () => {
+    await writePrompts(promptRecords.take(await readPrompts(), promptId, Date.now()).rest);
+  });
+}
+
+function classifyCredentialsForPrompt(response) {
+  if (response && response.type === "credentialList" && Array.isArray(response.credentials)) return "ready";
+  if (response && response.type === "locked") return "locked";
+  if (response && response.type === "pairingRequired") return "pairingRequired";
+  return "unavailable";
+}
+
+function accountsForView(credentials) {
+  return credentials.map((credential) => ({
+    id: credential.id,
+    title: String(credential.title || ""),
+    username: String(credential.username || ""),
+    hasTotp: credential.hasTotp === true
+  }));
+}
+
+// The card for a record. For a 2FA seed it also asks the app which accounts match the page, so
+// the card can show "new entry", "this account" or a picker; that answer carries no secret.
+async function buildPromptView(record) {
+  const view = promptRecords.redactedView(record);
+  view.state = "ready";
+  if (record.kind === "saveTotp") {
+    const response = await sendNativeMessageWithPairing({ type: "getCredentials", url: record.pageUrl });
+    view.state = classifyCredentialsForPrompt(response);
+    view.accounts = view.state === "ready" ? accountsForView(response.credentials) : [];
+  }
+  return view;
+}
+
+// The popup asks with the id of the tab it was opened for; the prompt window (not tied to one
+// tab) asks for the newest prompt, preferring the id it was opened with. Records whose document
+// has gone are dropped and the next one is tried, so a stale prompt is never shown.
+async function getPromptForUi(message, sender) {
+  if (!isPromptUiSender(sender)) return { type: "error", code: "prompt_unauthorized" };
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    const list = await withPromptState(() => readPrompts());
+    let candidates;
+    if (typeof message.tabId === "number") {
+      candidates = promptRecords.forTab(list, message.tabId, Date.now());
+    } else {
+      candidates = promptRecords.newestFirst(list);
+      const preferred = typeof message.promptId === "string" ? candidates.find((r) => r.id === message.promptId) : null;
+      if (preferred) candidates = [preferred].concat(candidates.filter((r) => r !== preferred));
+    }
+    const record = candidates[0];
+    if (!record) return { type: "noPrompt" };
+    if (record.kind !== "settings" && !(await verifyPromptPage(record))) {
+      await dropPrompt(record.id);
+      continue;
+    }
+    return { type: "prompt", prompt: await buildPromptView(record) };
+  }
+  return { type: "noPrompt" };
+}
+
+const PROMPT_NATIVE_RESULTS = ["saveProposalAccepted", "locked", "pairingRequired", "error"];
+
+function promptResultFor(response) {
+  const type = response && PROMPT_NATIVE_RESULTS.includes(response.type) ? response.type : "error";
+  const result = { type };
+  if (response && typeof response.message === "string" && type === "error") result.message = response.message.slice(0, 200);
+  return result;
+}
+
+function restorePrompt(record) {
+  return withPromptState(async () => {
+    const list = await readPrompts();
+    // A newer prompt of the same (tab, kind) already replaced this one: keep the newer.
+    if (list.some((r) => r.tabId === record.tabId && r.kind === record.kind)) return;
+    if (promptRecords.isExpired(record, Date.now())) return;
+    await writePrompts(promptRecords.upsert(list, record));
+  });
+}
+
+// Take-and-delete first, validate after: the record can be used at most once, and a double click
+// or two surfaces answering the same prompt cannot both save.
+async function consumePrompt(message, sender) {
+  if (!isPromptUiSender(sender)) return { type: "error", code: "prompt_unauthorized" };
+  if (typeof message.promptId !== "string" || !["save", "dismiss"].includes(message.action)) {
+    return { type: "error", code: "prompt_bad_request" };
+  }
+  const record = await withPromptState(async () => {
+    const taken = promptRecords.take(await readPrompts(), message.promptId, Date.now());
+    await writePrompts(taken.rest);
+    return taken.record;
+  });
+  if (!record) return { type: "error", code: "prompt_gone", message: "This prompt is no longer available." };
+  if (message.action === "dismiss" || record.kind === "settings") return { type: "ok" };
+
+  if (!(await verifyPromptPage(record))) {
+    return { type: "error", code: "prompt_page_changed", message: "This page changed. Try again." };
+  }
+
+  let nativeMessage;
+  if (record.kind === "saveLogin") {
+    nativeMessage = {
+      type: "proposeSaveLogin", url: record.pageUrl,
+      username: record.payload.username, password: record.payload.password
+    };
+  } else {
+    // The chosen account must be one the app offers for this page right now; the popup's word
+    // for it is not enough.
+    const credentials = await sendNativeMessageWithPairing({ type: "getCredentials", url: record.pageUrl });
+    const state = classifyCredentialsForPrompt(credentials);
+    if (state !== "ready") {
+      await restorePrompt(record);
+      return promptResultFor(state === "locked" || state === "pairingRequired" ? { type: state } : credentials);
+    }
+    const accounts = credentials.credentials;
+    let entryId;
+    if (typeof message.entryId === "string") {
+      if (!accounts.some((account) => account.id === message.entryId)) {
+        await restorePrompt(record);
+        return { type: "error", code: "prompt_bad_choice", message: "Choose one of the listed accounts." };
+      }
+      entryId = message.entryId;
+    } else if (accounts.length === 1) {
+      entryId = accounts[0].id;
+    } else if (accounts.length > 1) {
+      await restorePrompt(record);
+      return { type: "error", code: "prompt_choice_required", message: "Choose an account." };
+    }
+    nativeMessage = { type: "proposeSaveTotp", url: record.pageUrl, otpauthOrSecret: record.payload.otpauthOrSecret };
+    if (entryId !== undefined) nativeMessage.entryId = entryId;
+  }
+  const response = await sendNativeMessageWithPairing(nativeMessage);
+  // Anything but an acceptance means the app did not take the proposal (locked, unpaired, not
+  // running, a transient error): keep the prompt so the user can retry until it expires, rather
+  // than losing a password they have not saved anywhere else.
+  if (!response || response.type !== "saveProposalAccepted") {
+    await restorePrompt(record);
+  }
+  return promptResultFor(response);
+}
+
+// Closing the prompt window dismisses what it was showing; closing a tab drops that tab's prompts.
+function wirePromptCleanup() {
+  if (chrome.tabs && chrome.tabs.onRemoved && typeof chrome.tabs.onRemoved.addListener === "function") {
+    chrome.tabs.onRemoved.addListener((tabId) => {
+      withPromptState(async () => {
+        await writePrompts(promptRecords.removeTab(await readPrompts(), tabId));
+        const claims = await sessionGetValue(PROMPT_AUTO_OPEN_KEY);
+        if (claims && typeof claims === "object" && claims[tabId] !== undefined) {
+          const { [tabId]: _gone, ...rest } = claims;
+          if (Object.keys(rest).length) await sessionSetValue(PROMPT_AUTO_OPEN_KEY, rest);
+          else await sessionRemoveKey(PROMPT_AUTO_OPEN_KEY);
+        }
+      }).catch(() => {});
+    });
+  }
+  if (chrome.windows && chrome.windows.onRemoved && typeof chrome.windows.onRemoved.addListener === "function") {
+    chrome.windows.onRemoved.addListener((windowId) => {
+      sessionGetValue(PROMPT_WINDOW_KEY).then(async (stored) => {
+        if (stored !== windowId) return;
+        await sessionRemoveKey(PROMPT_WINDOW_KEY);
+        await withPromptState(async () => {
+          const list = await readPrompts();
+          await writePrompts(list.filter((record) => record.surface !== "window"));
+        });
+      }).catch(() => {});
+    });
+  }
+  // The expiry alarm wakes a suspended worker to delete records that ran out.
+  if (chrome.alarms && chrome.alarms.onAlarm && typeof chrome.alarms.onAlarm.addListener === "function") {
+    chrome.alarms.onAlarm.addListener((alarm) => {
+      if (alarm && alarm.name === PROMPT_EXPIRY_ALARM) sweepExpiredPrompts().catch(() => {});
+    });
+  }
+  // Sweep on worker start: expired records are dropped even if no prompt is ever opened again, and
+  // the alarm is re-armed for any record that is still pending.
+  sweepExpiredPrompts().catch(() => {});
+}
+if (typeof chrome !== "undefined" && chrome.runtime && chrome.storage) wirePromptCleanup();
+
 function handleRuntimeMessage(message, sender, sendResponse) {
   if (message && message.type === 'addressFormReport') {
     sendResponse(acceptAddressReport(message, sender));
@@ -1022,15 +1591,31 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     attachPasskeyProxyIfEligible().then(sendResponse);
     return true;
   }
-  if (message && message.type === "openPopupForTotpPicker") {
-    if (chrome.action && typeof chrome.action.openPopup === "function") {
-      chrome.action.openPopup().catch(() => {});
-    }
-    return false;
+  // Prompts (save login / save 2FA / settings). Ahead of the knownTypes gate: these are UI
+  // messages for the background itself, never forwarded to the app as-is.
+  if (message && (message.type === "requestPrompt" || message.type === "openMyPassSettings")) {
+    const kind = message.type === "openMyPassSettings" ? "settings" : message.kind;
+    createPrompt(kind, message, sender).then(sendResponse).catch(() => sendResponse({ type: "error", code: "prompt_failed" }));
+    return true;
+  }
+  if (message && message.type === "getPrompt") {
+    getPromptForUi(message, sender).then(sendResponse).catch(() => sendResponse({ type: "error", code: "prompt_failed" }));
+    return true;
+  }
+  if (message && message.type === "consumePrompt") {
+    consumePrompt(message, sender).then(sendResponse).catch(() => sendResponse({ type: "error", code: "prompt_failed" }));
+    return true;
+  }
+  // A save proposal is raised only by a prompt the user confirmed (consumePrompt) or by the popup's
+  // own Add 2FA section. A content script no longer has any reason to send one.
+  if (message && (message.type === "proposeSaveLogin" || message.type === "proposeSaveTotp")
+    && sender && sender.tab && !isMyPassPage(sender)) {
+    sendResponse({ type: "error", code: "prompt_unauthorized" });
+    return true;
   }
 
   // UI-only message — never forwarded to the app as-is, so it sits ahead of the
-  // knownTypes gate alongside openPopupForTotpPicker.
+  // knownTypes gate alongside the prompt messages.
   if (message && message.type === "passkeyCancelUI") {
     readPending().then((pending) => {
       const kind = pending && pending.requestId === message.requestId ? pending.kind : "create";
@@ -1386,6 +1971,18 @@ if (typeof module !== "undefined") {
     noteFilledCredential,
     hostnameMatches: urlMatch.hostnameMatches,
     resolveSenderFillTarget,
-    relayFillToActiveTab
+    relayFillToActiveTab,
+    openMyPassPrompt,
+    openPasskeyPopup,
+    createPrompt,
+    getPromptForUi,
+    consumePrompt,
+    readPrompts,
+    writePrompts,
+    sweepExpiredPrompts,
+    PROMPT_EXPIRY_ALARM,
+    PROMPT_WINDOW_KEY,
+    PROMPT_BADGE_TEXT,
+    PROMPT_AUTO_OPEN_MS
   };
 }
