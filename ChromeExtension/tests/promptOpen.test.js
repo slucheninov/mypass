@@ -4,7 +4,7 @@ const assert = require('node:assert');
 // action (popup + badge), windows, tabs.get/sendMessage/onRemoved, notifications, native messaging.
 const local = {};
 let session = {};
-const log = { popup: [], badge: [], windowsCreated: [], windowsUpdated: [], notifications: [], native: [], tabMessages: [] };
+const log = { popup: [], badge: [], windowsCreated: [], windowsUpdated: [], tabsUpdated: [], notifications: [], native: [], tabMessages: [] };
 const behavior = {
   openPopup: 'ok',               // 'ok' | 'reject' | 'missing'
   tab: { id: 7, active: true, windowId: 3 },
@@ -56,6 +56,8 @@ global.chrome = {
     }
   },
   tabs: {
+    query: async ({ windowId }) => [{ id: windowId + 1000 }],
+    update: async (id, props) => { log.tabsUpdated.push({ id, props }); },
     get: async (id) => {
       if (!behavior.tab || behavior.tab.id !== id) throw new Error('No tab');
       return behavior.tab;
@@ -170,6 +172,11 @@ function dispatch(message, sender) {
   await dispatch({ type: 'openMyPassSettings' }, contentSender());
   assert.strictEqual(log.windowsCreated.length, 1, 'a second prompt reuses the window');
   assert.strictEqual(log.windowsUpdated.length, 1, 'the existing window is focused');
+  const settingsRecord = (await bg.readPrompts()).find((record) => record.kind === 'settings');
+  assert.deepStrictEqual(log.tabsUpdated, [{
+    id: session[bg.PROMPT_WINDOW_KEY] + 1000,
+    props: { url: 'chrome-extension://ext/prompt.html?prompt=' + encodeURIComponent(settingsRecord.id) }
+  }], 'explicit reuse rebinds the window to the requested record');
   assert.strictEqual((await bg.readPrompts()).length, 2, 'different kinds queue');
   assert.ok((await bg.readPrompts()).every((r) => r.surface === 'window'));
 
@@ -220,6 +227,7 @@ function dispatch(message, sender) {
     assert.strictEqual(log.popup.length, 0, 'a passive 2FA sweep never calls action.openPopup (' + popupBehavior + ')');
     assert.strictEqual(log.windowsCreated.length, 0, 'nor windows.create');
     assert.strictEqual(log.windowsUpdated.length, 0, 'nor focuses an existing window');
+    assert.strictEqual(log.tabsUpdated.length, 0, 'nor rebinds an existing prompt window');
     assert.ok(log.badge.includes('!'), 'the badge is the only signal');
     assert.strictEqual((await bg.readPrompts()).length, 1, 'the record waits for an explicit open');
   }

@@ -182,6 +182,7 @@ const at = (ms) => { Date.now = () => ms; };
   const timers = [];
   global.setTimeout = (fn, ms) => { timers.push({ fn, ms }); return { unref() {} }; };
   assert.strictEqual(content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, state, send, 1000), true);
+  const firstKey = state.lastLoginPrompt.key;
   assert.ok(!JSON.stringify(state).includes(PASSWORD), 'no plaintext password in the dedupe state');
   assert.ok(!JSON.stringify(state).includes('hunter2'), 'not even a fragment of it');
   assert.strictEqual(content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, state, send, 2000), false, 'same credentials still deduped');
@@ -196,7 +197,26 @@ const at = (ms) => { Date.now = () => ms; };
   assert.strictEqual(state.lastLoginPrompt, null, 'the entry is dropped when its lifetime is over');
   const other = { lastLoginPrompt: null };
   content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, other, send, 1000);
-  assert.notDeepStrictEqual(other.lastLoginPrompt.key, null);
+  assert.notStrictEqual(other.lastLoginPrompt.key, firstKey, 'separate documents have separate salted fingerprints');
+
+  // Rejected requests must not suppress a later retry, and old replies must not clear a newer entry.
+  for (const response of [undefined, { type: 'error' }, { type: 'ok', created: false }]) {
+    const rejected = { lastLoginPrompt: null };
+    const reject = (_message, callback) => callback(response);
+    assert.strictEqual(content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, rejected, reject, 1000), true);
+    assert.strictEqual(rejected.lastLoginPrompt, null, 'failed creation clears its dedupe entry');
+    assert.strictEqual(content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, rejected, reject, 2000), true, 'retry is allowed');
+  }
+  const pendingState = { lastLoginPrompt: null };
+  const replies = [];
+  const pendingSend = (_message, callback) => replies.push(callback);
+  content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, pendingState, pendingSend, 1000);
+  content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD + '!', pendingState, pendingSend, 2000);
+  const latest = pendingState.lastLoginPrompt;
+  replies[0]({ type: 'error' });
+  assert.strictEqual(pendingState.lastLoginPrompt, latest, 'a late failure cannot clear a newer submission');
+  replies[1]({ type: 'ok', created: true });
+  assert.strictEqual(pendingState.lastLoginPrompt, latest, 'successful creation retains deduplication');
   global.setTimeout = realSetTimeout;
 
   console.log('promptExpiry.test.js: expired/answered secrets are deleted, alarm sweep, dedupe holds no password OK');

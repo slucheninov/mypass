@@ -292,7 +292,11 @@
       if (state.lastLoginPrompt === entry) state.lastLoginPrompt = null;
     }, PROMPT_DEDUPE_MS);
     if (timer && typeof timer.unref === 'function') timer.unref();
-    sendMessage({ type: 'requestPrompt', kind: 'saveLogin', url, username, password });
+    sendMessage({ type: 'requestPrompt', kind: 'saveLogin', url, username, password }, (response) => {
+      if (!response || response.type === 'error' || response.created === false) {
+        if (state.lastLoginPrompt === entry) state.lastLoginPrompt = null;
+      }
+    });
     return true;
   }
 

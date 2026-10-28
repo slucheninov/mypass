@@ -1244,6 +1244,11 @@ function openPromptWindow(record) {
     const existing = await sessionGetValue(PROMPT_WINDOW_KEY);
     if (typeof existing === "number" && typeof chrome.windows.update === "function") {
       try {
+        const tabs = await chrome.tabs.query({ windowId: existing, active: true });
+        if (!tabs[0] || typeof tabs[0].id !== "number") throw new Error("Prompt window has no active tab");
+        await chrome.tabs.update(tabs[0].id, {
+          url: chrome.runtime.getURL("prompt.html?prompt=" + encodeURIComponent(record.id))
+        });
         await chrome.windows.update(existing, { focused: true });
         await markPromptSurface(record.id, "window");
         return true;
