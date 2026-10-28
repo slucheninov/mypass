@@ -62,7 +62,7 @@ const loginView = { id: 'p1', kind: 'saveLogin', origin: 'https://login.example.
   const ctl = card.render(doc, rootEl, loginView, api);
   const text = allText(rootEl);
   assert.ok(text.includes('Save password?'));
-  assert.ok(text.includes('https://login.example.com'));
+  assert.strictEqual(walk(rootEl).find((node) => node.tag === 'dl').children[1].textContent, loginView.origin);
   assert.ok(text.includes('alice'));
   assert.ok(!text.includes('hunter2'), 'the card never holds the password');
   assert.strictEqual(ctl.id, 'p1');
