@@ -207,6 +207,22 @@ const at = (ms) => { Date.now = () => ms; };
     assert.strictEqual(rejected.lastLoginPrompt, null, 'failed creation clears its dedupe entry');
     assert.strictEqual(content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, rejected, reject, 2000), true, 'retry is allowed');
   }
+  // A reply that never came sets runtime.lastError; the callback must read it (so Chrome does not
+  // log "Unchecked runtime.lastError") and still treat the prompt as not created, so a retry works.
+  const hadChrome = Object.prototype.hasOwnProperty.call(global, 'chrome');
+  const previousChrome = global.chrome;
+  let lastErrorReads = 0;
+  global.chrome = { runtime: { get lastError() { lastErrorReads += 1; return { message: 'The message port closed before a response was received.' }; } } };
+  try {
+    const lost = { lastLoginPrompt: null };
+    const noReply = (_message, callback) => callback(undefined);
+    assert.strictEqual(content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, lost, noReply, 1000), true);
+    assert.strictEqual(lastErrorReads, 1, 'the missing-response callback consumes runtime.lastError');
+    assert.strictEqual(lost.lastLoginPrompt, null, 'a missing response still clears the dedupe entry');
+    assert.strictEqual(content.requestSavePrompt('https://login.example.com/', 'alice', PASSWORD, lost, noReply, 2000), true, 'and the retry is still allowed');
+  } finally {
+    if (hadChrome) global.chrome = previousChrome; else delete global.chrome;
+  }
   const pendingState = { lastLoginPrompt: null };
   const replies = [];
   const pendingSend = (_message, callback) => replies.push(callback);

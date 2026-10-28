@@ -293,6 +293,11 @@
     }, PROMPT_DEDUPE_MS);
     if (timer && typeof timer.unref === 'function') timer.unref();
     sendMessage({ type: 'requestPrompt', kind: 'saveLogin', url, username, password }, (response) => {
+      // A reply that never came (the service worker restarted, the extension reloaded) sets
+      // runtime.lastError; reading it is what stops Chrome logging "Unchecked runtime.lastError".
+      // The missing response itself is handled below exactly as before: the entry is dropped so
+      // the next submit retries.
+      if (typeof chrome !== 'undefined' && chrome && chrome.runtime) void chrome.runtime.lastError;
       if (!response || response.type === 'error' || response.created === false) {
         if (state.lastLoginPrompt === entry) state.lastLoginPrompt = null;
       }
@@ -588,23 +593,32 @@
   // wrapper, or any attribute — that is the whole reason for the overlay approach.
   //
   // Viewport coordinates on a `position:fixed` host: `viewport` is kept in the signature for
-  // callers but scroll offsets are deliberately ignored. `offset` is the one-time correction
-  // correctHostPlacement measured for this host (an `html` transform, zoom), {dx, dy}.
+  // callers but scroll offsets are deliberately ignored. `offset` is what settlePlacementOffset
+  // measured for this host: {dx, dy} in the host's local pixels, plus {sx, sy}, the scale its
+  // containing block applies on screen (an `html` transform; both default to 1). `left`, `top`,
+  // `width` and `height` are LOCAL pixels, but placeIcon works in viewport pixels, so each is
+  // divided by the scale: a 28 px icon under `html{transform:scale(.5)}` has to be written as
+  // 56 local px to render as 28 on screen, and its position moves with the page by 1/scale.
   function positionHostToField(host, rect, viewport, obstacles = [], clipRect = null, offset = null, box = null) {
     const placed = shared.placement.placeIcon(rect, obstacles, clipRect, box);
     const dx = offset && typeof offset.dx === 'number' ? offset.dx : 0;
     const dy = offset && typeof offset.dy === 'number' ? offset.dy : 0;
-    const left = placed.left + dx;
-    const top = placed.top + dy;
+    const sx = shared.placement.usableScale(offset && offset.sx);
+    const sy = shared.placement.usableScale(offset && offset.sy);
+    const left = placed.left / sx + dx;
+    const top = placed.top / sy + dy;
     // Tiny fields have no room for both typing and a useful button. The toolbar popup
     // remains available; never grow a button beyond the input or cover most of its text.
     host.style.setProperty('display', placed.fits ? 'block' : 'none', 'important');
     host.style.setProperty('position', 'fixed', 'important');
-    host.style.setProperty('width', String(placed.size) + 'px', 'important');
-    host.style.setProperty('height', String(placed.size) + 'px', 'important');
+    host.style.setProperty('width', String(placed.size / sx) + 'px', 'important');
+    host.style.setProperty('height', String(placed.size / sy) + 'px', 'important');
     host.style.setProperty('top', String(top) + 'px', 'important');
     host.style.setProperty('left', String(left) + 'px', 'important');
-    return { fits: placed.fits, intended: { left: placed.left, top: placed.top } };
+    return {
+      fits: placed.fits,
+      intended: { left: placed.left, top: placed.top, width: placed.size, height: placed.size }
+    };
   }
 
   // Where a host for `input` is mounted. A field inside an open modal <dialog> lives in the
@@ -624,30 +638,53 @@
     return doc.documentElement;
   }
 
-  // Compares where a host actually landed with where it was told to go and returns the shift,
-  // in the host's own (local) CSS pixels, that closes the gap (null when it is already right).
-  // Applies nothing itself. The local scale comes from the host's rendered size over its layout
-  // size, so a scaled containing block (`html{transform:scale(.5)}`) does not halve the shift.
+  // The host's own layout size in local pixels: what positionHostToField wrote, which unlike
+  // offsetWidth is not rounded to an integer.
+  function localExtent(host, name, fallback) {
+    const written = host.style && parseFloat(host.style[name]);
+    return written > 0 ? written : fallback;
+  }
+
+  // Compares where a host actually landed (and, when `intended` carries a width and height, how
+  // big it rendered) with where it was told to go. Returns the fix, or null when it is right:
+  // {dx, dy}, the shift in the host's own (local) CSS pixels that closes the position gap, or
+  // {dx: 0, dy: 0, sx, sy} when the rendered SIZE is off, because a scaled containing block
+  // (`html{transform:scale(.5)}`) renders the local 28 px that was written as 14. The scale is
+  // read off the host as rendered size over written size. A size fix never carries a position
+  // fix: the position was computed for the old scale and is measured again once the new size
+  // is applied. Applies nothing itself.
   function measurePlacementOffset(host, intended) {
     if (!host || typeof host.getBoundingClientRect !== 'function') return null;
     const measured = host.getBoundingClientRect();
     if (!measured || !(measured.width > 0)) return null;
-    const scale = shared.placement.scaleFrom(measured, host.offsetWidth, host.offsetHeight);
+    const scale = shared.placement.scaleFrom(
+      measured, localExtent(host, 'width', host.offsetWidth), localExtent(host, 'height', host.offsetHeight)
+    );
+    if (typeof intended.width === 'number' && typeof intended.height === 'number'
+      && (Math.abs(measured.width - intended.width) > 1 || Math.abs(measured.height - intended.height) > 1)) {
+      return { dx: 0, dy: 0, sx: scale.x, sy: scale.y };
+    }
     return shared.placement.correction(intended, measured, 1, scale);
   }
 
-  // A scale is only an estimate (offsetWidth is rounded), so one shift can still leave a gap:
-  // apply it, measure again, and repeat a few times. `target` is where the host should be in
-  // viewport coordinates; `apply(offset)` writes the host's styles for a given {dx, dy}.
-  // Returns the offset and whether the host ended within tolerance, so callers cache the
-  // offset as verified only when it really is.
+  // A scale is only an estimate, and a size change moves what the position gap means, so one
+  // fix can still leave a gap: apply it, measure again, and repeat a few times. `target` is where
+  // the host should be in viewport coordinates (plus its width and height when the caller sizes
+  // it); `apply(offset)` writes the host's styles for a given {dx, dy, sx, sy}. Returns the
+  // offset and whether the host ended within tolerance, so callers cache the offset as verified
+  // only when it really is.
   const PLACEMENT_SETTLE_PASSES = 3;
   function settlePlacementOffset(host, target, offset, apply) {
     let current = offset || { dx: 0, dy: 0 };
     for (let pass = 0; pass < PLACEMENT_SETTLE_PASSES; pass += 1) {
       const fix = measurePlacementOffset(host, target);
       if (!fix) return { offset: current, settled: true };
-      current = { dx: current.dx + fix.dx, dy: current.dy + fix.dy };
+      current = {
+        dx: current.dx + fix.dx,
+        dy: current.dy + fix.dy,
+        sx: typeof fix.sx === 'number' ? fix.sx : current.sx,
+        sy: typeof fix.sy === 'number' ? fix.sy : current.sy
+      };
       apply(current);
     }
     return { offset: current, settled: !measurePlacementOffset(host, target) };
@@ -656,6 +693,15 @@
   // Syncs that may re-run the settle loop for one host before it is accepted as it is; keeps a
   // page whose host never converges from costing a layout read per scroll frame forever.
   const PLACEMENT_VERIFY_TRIES = 3;
+
+  // A host that needed no correction at all (the usual page) is verified once and never measured
+  // again. One that did need a shift or a scale sits in a containing block that is not the
+  // viewport (a transformed `html`), and that block scrolls with the page, so the shift that was
+  // right a moment ago is wrong after the next scroll: such a host is measured again on every
+  // sync, which costs one layout read per frame on those pages only.
+  function isIdentityOffset(offset) {
+    return !offset || (Math.abs(offset.dx || 0) < 0.01 && Math.abs(offset.dy || 0) < 0.01 && !offset.sx && !offset.sy);
+  }
 
   // An ancestor that is the containing block of `position:fixed` descendants (a transform,
   // perspective, filter or backdrop-filter, `contain: layout|paint|strict|content`, or a
@@ -1101,8 +1147,10 @@
           );
         });
         record.offset = settled.offset;
-        record.verifyTries = (record.verifyTries || 0) + 1;
-        record.verified = settled.settled || record.verifyTries >= PLACEMENT_VERIFY_TRIES;
+        if (!settled.settled) record.verifyTries = (record.verifyTries || 0) + 1;
+        record.verified = settled.settled
+          ? isIdentityOffset(settled.offset)
+          : record.verifyTries >= PLACEMENT_VERIFY_TRIES;
       }
     }
 
@@ -1214,25 +1262,45 @@
       }
       const host = openPanel.host;
       const box = host.getBoundingClientRect();
+      // placeFloating works on the picker's RENDERED size and answers in viewport pixels; the
+      // host's styles are LOCAL pixels of its containing block, so every length it receives is
+      // divided by that block's scale (rendered over written size, as for the icon). The
+      // position stays viewport / scale + a cached offset, which keeps it right while scrolling.
+      // Taken once. The picker is mounted under the same parent as the field's icon, so it shares
+      // that icon's containing block, and the icon's scale is exact (the size it wrote over the
+      // size it rendered). Only without one is the scale read off the picker itself, from
+      // offsetWidth/offsetHeight, which are rounded; re-reading them on every scroll frame
+      // would let the scale jitter.
+      if (!openPanel.scale && box.width > 0 && box.height > 0) {
+        const iconRecord = attachedIcons.get(openPanel.input);
+        const iconScale = iconRecord && iconRecord.offset;
+        openPanel.scale = iconScale && (iconScale.sx || iconScale.sy)
+          ? { x: shared.placement.usableScale(iconScale.sx), y: shared.placement.usableScale(iconScale.sy) }
+          : shared.placement.scaleFrom(
+            box, localExtent(host, 'width', host.offsetWidth), localExtent(host, 'height', host.offsetHeight)
+          );
+      }
+      const scale = openPanel.scale || { x: 1, y: 1 };
       const placed = shared.placement.placeFloating(
         rect, { width: Math.max(box.width, 1), height: Math.max(box.height, 1) }, window
       );
-      host.style.setProperty('--mypass-panel-max-height', String(placed.maxHeight) + 'px', 'important');
-      host.style.setProperty('top', String(placed.top + openPanel.dy) + 'px', 'important');
-      host.style.setProperty('left', String(placed.left + openPanel.dx) + 'px', 'important');
-      host.style.setProperty('min-width', String(Math.min(rect.width, 320)) + 'px', 'important');
+      const write = (offset) => {
+        host.style.setProperty('top', String(placed.top / scale.y + offset.dy) + 'px', 'important');
+        host.style.setProperty('left', String(placed.left / scale.x + offset.dx) + 'px', 'important');
+      };
+      host.style.setProperty('--mypass-panel-max-height', String(placed.maxHeight / scale.y) + 'px', 'important');
+      write(openPanel);
+      host.style.setProperty('min-width', String(Math.min(rect.width, 320) / scale.x) + 'px', 'important');
       if (!openPanel.verified) {
         const settled = settlePlacementOffset(
-          host, { left: placed.left, top: placed.top }, { dx: openPanel.dx, dy: openPanel.dy },
-          (offset) => {
-            host.style.setProperty('top', String(placed.top + offset.dy) + 'px', 'important');
-            host.style.setProperty('left', String(placed.left + offset.dx) + 'px', 'important');
-          }
+          host, { left: placed.left, top: placed.top }, { dx: openPanel.dx, dy: openPanel.dy }, write
         );
         openPanel.dx = settled.offset.dx;
         openPanel.dy = settled.offset.dy;
-        openPanel.verifyTries = (openPanel.verifyTries || 0) + 1;
-        openPanel.verified = settled.settled || openPanel.verifyTries >= PLACEMENT_VERIFY_TRIES;
+        if (!settled.settled) openPanel.verifyTries = (openPanel.verifyTries || 0) + 1;
+        openPanel.verified = settled.settled
+          ? isIdentityOffset(settled.offset)
+          : openPanel.verifyTries >= PLACEMENT_VERIFY_TRIES;
       }
     }
 

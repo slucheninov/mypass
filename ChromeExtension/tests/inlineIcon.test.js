@@ -438,46 +438,82 @@ assert.strictEqual(
 // with some origin offset): `left`/`top` are LOCAL pixels, the measured rect is VIEWPORT pixels.
 // One unscaled shift of the viewport gap used to leave d * (1 - s) behind (scale .5: a 50 px gap
 // closed by 25 px), for the icon and for the picker alike.
-function scaledHost(scale, originX, originY) {
+function scaledHost(scaleX, scaleY, originX, originY) {
   const host = fakeElement('div');
   const local = (name) => parseFloat(host.style[name]) || 0;
+  // Rendered geometry = origin + local * scale, for the position AND for the size: a local 28 px
+  // renders 14 px under scale .5. (An earlier fake scaled only the origin and kept the size, which
+  // is how a half-sized icon passed.) offsetWidth/Height are the rounded LOCAL sizes, as in Chrome.
   host.getBoundingClientRect = () => ({
-    left: originX + local('left') * scale,
-    top: originY + local('top') * scale,
-    width: (parseFloat(host.style.width) || 0) * scale,
-    height: (parseFloat(host.style.height) || 0) * scale,
+    left: originX + local('left') * scaleX,
+    top: originY + local('top') * scaleY,
+    width: local('width') * scaleX,
+    height: local('height') * scaleY,
   });
-  Object.defineProperty(host, 'offsetWidth', { get: () => Math.round(parseFloat(host.style.width) || 0) });
-  Object.defineProperty(host, 'offsetHeight', { get: () => Math.round(parseFloat(host.style.height) || 0) });
+  Object.defineProperty(host, 'offsetWidth', { get: () => Math.round(local('width')) });
+  Object.defineProperty(host, 'offsetHeight', { get: () => Math.round(local('height')) });
   return host;
 }
 const iconField = { top: 300, left: 40, width: 300, height: 40 };
-[0.5, 2, 1].forEach((scale) => {
+// uniform 0.5 and 2, the non-uniform 0.5 x 2, and 1 (also with a translation) as the baseline
+[[0.5, 0.5], [2, 2], [0.5, 2], [2, 0.5], [1, 1]].forEach(([scaleX, scaleY]) => {
+  const name = scaleX + ' x ' + scaleY;
   // inline icon: same call sequence as placeIconHost
-  const iconHost = scaledHost(scale, 30, 70);
+  const iconHost = scaledHost(scaleX, scaleY, 30, 70);
   const first = positionHostToField(iconHost, iconField, {});
   const iconSettled = settlePlacementOffset(iconHost, first.intended, null, (offset) => {
     positionHostToField(iconHost, iconField, {}, [], null, offset);
   });
   const iconRect = iconHost.getBoundingClientRect();
-  assert.ok(iconSettled.settled, 'icon at scale ' + scale + ' settles');
+  assert.ok(iconSettled.settled, 'icon at scale ' + name + ' settles');
   assert.ok(Math.abs(iconRect.left - first.intended.left) <= 1 && Math.abs(iconRect.top - first.intended.top) <= 1,
-    'icon at scale ' + scale + ' lands on its intended viewport position, not d * (1 - scale) away');
+    'icon at scale ' + name + ' lands on its intended viewport position, not d * (1 - scale) away');
+  // The RENDERED size is what the user sees: 28 px on screen, whatever the containing block does.
+  assert.ok(Math.abs(iconRect.width - first.intended.width) <= 1 && Math.abs(iconRect.height - first.intended.height) <= 1,
+    'icon at scale ' + name + ' renders ' + iconRect.width + 'x' + iconRect.height + ', expected ' + first.intended.width + 'x' + first.intended.height);
+  assert.ok(Math.abs((iconRect.left + iconRect.width) - (iconField.left + iconField.width - 6)) <= 1,
+    'icon at scale ' + name + ' keeps its 6 px gap to the right end of the field');
+  assert.ok(Math.abs((iconRect.top + iconRect.height / 2) - (iconField.top + iconField.height / 2)) <= 1,
+    'icon at scale ' + name + ' stays centred on the field');
+  if (scaleX === 1 && scaleY === 1) {
+    assert.ok(!iconSettled.offset.sx && !iconSettled.offset.sy, 'at baseline 1 no scale is recorded, the old coordinates are kept');
+  }
 
   // account picker: same call sequence as positionOpenPanel
-  const panelHost = scaledHost(scale, -25, 55);
-  panelHost.style.setProperty('width', '240px', 'important');
-  panelHost.style.setProperty('height', '120px', 'important');
+  const panelHost = scaledHost(scaleX, scaleY, -25, 55);
+  panelHost.style.setProperty('width', String(240 / scaleX) + 'px', 'important');
+  panelHost.style.setProperty('height', String(120 / scaleY) + 'px', 'important');
   const placed = require('../shared/placement.js').placeFloating(iconField, { width: 240, height: 120 }, { innerWidth: 1280, innerHeight: 800 });
   const panelSettled = settlePlacementOffset(panelHost, { left: placed.left, top: placed.top }, { dx: 0, dy: 0 }, (offset) => {
-    panelHost.style.setProperty('top', String(placed.top + offset.dy) + 'px', 'important');
-    panelHost.style.setProperty('left', String(placed.left + offset.dx) + 'px', 'important');
+    panelHost.style.setProperty('top', String(placed.top / scaleY + offset.dy) + 'px', 'important');
+    panelHost.style.setProperty('left', String(placed.left / scaleX + offset.dx) + 'px', 'important');
   });
   const panelRect = panelHost.getBoundingClientRect();
-  assert.ok(panelSettled.settled, 'picker at scale ' + scale + ' settles');
+  assert.ok(panelSettled.settled, 'picker at scale ' + name + ' settles');
   assert.ok(Math.abs(panelRect.left - placed.left) <= 1 && Math.abs(panelRect.top - placed.top) <= 1,
-    'picker at scale ' + scale + ' lands on its intended viewport position');
+    'picker at scale ' + name + ' lands on its intended viewport position');
+  assert.ok(Math.abs(panelRect.width - 240) <= 1 && Math.abs(panelRect.height - 120) <= 1, 'picker keeps its rendered size at scale ' + name);
 });
+
+// positionHostToField writes LOCAL pixels: size / scale, and position viewport / scale + offset.
+const scaledWrite = fakeElement('div');
+positionHostToField(scaledWrite, { top: 100, left: 50, width: 200, height: 30 }, {}, [], null, { dx: 3, dy: -4, sx: 0.5, sy: 2 });
+assert.strictEqual(scaledWrite.style.width, '52px', 'a 26 px icon (the field is 30 tall) under an x scale of .5 is written as 52 local px');
+assert.strictEqual(scaledWrite.style.height, '13px', 'and under a y scale of 2 as 13 local px');
+assert.strictEqual(scaledWrite.style.left, String((50 + 200 - 26 - 6) / 0.5 + 3) + 'px');
+assert.strictEqual(scaledWrite.style.top, String((100 + 2) / 2 - 4) + 'px');
+
+// The scale is read from the written size: a host whose rendered size already matches needs no
+// size fix, one that renders half of it reports the scale.
+assert.deepStrictEqual(
+  measurePlacementOffset({ style: { width: '28px', height: '28px' }, getBoundingClientRect: () => ({ left: 10, top: 20, width: 14, height: 14 }) },
+    { left: 10, top: 20, width: 28, height: 28 }),
+  { dx: 0, dy: 0, sx: 0.5, sy: 0.5 }, 'a half-size render is reported as a scale, without a position fix in the same pass');
+assert.strictEqual(
+  measurePlacementOffset({ style: { width: '28px', height: '28px' }, getBoundingClientRect: () => ({ left: 10, top: 20, width: 28, height: 28 }) },
+    { left: 10, top: 20, width: 28, height: 28 }),
+  null, 'a correctly sized and placed host needs nothing');
+
 // An unmeasurable host (display:none, 0x0) is accepted as settled without being moved.
 const hiddenSettle = settlePlacementOffset({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }) },
   { left: 10, top: 20 }, null, () => assert.fail('a 0x0 host must never be shifted'));

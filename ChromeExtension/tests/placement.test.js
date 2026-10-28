@@ -102,5 +102,12 @@ assert.deepStrictEqual(placement.scaleFrom({ width: 56, height: 52 }, 28, 26), {
 assert.deepStrictEqual(placement.scaleFrom({ width: 0, height: 0 }, 28, 26), { x: 1, y: 1 }, 'collapsed box reads as 1');
 assert.deepStrictEqual(placement.scaleFrom({ width: 10, height: 10 }, 0, 0), { x: 1, y: 1 }, 'no layout size reads as 1');
 assert.deepStrictEqual(placement.scaleFrom({ width: 1, height: 1 }, 1000, 1000), { x: 1, y: 1 }, 'an absurd ratio is ignored');
+// offsetWidth/offsetHeight are rounded: a 74.73 px box reads 75, which is no scale at all and
+// used to move an unscaled picker down by 0.9 px. Sizes within a pixel of each other read as 1.
+assert.deepStrictEqual(placement.scaleFrom({ width: 320, height: 74.73 }, 320, 75), { x: 1, y: 1 }, 'rounding is not a scale');
+assert.deepStrictEqual(placement.scaleFrom({ width: 160, height: 37.37 }, 320, 75), { x: 0.5, y: 37.37 / 75 }, 'a real scale survives');
+assert.deepStrictEqual(placement.scaleFrom({ width: 14, height: 56 }, 28, 28), { x: 0.5, y: 2 }, 'axes are independent');
+assert.strictEqual(placement.usableScale(0.5), 0.5);
+assert.strictEqual(placement.usableScale(0), 1);
 
 console.log('placement.test.js: placeIcon / placeFloating / correction OK');

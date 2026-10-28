@@ -81,7 +81,8 @@ var mypassPlacement = (function () {
   // containing block. Under a scaled block a local delta d moves the host by d * scale on
   // screen, so a single unscaled shift leaves d * (1 - scale) behind (scale 0.5: a 50 px gap
   // closes by 25 px). `scale` ({x, y}, see scaleFrom) converts the gap into local pixels; the
-  // caller still re-measures afterwards, because the scale is only an estimate.
+  // caller still re-measures afterwards, because the scale is only an estimate. The scale also
+  // sizes the host: its width and height are local pixels too (content.js positionHostToField).
   function correction(intended, measured, tolerance, scale) {
     var limit = typeof tolerance === 'number' ? tolerance : 1;
     var gapX = intended.left - measured.left;
@@ -99,13 +100,22 @@ var mypassPlacement = (function () {
   }
 
   // The containing block's effective scale, read off the host itself: its rendered size
-  // (getBoundingClientRect, after transforms) over its layout size (offsetWidth/offsetHeight,
-  // before them). Anything unmeasurable reads as 1, which is the old behaviour.
+  // (getBoundingClientRect, after transforms) over its layout size (the size that was written, or
+  // offsetWidth/offsetHeight, which the browser rounds to whole pixels). Anything unmeasurable
+  // reads as 1, which is the old behaviour. So does a ratio whose sizes differ by less than a
+  // pixel: that is the rounding of offsetHeight (a 74.7 px box reads 75), not a scale, and
+  // dividing by 0.996 would move a picker almost a pixel for no containing block at all.
   function scaleFrom(measured, layoutWidth, layoutHeight) {
     return {
-      x: layoutWidth > 0 && measured && measured.width > 0 ? usableScale(measured.width / layoutWidth) : 1,
-      y: layoutHeight > 0 && measured && measured.height > 0 ? usableScale(measured.height / layoutHeight) : 1
+      x: axisScale(measured && measured.width, layoutWidth),
+      y: axisScale(measured && measured.height, layoutHeight)
     };
+  }
+
+  function axisScale(rendered, layout) {
+    if (!(layout > 0) || !(rendered > 0)) return 1;
+    if (Math.abs(rendered - layout) < 1) return 1;
+    return usableScale(rendered / layout);
   }
 
   return {
@@ -113,7 +123,8 @@ var mypassPlacement = (function () {
     placeIcon: placeIcon,
     placeFloating: placeFloating,
     correction: correction,
-    scaleFrom: scaleFrom
+    scaleFrom: scaleFrom,
+    usableScale: usableScale
   };
 })();
 

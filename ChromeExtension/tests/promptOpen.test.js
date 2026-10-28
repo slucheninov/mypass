@@ -178,7 +178,7 @@ function dispatch(message, sender) {
     props: { url: 'chrome-extension://ext/prompt.html?prompt=' + encodeURIComponent(settingsRecord.id) }
   }], 'explicit reuse rebinds the window to the requested record');
   assert.strictEqual((await bg.readPrompts()).length, 2, 'different kinds queue');
-  assert.ok((await bg.readPrompts()).every((r) => r.surface === 'window'));
+  assert.deepStrictEqual((await bg.readPrompts()).filter((r) => r.surface === 'window').map((r) => r.id), [settingsRecord.id], 'only the displayed record belongs to the window');
 
   // closing the prompt window dismisses what it showed
   const windowId = session[bg.PROMPT_WINDOW_KEY];
@@ -186,7 +186,7 @@ function dispatch(message, sender) {
   behavior.existingWindows.delete(windowId);
   windowRemovedListener(windowId);
   await new Promise((r) => setTimeout(r, 20));
-  assert.strictEqual((await bg.readPrompts()).length, 0, 'closing the prompt window drops its prompts');
+  assert.deepStrictEqual((await bg.readPrompts()).map((r) => r.kind), ['saveLogin'], 'closing settings preserves the previously displayed login');
   assert.strictEqual(session[bg.PROMPT_WINDOW_KEY], undefined);
 
   // --- window creation fails -> badge ---

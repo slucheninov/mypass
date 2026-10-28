@@ -1230,7 +1230,12 @@ async function createPrompt(kind, message, sender) {
 function markPromptSurface(promptId, surface) {
   return withPromptState(async () => {
     const list = await readPrompts();
-    const next = list.map((record) => (record.id === promptId ? { ...record, surface } : record));
+    const next = list.map((record) => {
+      if (record.id === promptId) return { ...record, surface };
+      // The single reusable window owns only its current card. Older cards stay pending.
+      if (surface === "window" && record.surface === "window") return { ...record, surface: "" };
+      return record;
+    });
     await writePrompts(next);
   });
 }
