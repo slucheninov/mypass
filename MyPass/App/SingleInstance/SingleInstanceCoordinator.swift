@@ -73,28 +73,28 @@ enum SingleInstanceFailure: Error, Equatable {
 
     var title: String {
         switch self {
-        case .timedOut: return "MyPass is still closing"
-        case .declined: return "MyPass did not close"
-        default: return "Another MyPass is already running"
+        case .timedOut: return String(localized: "MyPass is still closing", comment: "Single-instance guard alert")
+        case .declined: return String(localized: "MyPass did not close", comment: "Single-instance guard alert")
+        default: return String(localized: "Another MyPass is already running", comment: "Single-instance guard alert")
         }
     }
 
     var message: String {
         switch self {
         case .identityUnavailable:
-            return "MyPass could not identify its own process, so it cannot safely check for another running copy. Your vault was not opened. Quit any other MyPass and open it again."
+            return String(localized: "MyPass could not identify its own process, so it cannot safely check for another running copy. Your vault was not opened. Quit any other MyPass and open it again.", comment: "Single-instance guard alert")
         case .lockUnavailable(let detail):
-            return "MyPass could not take its single-instance lock (\(detail)). Your vault was not opened. Quit any other MyPass and open it again."
+            return String(localized: "MyPass could not take its single-instance lock (\(detail)). Your vault was not opened. Quit any other MyPass and open it again.", comment: "Single-instance guard alert")
         case .unrecognizedPeers(let pids):
-            return "Another MyPass (process \(Self.list(pids))) is running and did not respond to the request to hand over, which usually means it is an older build. The running copy was left untouched. Quit it manually, then open MyPass again. Your vault was not opened."
+            return String(localized: "Another MyPass (process \(Self.list(pids))) is running and did not respond to the request to hand over, which usually means it is an older build. The running copy was left untouched. Quit it manually, then open MyPass again. Your vault was not opened.", comment: "Single-instance guard alert")
         case .lockHeldByUnknownProcess:
-            return "Another MyPass is holding the single-instance lock but could not be identified. Quit it manually, then open MyPass again. Your vault was not opened."
+            return String(localized: "Another MyPass is holding the single-instance lock but could not be identified. Quit it manually, then open MyPass again. Your vault was not opened.", comment: "Single-instance guard alert")
         case .timedOut(let pids):
-            return "The running MyPass (process \(Self.list(pids))) agreed to quit but has not finished, for example because it is waiting on a save prompt. Finish or cancel that prompt, then open MyPass again. Your vault was not opened."
+            return String(localized: "The running MyPass (process \(Self.list(pids))) agreed to quit but has not finished, for example because it is waiting on a save prompt. Finish or cancel that prompt, then open MyPass again. Your vault was not opened.", comment: "Single-instance guard alert")
         case .notResponding(let pids):
-            return "The running MyPass (process \(Self.list(pids))) did not answer in time, for example because it is busy unlocking or saving. It was not asked to quit. Wait a moment, then open MyPass again. Your vault was not opened."
+            return String(localized: "The running MyPass (process \(Self.list(pids))) did not answer in time, for example because it is busy unlocking or saving. It was not asked to quit. Wait a moment, then open MyPass again. Your vault was not opened.", comment: "Single-instance guard alert")
         case .declined(let pids):
-            return "The running MyPass (process \(Self.list(pids))) did not close, for example because its changes could not be saved or its prompt was cancelled. It is still running. Close it yourself when you are ready, then open MyPass again. Your vault was not opened."
+            return String(localized: "The running MyPass (process \(Self.list(pids))) did not close, for example because its changes could not be saved or its prompt was cancelled. It is still running. Close it yourself when you are ready, then open MyPass again. Your vault was not opened.", comment: "Single-instance guard alert")
         }
     }
 

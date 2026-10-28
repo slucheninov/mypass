@@ -8,11 +8,11 @@ Last updated: 2026-10-27
 
 ---
 
-## Runtime localization
+## Remaining localization
 
-- [ ] Runtime localization for English, Ukrainian and German. The design is approved but
-      nothing is implemented: the app has no `.lproj` string tables and the extension has
-      no `_locales`, so all UI strings and extension copy are English only.
+- [ ] German for the app (String Catalogs in `MyPass/Resources/` already carry English,
+      Ukrainian and Russian) and extension `_locales` for any language: the extension
+      copy is still English only.
 
 ## Passkey AAGUID registry
 

@@ -4,7 +4,7 @@ import LocalAuthentication
 enum DeviceUnlockAuthenticator {
     static func authenticate(
         accessControl: DeviceUnlockAccessControl,
-        reason: String = "Unlock MyPass",
+        reason: String = String(localized: "Unlock MyPass", comment: "Touch ID / Mac password prompt reason shown by macOS"),
         completion: @escaping (Bool) -> Void
     ) {
         let context = LAContext()

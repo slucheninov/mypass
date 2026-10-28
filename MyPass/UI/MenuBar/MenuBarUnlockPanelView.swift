@@ -51,7 +51,8 @@ struct MenuBarUnlockPanelView: View {
             KeyboardLayoutIndicator()
 
             if let errorMessage {
-                Text(errorMessage)
+                // Already localized where it is set.
+                Text(verbatim: errorMessage)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .multilineTextAlignment(.center)
@@ -62,7 +63,7 @@ struct MenuBarUnlockPanelView: View {
 
             if canShowDeviceUnlockButton {
                 Button("Unlock with Device", systemImage: "touchid") {
-                    attemptDeviceUnlock(trigger: .explicit)
+                    attemptDeviceUnlock()
                 }
                     .buttonStyle(.bordered)
             }
@@ -74,11 +75,9 @@ struct MenuBarUnlockPanelView: View {
         }
         .padding(20)
         .frame(width: 280)
-        .onAppear {
-            if canShowDeviceUnlockButton {
-                attemptDeviceUnlock(trigger: .automatic)
-            }
-        }
+        // No `.onAppear` prompt: opening the popover never starts Touch ID. The popover
+        // also never reads the extension's unlock request — the extension brings the
+        // main window forward, not this popover.
     }
 
     private func attemptUnlock() {
@@ -90,24 +89,19 @@ struct MenuBarUnlockPanelView: View {
             lastDeviceUnlockTimestamp = now
             lastFullPasswordEntryTimestamp = now
         } catch {
-            errorMessage = "Incorrect password or corrupted file."
+            errorMessage = String(localized: "Incorrect password or corrupted file.", comment: "Menu bar unlock panel: inline message")
         }
     }
 
-    /// Mirrors `UnlockView.attemptDeviceUnlock(trigger:)` — see its doc comment for
-    /// why `trigger` gates both the coordinator and the failure-feedback behavior.
+    /// Mirrors `UnlockView.attemptDeviceUnlock()` — see its doc comment for why every
+    /// attempt is explicit and surfaces failures.
     @discardableResult
-    private func attemptDeviceUnlock(trigger: DeviceUnlockPromptTrigger) -> Bool {
-        let allowed = trigger == .automatic
-            ? deviceUnlockPromptCoordinator.requestAutoPrompt()
-            : deviceUnlockPromptCoordinator.requestExplicitPrompt()
-        guard allowed else { return false }
+    private func attemptDeviceUnlock() -> Bool {
+        guard deviceUnlockPromptCoordinator.requestExplicitPrompt() else { return false }
 
         guard canShowDeviceUnlockButton else {
             deviceUnlockPromptCoordinator.promptFinished()
-            if trigger == .explicit {
-                errorMessage = "Device unlock is unavailable. Enter your master password."
-            }
+            errorMessage = String(localized: "Device unlock is unavailable. Enter your master password.", comment: "Menu bar unlock panel: inline message")
             return false
         }
         guard let accessControl = DeviceUnlockAccessControl.forToggles(
@@ -115,17 +109,13 @@ struct MenuBarUnlockPanelView: View {
             macPasswordEnabled: macPasswordEnabled
         ) else {
             deviceUnlockPromptCoordinator.promptFinished()
-            if trigger == .explicit {
-                errorMessage = "Device unlock is unavailable. Enter your master password."
-            }
+            errorMessage = String(localized: "Device unlock is unavailable. Enter your master password.", comment: "Menu bar unlock panel: inline message")
             return false
         }
         DeviceUnlockAuthenticator.authenticate(accessControl: accessControl) { success in
             defer { deviceUnlockPromptCoordinator.promptFinished() }
             guard success else {
-                if trigger == .explicit {
-                    errorMessage = "Device unlock didn't complete. Try again or enter your master password."
-                }
+                errorMessage = String(localized: "Device unlock didn't complete. Try again or enter your master password.", comment: "Menu bar unlock panel: inline message")
                 return
             }
             do {
@@ -135,7 +125,7 @@ struct MenuBarUnlockPanelView: View {
                 errorMessage = nil
                 lastDeviceUnlockTimestamp = Date().timeIntervalSince1970
             } catch {
-                errorMessage = "Device unlock is unavailable. Enter your master password."
+                errorMessage = String(localized: "Device unlock is unavailable. Enter your master password.", comment: "Menu bar unlock panel: inline message")
             }
         }
         return true

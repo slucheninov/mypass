@@ -590,14 +590,14 @@ final class ExtensionBridgeService {
             // learn the app-side opt-in on its own and resync its cache/attachment without
             // waiting for a service-worker restart — the app is authoritative, the
             // extension's local flag is only a cache.
-            let enabled = defaults.bool(forKey: "passkeyProxyEnabled")
+            let enabled = PasskeyProxyPreference.isEnabled(in: defaults)
             return .passkeyProxyStatus(unlocked: unlocked, paired: true, attachAllowed: unlocked && enabled, enabled: enabled)
 
         case .setPasskeyProxyEnabled(_, let enabled, let pairing):
             guard pairingManager.isAuthorized(pairing: pairing) else {
                 return .pairingRequired
             }
-            defaults.set(enabled, forKey: "passkeyProxyEnabled")
+            PasskeyProxyPreference.set(enabled, in: defaults)
             return .passkeyProxyEnabled(enabled: enabled)
 
         case .passkeyCreate(_, let requestId, let requestDetailsJson, let originUrl, let pairing):
@@ -607,7 +607,7 @@ final class ExtensionBridgeService {
             // Chrome's attach/detach state can lag the app-side setting (the popup only
             // resyncs on certain opens), so the app itself must refuse here whenever the
             // feature is off, regardless of whatever the extension currently believes.
-            guard defaults.bool(forKey: "passkeyProxyEnabled") else {
+            guard PasskeyProxyPreference.isEnabled(in: defaults) else {
                 return .passkeyCreateComplete(
                     requestId: requestId, responseJson: nil,
                     error: PasskeyErrorDetails(name: "NotAllowedError", message: "MyPass passkeys are turned off in Settings")
@@ -791,7 +791,7 @@ final class ExtensionBridgeService {
             // Chrome's attach/detach state can lag the app-side setting (the popup only
             // resyncs on certain opens), so the app itself must refuse here whenever the
             // feature is off, regardless of whatever the extension currently believes.
-            guard defaults.bool(forKey: "passkeyProxyEnabled") else {
+            guard PasskeyProxyPreference.isEnabled(in: defaults) else {
                 return .passkeyGetComplete(
                     requestId: requestId, responseJson: nil,
                     error: PasskeyErrorDetails(name: "NotAllowedError", message: "MyPass passkeys are turned off in Settings")

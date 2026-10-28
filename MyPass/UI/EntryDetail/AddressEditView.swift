@@ -36,12 +36,17 @@ struct AddressEditView: View {
             VStack(spacing: 20) {
                 Image(systemName: "house.fill")
                     .font(.system(size: 42)).foregroundStyle(.teal).padding(.top, 24)
-                Text(title.isEmpty ? "New Address" : title).font(.title2.bold())
+                // Branches, not a ternary: a literal mixed with the typed title would make a `String`
+                // and skip the string catalog for "New Address".
+                Group {
+                    if title.isEmpty { Text("New Address") } else { Text(verbatim: title) }
+                }
+                .font(.title2.bold())
                 EntryEditFieldsCard {
                     GroupPickerView(rootGroup: rootGroup, recycleBinGroupUUID: recycleBinGroupUUID, selectedGroupID: $selectedGroupID)
                     TextField("Title (for example, Home)", text: $title)
                     Picker("Type", selection: $address.label) {
-                        ForEach(KdbxEntry.addressLabels, id: \.self) { Text($0).tag($0) }
+                        ForEach(KdbxEntry.addressLabels, id: \.self) { Text(verbatim: KdbxEntry.addressLabelTitle($0)).tag($0) }
                     }
                     Divider()
                     TextField("Full Name", text: $address.fullName)
@@ -59,7 +64,7 @@ struct AddressEditView: View {
                     Picker("Country", selection: $address.countryCode) {
                         Text("Not specified").tag("")
                         ForEach(AddressCountries.options, id: \.code) { country in
-                            Text(country.name).tag(country.code)
+                            Text(verbatim: country.name).tag(country.code)
                         }
                     }
                     .onChange(of: address.countryCode) { _, code in
@@ -81,11 +86,10 @@ struct AddressEditView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Address" : "Edit Address")
-        .toolbar {
-            EditActionsToolbarContent(onCancel: onCancel, onSave: {
+        .safeAreaInset(edge: .top, spacing: 0) {
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: {
                 onSave(AddressEntryEditing.savedEntry(existing: existingEntry, title: title, address: address, favorite: isFavorite, notes: notes), selectedGroupID)
             })
-            FavoriteToggleToolbarItem(isFavorite: $isFavorite)
         }
     }
 }

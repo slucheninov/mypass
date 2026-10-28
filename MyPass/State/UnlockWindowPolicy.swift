@@ -5,7 +5,9 @@ enum UnlockDeviceWindow: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var pickerLabel: String {
+    /// Computed UI text: a `LocalizedStringResource` so it passes through the string catalog
+    /// (a plain `String` handed to `Text` would be shown verbatim in every language).
+    var pickerLabel: LocalizedStringResource {
         switch self {
         case .oneHour: return "For 1 hour"
         case .fourHours: return "For 4 hours"
@@ -32,7 +34,9 @@ enum RequirePasswordWindow: String, CaseIterable, Identifiable {
 
     var id: String { rawValue }
 
-    var pickerLabel: String {
+    /// Computed UI text: a `LocalizedStringResource` so it passes through the string catalog
+    /// (a plain `String` handed to `Text` would be shown verbatim in every language).
+    var pickerLabel: LocalizedStringResource {
         switch self {
         case .oneDay: return "After 1 day"
         case .sevenDays: return "After 7 days"

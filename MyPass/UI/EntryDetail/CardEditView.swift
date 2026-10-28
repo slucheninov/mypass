@@ -66,12 +66,12 @@ struct CardEditView: View {
             VStack(spacing: 20) {
                 VStack(spacing: 12) {
                     LetterAvatarView(
-                        title: title.isEmpty ? "(untitled)" : title,
+                        title: KdbxEntry.displayTitle(for: title),
                         size: UIShellMetrics.detailHeroIconSize,
                         cornerRadius: UIShellMetrics.detailHeroIconCornerRadius,
                         letterScale: UIShellMetrics.detailHeroLetterScale
                     )
-                    Text(title.isEmpty ? "(untitled)" : title)
+                    Text(verbatim: KdbxEntry.displayTitle(for: title))
                         .font(.system(size: 22, weight: .bold))
                         .multilineTextAlignment(.center)
                 }
@@ -158,9 +158,8 @@ struct CardEditView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Card" : "Edit Card")
-        .toolbar {
-            EditActionsToolbarContent(onCancel: onCancel, onSave: save)
-            FavoriteToggleToolbarItem(isFavorite: $isFavorite)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: save)
         }
     }
 

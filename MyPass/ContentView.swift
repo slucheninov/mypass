@@ -47,6 +47,9 @@ struct ContentView: View {
             } detail: {
                 DetailColumnView(rootGroup: database.rootGroup)
             }
+            // The window toolbar is owned here, on the split view itself, so it is the same
+            // group in every state — see `MainWindowToolbarModifier`.
+            .modifier(MainWindowToolbarModifier(rootGroup: database.rootGroup))
             .alert(
                 "Save Error",
                 isPresented: Binding(
@@ -54,7 +57,8 @@ struct ContentView: View {
                     set: { if !$0 { vaultSession.acknowledgeSaveError() } }
                 ),
                 actions: {},
-                message: { Text(vaultSession.lastSaveError ?? "") }
+                // Already localized where `VaultSession` produced it.
+                message: { Text(verbatim: vaultSession.lastSaveError ?? "") }
             )
             .onAppear {
                 // Covers both the closed-window case (proposal set before ContentView —
@@ -99,7 +103,15 @@ private struct DetailColumnView: View {
     var body: some View {
         switch navigationState.detailPresentation {
         case .browse:
+            // The Edit button and the ⋮ menu live in this in-column row, not in the window
+            // toolbar. With nothing selected (or a scope overview) there is no entry, so
+            // the inset contributes zero height.
             browseDetail()
+                .safeAreaInset(edge: .top, spacing: 0) {
+                    if let entry = currentBrowseEntry {
+                        EntryBrowseActionRow(entry: entry)
+                    }
+                }
         case .edit(let entryID):
             entryEdit(existingID: entryID)
         case .create(let defaultGroupID, let entryType):
@@ -142,7 +154,9 @@ private struct DetailColumnView: View {
         let categoryMode = navigationState.isCategoryMode
         let count = EntryListQuery.entries(root: rootGroup, database: vaultSession.currentDatabase, navigation: navigationState).count
         return ScopeOverviewView(
-            title: categoryMode ? category.title : group.name,
+            title: categoryMode
+                ? String(localized: category.title)
+                : GroupTreeOperations.displayName(for: group, recycleBinGroupUUID: vaultSession.currentDatabase?.recycleBinGroupUUID),
             symbolName: categoryMode ? category.symbolName : "folder",
             emoji: categoryMode ? nil : group.emoji,
             accentColor: categoryMode ? category.accentColor : .secondary,

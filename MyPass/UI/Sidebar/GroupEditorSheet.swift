@@ -90,13 +90,13 @@ struct GroupEditorSheet: View {
 
     private var emojiPickerGrid: some View {
         LazyVGrid(columns: gridColumns, spacing: 8) {
-            emojiOptionButton(label: "None", display: noneIcon, isSelected: emoji == nil) {
+            emojiOptionButton(label: Text("None"), display: noneIcon, isSelected: emoji == nil) {
                 emoji = nil
                 customEmojiInput = ""
             }
 
             ForEach(Self.presetEmojis, id: \.self) { preset in
-                emojiOptionButton(label: preset, display: Text(preset).font(.title3), isSelected: emoji == preset) {
+                emojiOptionButton(label: Text(verbatim: preset), display: Text(verbatim: preset).font(.title3), isSelected: emoji == preset) {
                     emoji = preset
                     customEmojiInput = ""
                 }
@@ -111,7 +111,7 @@ struct GroupEditorSheet: View {
     }
 
     private func emojiOptionButton<Label: View>(
-        label: String,
+        label: Text,
         display: Label,
         isSelected: Bool,
         action: @escaping () -> Void

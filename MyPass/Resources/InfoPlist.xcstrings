@@ -1,0 +1,29 @@
+{
+  "sourceLanguage" : "en",
+  "strings" : {
+    "NSFaceIDUsageDescription" : {
+      "comment" : "Touch ID usage description shown by macOS in the authentication prompt; the English source lives in project.yml (info.properties).",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyPass uses Touch ID to quickly unlock your password vault."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyPass использует Touch ID, чтобы быстро разблокировать ваше хранилище паролей."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyPass використовує Touch ID, щоб швидко розблокувати ваше сховище паролів."
+          }
+        }
+      }
+    }
+  },
+  "version" : "1.0"
+}

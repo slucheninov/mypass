@@ -7,19 +7,9 @@ struct BrowserSettingsPane: View {
     @State private var pairedBrowsers: [PairedBrowser] = []
     @State private var showingHelp = false
     @State private var revokeError: String?
-    /// This is the canonical value used by the bridge. Browser reports are snapshots
-    /// and must never overwrite this preference with a delayed observation.
-    @AppStorage("passkeyProxyEnabled") private var passkeyProxyEnabled = false
 
     var body: some View {
         Form {
-            Section("Passkeys") {
-                Toggle("Use MyPass for Chrome passkeys", isOn: $passkeyProxyEnabled)
-                SettingsHelperText(text: passkeyProxyEnabled
-                    ? "Reopen the MyPass browser extension to apply this setting. Then use the website’s sign-in or create-passkey button and approve in MyPass. While MyPass handles passkeys, Chrome’s other passkey choices are unavailable."
-                    : "Turn this on to save and use passkeys in MyPass. Reopen the browser extension after changing this setting.")
-            }
-
             Section("Browser setup") {
                 Text("Use MyPass as your password manager")
                     .font(.headline)
@@ -29,7 +19,7 @@ struct BrowserSettingsPane: View {
             }
 
             Section("Paired browsers") {
-                if let revokeError { Text(revokeError).foregroundStyle(.red) }
+                if let revokeError { Text(verbatim: revokeError).foregroundStyle(.red) }
                 if pairedBrowsers.isEmpty {
                     Text("No paired browsers. Open the MyPass browser extension to connect.")
                         .foregroundStyle(.secondary)
@@ -37,7 +27,7 @@ struct BrowserSettingsPane: View {
                 ForEach(pairedBrowsers) { browser in
                     VStack(alignment: .leading, spacing: 8) {
                         HStack {
-                            Text(browser.label).font(.headline)
+                            Text(verbatim: browser.label).font(.headline)
                             Spacer()
                             Button("Revoke") {
                                 do {
@@ -46,17 +36,17 @@ struct BrowserSettingsPane: View {
                                     diagnostics.remove(browserID: browser.id)
                                     pairedBrowsers = pairingStoreModel.refresh()
                                 } catch {
-                                    revokeError = "Could not revoke this browser. Try again."
+                                    revokeError = String(localized: "Could not revoke this browser. Try again.", comment: "Browser settings: error after a failed revoke")
                                 }
                             }
                         }
-                        Text("Paired " + browser.createdAt.formatted(date: .abbreviated, time: .shortened))
+                        Text("Paired \(browser.createdAt.formatted(date: .abbreviated, time: .shortened))")
                             .font(.caption).foregroundStyle(.secondary)
                         if let snapshot = diagnostics.snapshots[browser.id] {
-                            Text(snapshot.passkeyStatus)
-                            Text(snapshot.passwordSavingStatus)
-                            Text(snapshot.managerStatus)
-                            Text("Last report received " + snapshot.receivedAt.formatted(date: .abbreviated, time: .standard))
+                            Text(verbatim: snapshot.passkeyStatus)
+                            Text(verbatim: snapshot.passwordSavingStatus)
+                            Text(verbatim: snapshot.managerStatus)
+                            Text("Last report received \(snapshot.receivedAt.formatted(date: .abbreviated, time: .standard))")
                                 .font(.caption).foregroundStyle(.secondary)
                             SettingsHelperText(text: "This is the last reported state, not a live check. Reopen the extension and choose Check this browser after changing another manager.")
                         } else {

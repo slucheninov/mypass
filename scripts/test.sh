@@ -88,6 +88,8 @@ run_stage() {
 # package suites get the same guarantee from SwiftPM with each package's own Package.resolved.
 RESOLVED_ONLY=(-onlyUsePackageVersionsFromResolvedFile)
 
+# Hosted tests assert English text, so both invocations pin -testLanguage en: the result
+# must not depend on the developer's (or the CI runner's) system language.
 if (( CI_MODE )); then
   # Overrides exist only on the command line; project.yml keeps the stable team signing
   # (ad-hoc signing there would break the biometric Keychain ACL). A separate derived
@@ -98,13 +100,14 @@ if (( CI_MODE )); then
   CI_PACKAGES="$ROOT/build/SourcePackages"
   run_stage "MyPass app tests" \
     xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination "$CI_DESTINATION" \
+      -testLanguage en \
       -derivedDataPath "$CI_DERIVED" -clonedSourcePackagesDirPath "$CI_PACKAGES" "${RESOLVED_ONLY[@]}" "${CI_SETTINGS[@]}"
   run_stage "ChromeHost build" \
     xcodebuild build -project MyPass.xcodeproj -scheme ChromeHost -destination "$CI_DESTINATION" \
       -derivedDataPath "$CI_DERIVED" -clonedSourcePackagesDirPath "$CI_PACKAGES" "${RESOLVED_ONLY[@]}" "${CI_SETTINGS[@]}"
 else
   run_stage "MyPass app tests" \
-    xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' "${RESOLVED_ONLY[@]}"
+    xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -testLanguage en "${RESOLVED_ONLY[@]}"
 fi
 
 package_tests() {

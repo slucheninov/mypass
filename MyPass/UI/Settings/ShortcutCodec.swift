@@ -70,7 +70,7 @@ enum ShortcutCodec {
     }
 
     static func displayString(forStorage storage: String) -> String {
-        guard let parsed = decode(storage) else { return "None" }
+        guard let parsed = decode(storage) else { return String(localized: "None", comment: "Keyboard shortcut field: shown when no shortcut is set") }
         return parsed.displayString
     }
 

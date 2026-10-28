@@ -83,7 +83,7 @@ enum AppLauncher {
         alert.alertStyle = .warning
         alert.messageText = failure.title
         alert.informativeText = failure.message
-        alert.addButton(withTitle: "Quit")
+        alert.addButton(withTitle: String(localized: "Quit", comment: "Button that closes the single-instance failure alert and quits MyPass"))
         alert.runModal()
     }
 }

@@ -5,13 +5,14 @@ struct GeneralSettingsPane: View {
     @AppStorage("showMenuBarExtra") private var showMenuBarExtra = true
     @AppStorage("menuBarClickAction") private var menuBarClickAction = "menu"
     @AppStorage("launchAtLogin") private var launchAtLogin = false
-    @AppStorage("updateCheckEnabled") private var updateCheckEnabled = true
-    @EnvironmentObject private var updateChecker: AppUpdateChecker
+    /// This is the canonical value used by the bridge. Browser reports are snapshots
+    /// and must never overwrite this preference with a delayed observation. It defaults
+    /// to ON; the shared `PasskeyProxyPreference` helper applies the same fallback to the
+    /// bridge, so an untouched key reads the same here and there.
+    @AppStorage(PasskeyProxyPreference.defaultsKey) private var passkeyProxyEnabled = PasskeyProxyPreference.defaultValue
 
     @State private var loginStatusMessage: String?
     @State private var isSyncingLoginItem = false
-
-    private let clickActionOptions = ["menu": "Show a menu"]
 
     var body: some View {
         Form {
@@ -32,7 +33,7 @@ struct GeneralSettingsPane: View {
                         setLaunchAtLogin(enabled)
                     }
                 if let loginStatusMessage {
-                    SettingsHelperText(text: loginStatusMessage)
+                    SettingsHelperText(verbatim: loginStatusMessage)
                 }
                 SettingsHelperText(text: "MyPass opens in the background at login so the vault and extensions are ready. The vault remains locked until you unlock it manually.")
             } header: {
@@ -40,22 +41,12 @@ struct GeneralSettingsPane: View {
             }
 
             Section {
-                Toggle("Check for updates automatically", isOn: $updateCheckEnabled)
-                    .onChange(of: updateCheckEnabled) { _, _ in
-                        updateChecker.enabledDidChange()
-                    }
-                SettingsHelperText(text: "When on, MyPass contacts api.github.com a few seconds after launch and then once a day to read the tag of the latest release. Nothing else is sent: no account, vault or device information.")
-                LabeledContent("Current version", value: updateChecker.currentVersion?.description ?? "Unknown")
-                LabeledContent("Last checked", value: lastCheckedText)
-                HStack {
-                    Button("Check now") {
-                        Task { await updateChecker.check(manual: true) }
-                    }
-                    .disabled(updateChecker.status == .checking)
-                    updateStatusView
-                }
+                Toggle("Use MyPass for Chrome passkeys", isOn: $passkeyProxyEnabled)
+                SettingsHelperText(text: passkeyProxyEnabled
+                    ? "Reopen the MyPass browser extension to apply this setting. Then use the website’s sign-in or create-passkey button and approve in MyPass. While MyPass handles passkeys, Chrome’s other passkey choices are unavailable."
+                    : "Turn this on to save and use passkeys in MyPass. Reopen the browser extension after changing this setting.")
             } header: {
-                Text("Updates")
+                Text("Passkeys")
             }
 
             Section {
@@ -80,30 +71,6 @@ struct GeneralSettingsPane: View {
         }
     }
 
-    private var lastCheckedText: String {
-        guard let lastRun = updateChecker.lastRun else { return "Never" }
-        return RelativeDateTimeFormatter().localizedString(for: lastRun, relativeTo: Date())
-    }
-
-    @ViewBuilder
-    private var updateStatusView: some View {
-        switch updateChecker.status {
-        case .idle:
-            EmptyView()
-        case .checking:
-            ProgressView().controlSize(.small)
-            Text("Checking…").foregroundStyle(.secondary)
-        case .upToDate:
-            Text("You have the latest version").foregroundStyle(.secondary)
-        case .available(let release):
-            Text("MyPass \(release.version.description) is available")
-            Button("View release") { NSWorkspace.shared.open(release.url) }
-                .buttonStyle(.link)
-        case .failed(let message):
-            Text(message).foregroundStyle(.red)
-        }
-    }
-
     private func syncLaunchAtLoginFromService() {
         isSyncingLoginItem = true
         defer { isSyncingLoginItem = false }
@@ -114,7 +81,7 @@ struct GeneralSettingsPane: View {
             loginStatusMessage = nil
         case .requiresApproval:
             launchAtLogin = false
-            loginStatusMessage = "Approval required — open System Settings → General → Login Items and allow MyPass."
+            loginStatusMessage = String(localized: "Approval required — open System Settings → General → Login Items and allow MyPass.", comment: "General settings: shown under the Start at login toggle when macOS needs the user to approve the login item")
         case .notRegistered:
             launchAtLogin = false
             loginStatusMessage = nil
@@ -134,7 +101,7 @@ struct GeneralSettingsPane: View {
         } catch {
             isSyncingLoginItem = true
             launchAtLogin = false
-            loginStatusMessage = "Could not update login item: \(error.localizedDescription)"
+            loginStatusMessage = String(localized: "Could not update login item: \(error.localizedDescription)", comment: "General settings: login item error; the argument is the system error text")
             isSyncingLoginItem = false
         }
     }

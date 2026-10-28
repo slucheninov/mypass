@@ -62,10 +62,14 @@ Team (see "Signing" in the README for a command-line override).
 
 ## Language
 
-Everything is English: code, comments, commit messages, UI strings, extension copy,
-docs, plans, specs and error messages. The one exception is root `RUN.md`, which is
-Ukrainian and must not be translated. Runtime localization is deferred, so ship
-English strings. Test data and rule heuristics may contain non-English text.
+English is the source language: code, comments, commit messages, docs, plans, specs,
+error messages and extension copy are written in English. App UI strings are English
+in code and translated into Ukrainian and Russian in the String Catalogs under
+`MyPass/Resources/` (`Localizable.xcstrings` and `InfoPlist.xcstrings`); add the `uk`
+and `ru` entries for every new or changed string, because `LocalizationCatalogTests`
+fails when one is missing. Cyrillic belongs only in `*.xcstrings` and root `RUN.md`,
+which is Ukrainian and must not be translated. Test data and rule heuristics may also
+contain non-English text.
 
 ## Commits and pull requests
 

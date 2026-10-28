@@ -13,7 +13,7 @@ final class ExtensionBridgeServiceTests: XCTestCase {
     /// Throwaway defaults suite injected into every service built by this class. The
     /// test bundle is hosted inside the signed MyPass.app, so `UserDefaults.standard`
     /// here IS the real app's domain; writing "passkeyProxyEnabled" there used to reset
-    /// the user's Settings > Browser > Passkeys toggle on every test run.
+    /// the user's Settings > General > Passkeys toggle on every test run.
     var defaults: UserDefaults!
     private var defaultsSuiteName: String!
 
@@ -966,6 +966,40 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             db.rootGroup.entries[index].passkeyRelyingParty = rpId
             db.rootGroup.entries[index].passkeyPrivateKeyPEM = pem
             db.rootGroup.entries[index].passkeyCredentialId = credentialId
+        }
+    }
+
+    /// Builds a service on its own throwaway suite that has never had the passkey toggle
+    /// written, with an authorized pairing, to exercise the "default ON" fallback that the
+    /// class-wide `defaults` (pre-set to true in setUp) cannot.
+    private func makeServiceWithUntouchedPasskeyToggle() throws -> (service: ExtensionBridgeService, pairing: String, cleanup: () -> Void) {
+        let suiteName = "com.mypass.tests.ExtensionBridgeServiceTests.fresh.\(UUID().uuidString)"
+        let freshDefaults = UserDefaults(suiteName: suiteName)!
+        let manager = ExtensionPairingManager(store: InMemoryExtensionPairingStore())
+        let pairing = try XCTUnwrap(manager.completePairing(code: manager.startPairing(browser: "Fresh toggle test")))
+        let service = ExtensionBridgeService(vaultSession: session, pairingManager: manager, defaults: freshDefaults)
+        return (service, pairing, { freshDefaults.removePersistentDomain(forName: suiteName) })
+    }
+
+    func testGetPasskeyProxyStatusIsEnabledWhenTheToggleWasNeverTouched() throws {
+        let (freshService, pairing, cleanup) = try makeServiceWithUntouchedPasskeyToggle()
+        defer { cleanup() }
+        let response = freshService.handle(.getPasskeyProxyStatus(token: "t", pairing: pairing))
+        XCTAssertEqual(response, .passkeyProxyStatus(unlocked: true, paired: true, attachAllowed: true, enabled: true))
+    }
+
+    func testPasskeyCreateIsNotRefusedAsDisabledWhenTheToggleWasNeverTouched() throws {
+        let (freshService, pairing, cleanup) = try makeServiceWithUntouchedPasskeyToggle()
+        defer { cleanup() }
+        let response = freshService.handle(.passkeyCreate(
+            token: "t", requestId: 43, requestDetailsJson: createFixtureRequestJSON(),
+            originUrl: "https://example.com", pairing: pairing
+        ))
+        // With the toggle at its ON default the create proceeds to the confirmation step
+        // (`passkeyCreatePending`). A guard, not an `if case`: any other response, including
+        // the "turned off in Settings" completion, must fail instead of passing vacuously.
+        guard case .passkeyCreatePending = response else {
+            return XCTFail("expected passkeyCreatePending, got \(response)")
         }
     }
 

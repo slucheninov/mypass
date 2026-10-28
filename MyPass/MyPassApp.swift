@@ -26,9 +26,21 @@ struct MyPassApp: App {
     @StateObject private var autoLockController: AutoLockController
     @StateObject private var deviceUnlockPromptCoordinator: DeviceUnlockPromptCoordinator
     @StateObject private var updateChecker: AppUpdateChecker
+    @StateObject private var languageRestartController = LanguageRestartController()
 
     init() {
+        // Freeze the language this process started with before anything can change the
+        // override, so the Language setting can tell a pending change from the running one.
+        _ = AppLanguageStore.launchSelection
         let defaults = UserDefaults.standard
+        // Apply the saved theme before any window exists so the first frame is already
+        // in the right appearance (no light flash for a Dark choice). `NSApp.appearance`
+        // is the single mechanism: it covers windows, the MenuBarExtra panel, sheets and
+        // alerts. `App.init` runs on the main thread but is not statically main-actor
+        // isolated here, hence `assumeIsolated`.
+        MainActor.assumeIsolated {
+            AppTheme.apply(AppTheme(storedRaw: defaults.string(forKey: AppTheme.storageKey)))
+        }
         let autoLockIdleTimeout = AutoLockIdleTimeout(rawValue: defaults.string(forKey: "autoLockIdleTimeout") ?? "") ?? .thirtyMinutes
         let lockOnDeviceSleepEnabled = defaults.object(forKey: "lockOnDeviceSleepEnabled") as? Bool ?? true
 
@@ -153,8 +165,10 @@ struct MyPassApp: App {
         // Shared across `UnlockView`, `MenuBarUnlockPanelView`, and the extension's
         // `.requestDeviceUnlockPrompt` notification — deliberately one instance, not
         // per-view @State, so no surface can start a second device-unlock prompt while
-        // another one is already in flight or already auto-fired this locked session.
-        _deviceUnlockPromptCoordinator = StateObject(wrappedValue: DeviceUnlockPromptCoordinator(vaultSession: session))
+        // another one is already in flight, and so an extension unlock request recorded
+        // before `UnlockView` exists is still there when it appears.
+        let unlockPromptCoordinator = DeviceUnlockPromptCoordinator(vaultSession: session)
+        _deviceUnlockPromptCoordinator = StateObject(wrappedValue: unlockPromptCoordinator)
 
         // Design spec's external-change handling (reload-and-merge when
         // another device/process touches the same iCloud Drive file) is wired
@@ -264,16 +278,21 @@ struct MyPassApp: App {
             }
         }
 
-        // Stage 3 (U5): the popup's Unlock button. Activation alone is not enough —
-        // if the window was already open on the unlock screen, `UnlockView.onAppear`
-        // will not re-fire, so the Touch ID prompt has to be requested explicitly.
-        //
-        // When the window was closed instead, `MainWindowActivator.request()` opens it
-        // asynchronously and `UnlockView.onAppear` runs its own auto-prompt; this
-        // notification arrives before any observer exists and is harmlessly dropped, so
-        // exactly one prompt is shown in both paths.
-        extensionBridgeService.onUnlockRequested = {
+        // Stage 3 (U5): the popup's Unlock button. Pressing it is a deliberate, explicit
+        // request for a Touch ID prompt — the only prompt the app ever starts without a
+        // click on its own buttons. The request is recorded on the coordinator first so
+        // both delivery paths converge on `consumeExtensionUnlockRequest()`:
+        //   - window already open on the unlock screen: `UnlockView` is mounted, so its
+        //     `.requestDeviceUnlockPrompt` handler consumes the request and prompts;
+        //   - window closed: `MainWindowActivator.request()` opens it asynchronously, the
+        //     notification below is dropped for lack of an observer, and
+        //     `UnlockView.onAppear` consumes the request instead.
+        // Whichever runs first consumes it, so exactly one prompt is shown.
+        extensionBridgeService.onUnlockRequested = { [unlockPromptCoordinator] in
             DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    unlockPromptCoordinator.noteExtensionUnlockRequest()
+                }
                 MainWindowActivator.request()
                 NotificationCenter.default.post(name: .requestDeviceUnlockPrompt, object: nil)
             }
@@ -372,12 +391,19 @@ struct MyPassApp: App {
                 Button("Quit MyPass") { AppDelegate.requestTermination() }
                     .keyboardShortcut("q")
             }
+            // Replaces SwiftUI's built-in Settings item (and Cmd-comma): that item calls
+            // `openSettings` directly and would bypass `SettingsWindowPlacer`, so Settings would
+            // open wherever it was last shown instead of over the main window.
+            CommandGroup(replacing: .appSettings) {
+                Button("Settings…") { BrowserSettingsActivator.request(pane: nil) }
+                    .keyboardShortcut(",")
+            }
             // The activator is used instead of `SettingsLink` because Commands cannot capture
             // `openSettings`, and the activator also opens the main window first when no scene
             // has registered the action yet.
             CommandGroup(after: .appInfo) {
                 Button("Check for Updates…") {
-                    BrowserSettingsActivator.request(pane: .general)
+                    BrowserSettingsActivator.request(pane: BrowserSettingsActivator.checkForUpdatesPane)
                     Task { await updateChecker.check(manual: true) }
                 }
             }
@@ -405,6 +431,7 @@ struct MyPassApp: App {
             SettingsView()
                 .quitFreezeOverlay()
                 .environmentObject(updateChecker)
+                .environmentObject(languageRestartController)
                 .background(OpenBrowserSettingsOnDemand())
                 .environmentObject(autoLockController)
                 .environmentObject(vaultSession)

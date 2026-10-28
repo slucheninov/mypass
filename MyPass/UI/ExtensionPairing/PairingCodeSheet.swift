@@ -14,7 +14,7 @@ struct PairingCodeSheet: View {
         VStack(spacing: 16) {
             Text("Connect browser extension")
                 .font(.title2.weight(.semibold))
-            Text(groupedCode)
+            Text(verbatim: groupedCode)
                 .font(.system(size: 40, weight: .medium, design: .monospaced))
             Text("Enter this code in the MyPass browser extension.")
                 .foregroundStyle(.secondary)

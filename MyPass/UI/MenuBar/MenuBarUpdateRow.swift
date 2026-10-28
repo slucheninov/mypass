@@ -13,7 +13,8 @@ struct MenuBarUpdateRow: View {
                 NSWorkspace.shared.open(release.url)
             } label: {
                 HStack {
-                    Text(title)
+                    // Already localized by `AppUpdateChecker.menuItemTitle`.
+                    Text(verbatim: title)
                     Spacer()
                 }
                 .padding(.horizontal, 12)

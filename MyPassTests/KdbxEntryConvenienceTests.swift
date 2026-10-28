@@ -79,6 +79,25 @@ final class KdbxEntryConvenienceTests: XCTestCase {
         XCTAssertEqual(entry.urls, ["https://only-extra.example.com"])
     }
 
+    func testUrlsGetterSkipsEmptyAdditionalValuesSoPrimaryWebsiteIsNeverEmpty() {
+        var entry = makeEmptyEntry()
+        entry.stringArrays = [KdbxStringArray(key: KdbxEntry.additionalURLsStringArrayKey, values: ["", "https://example.com"])]
+
+        XCTAssertEqual(entry.urls, ["https://example.com"])
+        XCTAssertEqual(entry.primaryWebsiteURL, "https://example.com")
+    }
+
+    func testPrimaryWebsiteURLPrefersPrimaryThenFirstExtraThenNil() {
+        var entry = makeEmptyEntry()
+        XCTAssertNil(entry.primaryWebsiteURL)
+
+        entry.stringArrays = [KdbxStringArray(key: KdbxEntry.additionalURLsStringArrayKey, values: ["https://extra.example.com"])]
+        XCTAssertEqual(entry.primaryWebsiteURL, "https://extra.example.com")
+
+        entry.url = "https://primary.example.com"
+        XCTAssertEqual(entry.primaryWebsiteURL, "https://primary.example.com")
+    }
+
     func testUrlsSetterSplitsPrimaryAndExtras() {
         var entry = makeEmptyEntry()
         entry.urls = ["https://primary.example.com", "https://extra1.example.com", "https://extra2.example.com"]

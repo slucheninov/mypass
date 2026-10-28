@@ -19,7 +19,8 @@ struct UpdateBannerView: View {
                         .foregroundStyle(Color.accentColor)
                     // The message truncates before the buttons shrink, so both stay clickable
                     // at the narrowest window width.
-                    Text(text)
+                    // Already localized by `AppUpdateChecker.bannerText`.
+                    Text(verbatim: text)
                         .lineLimit(1)
                         .truncationMode(.tail)
                     Spacer(minLength: 8)

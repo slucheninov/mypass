@@ -2,6 +2,8 @@ import SwiftUI
 import AppKit
 import SyncKit
 
+/// The "Sync" section of the Vault pane. It is a section hosted by `VaultSettingsPane`, which
+/// supplies the single grouped `Form` (and its scrolling) around it, not a pane of its own.
 struct SyncSettingsPane: View {
     @AppStorage("secondaryDestination") private var secondaryDestinationRawValue: String = SecondaryDestinationOption.none.rawValue
     @AppStorage("secondaryFolderBookmark") private var secondaryFolderBookmarkData: Data?
@@ -36,13 +38,21 @@ struct SyncSettingsPane: View {
     }
 
     var body: some View {
-        Form {
+        Group {
             Section {
                 Picker("Also Sync To", selection: $secondaryDestinationRawValue) {
                     ForEach(SecondaryDestinationOption.allCases) { option in
-                        Text(option.rawValue).tag(option.rawValue)
+                        Text(option.title).tag(option.rawValue)
                     }
                 }
+                // Attached to this one Picker, not to the root `Group`: inside the Vault pane's
+                // List-backed grouped Form, a modifier on a `Group` is distributed to every
+                // child and Section content flattens into rows, so it could run once per row,
+                // and again as the SFTP rows appear after switching "Also Sync To". Each run
+                // overwrites the unsaved `sftpUsername` / `sftpPrivateKeyPEM` / `sftpPassphrase`
+                // from the Keychain. The Picker sits outside the `switch`, so it is one
+                // stable row that appears once with the pane.
+                .onAppear { loadSFTPCredentialsIfAvailable() }
                 switch selectedOption {
                 case .none:
                     EmptyView()
@@ -54,23 +64,21 @@ struct SyncSettingsPane: View {
                 if selectedOption != .none {
                     Button("Sync Now") {
                         vaultSession.triggerBackgroundSync()
-                        manualSyncStatusMessage = "Started…"
+                        manualSyncStatusMessage = String(localized: "Started…", comment: "Sync settings: status shown right after pressing Sync Now")
                     }
                     if let manualSyncStatusMessage {
-                        Text(manualSyncStatusMessage)
+                        // Already localized where it is set.
+                        Text(verbatim: manualSyncStatusMessage)
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
-                SettingsHelperText(text: "Keep an additional copy of the vault in a folder or on an SFTP server, on top of its main location (set under Vault Location). Restart MyPass after changing this.")
+                SettingsHelperText(text: "Keep an additional copy of the vault in a folder or on an SFTP server, on top of its main location (set in the Location section above). Restart MyPass after changing this.")
             } header: {
                 Text("Sync")
                     .font(.system(size: 13, weight: .semibold))
             }
         }
-        .formStyle(.grouped)
-        .padding()
-        .onAppear { loadSFTPCredentialsIfAvailable() }
     }
 
     private var folderSection: some View {
@@ -106,7 +114,9 @@ struct SyncSettingsPane: View {
                 .onChange(of: sftpPassphrase) { _, _ in persistCredentialsToKeychain() }
 
             HStack {
-                Text(sftpPrivateKeyPath.isEmpty ? "No key selected" : sftpPrivateKeyPath)
+                // Branches instead of a ternary: mixing a literal with a `String` path would
+                // make the whole expression a `String` and skip the string catalog.
+                pathOrPlaceholder(sftpPrivateKeyPath, placeholder: "No key selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -127,7 +137,7 @@ struct SyncSettingsPane: View {
             }
 
             HStack {
-                Text(sftpCertificatePath.isEmpty ? "No certificate selected (optional)" : sftpCertificatePath)
+                pathOrPlaceholder(sftpCertificatePath, placeholder: "No certificate selected (optional)")
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -158,6 +168,16 @@ struct SyncSettingsPane: View {
                 Label(message, systemImage: "xmark.circle.fill")
                     .foregroundStyle(.red)
             }
+        }
+    }
+
+    /// A file path is shown as is; the localized placeholder stands in while none is chosen.
+    @ViewBuilder
+    private func pathOrPlaceholder(_ path: String, placeholder: LocalizedStringKey) -> some View {
+        if path.isEmpty {
+            Text(placeholder)
+        } else {
+            Text(verbatim: path)
         }
     }
 

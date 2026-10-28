@@ -5,7 +5,6 @@ import MyPassKit
 struct MenuBarUnlockedPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
     @Environment(\.openWindow) private var openWindow
-    @Environment(\.openSettings) private var openSettings
 
     @State private var detailEntryID: UUID?
 
@@ -72,8 +71,7 @@ struct MenuBarUnlockedPanelView: View {
 
             menuRow("Settings…") {
                 MenuBarPanelDismisser.dismiss()
-                NSApp.activate(ignoringOtherApps: true)
-                openSettings()
+                BrowserSettingsActivator.request(pane: nil)
             }
 
             menuRow("Quit MyPass") {
@@ -86,7 +84,7 @@ struct MenuBarUnlockedPanelView: View {
     }
 
     @ViewBuilder
-    private func menuRow(_ title: String, action: @escaping () -> Void) -> some View {
+    private func menuRow(_ title: LocalizedStringKey, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             HStack {
                 Text(title)

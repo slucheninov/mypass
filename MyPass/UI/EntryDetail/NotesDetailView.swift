@@ -24,12 +24,12 @@ struct NotesDetailView: View {
             VStack(spacing: 20) {
                 VStack(spacing: 12) {
                     LetterAvatarView(
-                        title: entry.title.isEmpty ? "(untitled)" : entry.title,
+                        title: entry.displayTitle,
                         size: UIShellMetrics.detailHeroIconSize,
                         cornerRadius: UIShellMetrics.detailHeroIconCornerRadius,
                         letterScale: UIShellMetrics.detailHeroLetterScale
                     )
-                    Text(entry.title.isEmpty ? "(untitled)" : entry.title)
+                    Text(verbatim: entry.displayTitle)
                         .font(.system(size: 22, weight: .bold))
                         .multilineTextAlignment(.center)
                 }
@@ -54,9 +54,6 @@ struct NotesDetailView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle("Note")
-        .toolbar {
-            DetailActionsToolbarContent(onEdit: { navigationState.presentEdit(entryID: entry.uuid) })
-        }
         .onChange(of: navigationState.selectedEntryID) { _, newID in
             showLargeType = false
             if let newID {

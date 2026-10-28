@@ -9,7 +9,7 @@ struct GroupPickerView: View {
     var body: some View {
         Picker("Group", selection: $selectedGroupID) {
             ForEach(selectableGroups, id: \.uuid) { group in
-                Text(group.name)
+                Text(verbatim: GroupTreeOperations.displayName(for: group, recycleBinGroupUUID: recycleBinGroupUUID))
                     .tag(group.uuid)
             }
         }

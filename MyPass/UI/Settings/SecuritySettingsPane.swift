@@ -72,7 +72,8 @@ struct SecuritySettingsPane: View {
                 SettingsHelperText(text: "Unlock without typing your master password using Touch ID or your Mac password. You'll still be asked for the master password on the schedule above.")
 
                 if let unlockError {
-                    Text(unlockError)
+                    // Already localized where it is set, so it is shown as is.
+                    Text(verbatim: unlockError)
                         .foregroundStyle(.red)
                         .font(.caption)
                 }
@@ -180,7 +181,7 @@ struct SecuritySettingsPane: View {
                 // yet. Restoring the toggle display to the pre-edit values and NOT calling
                 // `remove()` again is still the safest behavior here — there may be
                 // nothing left to remove.
-                unlockError = "Could not update device unlock settings."
+                unlockError = String(localized: "Could not update device unlock settings.", comment: "Security settings: device unlock error")
                 touchIDEnabled = priorTouchIDEnabled
                 macPasswordEnabled = priorMacPasswordEnabled
             }
@@ -188,7 +189,7 @@ struct SecuritySettingsPane: View {
         }
 
         guard vaultSession.currentDatabase != nil else {
-            unlockError = "Unlock the vault before enabling device unlock."
+            unlockError = String(localized: "Unlock the vault before enabling device unlock.", comment: "Security settings: device unlock error")
             restoreToggles()
             return
         }
@@ -224,7 +225,7 @@ struct SecuritySettingsPane: View {
         }
         do {
             guard let vaultData = try vaultSession.loadVaultData() else {
-                unlockError = "No vault data found."
+                unlockError = String(localized: "No vault data found.", comment: "Security settings: device unlock error")
                 cancelEnrollment()
                 return
             }
@@ -245,10 +246,10 @@ struct SecuritySettingsPane: View {
             showConfirmSheet = false
             pendingAccessControl = nil
         } catch let error as KdbxDatabaseError where error == .wrongPassword {
-            unlockError = "Incorrect master password."
+            unlockError = String(localized: "Incorrect master password.", comment: "Security settings: device unlock error")
             cancelEnrollment()
         } catch {
-            unlockError = "Could not enable device unlock."
+            unlockError = String(localized: "Could not enable device unlock.", comment: "Security settings: device unlock error")
             cancelEnrollment()
         }
     }

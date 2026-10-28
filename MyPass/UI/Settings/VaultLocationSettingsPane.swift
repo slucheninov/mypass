@@ -1,5 +1,9 @@
 import SwiftUI
 
+/// The "Location" section of the Vault pane. It is not a pane of its own any more: it is a
+/// section hosted by `VaultSettingsPane`, which supplies the single grouped `Form` (and its
+/// scrolling) around it.
+///
 /// Reachable before authentication as well as after — unlike the old Sync
 /// pane's iCloud button, "Change Location…" is never disabled on lock state;
 /// `VaultLocationChangeSheet` handles proving ownership itself.
@@ -13,10 +17,12 @@ struct VaultLocationSettingsPane: View {
     }
 
     var body: some View {
-        Form {
+        Group {
             Section {
-                LabeledContent("Current Location", value: currentLocation.rawValue)
-                Text(vaultSession.primaryVaultPathDisplay)
+                LabeledContent("Current Location") {
+                    Text(currentLocation.title)
+                }
+                Text(verbatim: vaultSession.primaryVaultPathDisplay)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
@@ -41,16 +47,19 @@ struct VaultLocationSettingsPane: View {
                 Button(currentLocation == .local ? "Move to iCloud Drive…" : "Move to Local…") {
                     pendingTargetLocation = currentLocation == .local ? .iCloudDrive : .local
                 }
+                // Attached to this one Button, not to the root `Group`: inside the Vault pane's
+                // List-backed grouped Form, a modifier on a `Group` is distributed to every child
+                // and Section content flattens into rows, so the sheet could be attached many
+                // times to the same `pendingTargetLocation` binding. The Button is a single,
+                // unconditional row (only its title changes), so the sheet has exactly one host.
+                .sheet(item: $pendingTargetLocation) { target in
+                    VaultLocationChangeSheet(targetLocation: target)
+                }
                 SettingsHelperText(text: "Local keeps the vault only on this Mac. iCloud Drive keeps it in a folder that syncs between your Macs (and, in the future, other devices signed into the same iCloud account).")
             } header: {
-                Text("Vault Location")
+                Text("Location")
                     .font(.system(size: 13, weight: .semibold))
             }
-        }
-        .formStyle(.grouped)
-        .padding()
-        .sheet(item: $pendingTargetLocation) { target in
-            VaultLocationChangeSheet(targetLocation: target)
         }
     }
 }

@@ -70,12 +70,12 @@ struct EntryEditView: View {
             VStack(spacing: 20) {
                 VStack(spacing: 12) {
                     LetterAvatarView(
-                        title: title.isEmpty ? "(untitled)" : title,
+                        title: KdbxEntry.displayTitle(for: title),
                         size: UIShellMetrics.detailHeroIconSize,
                         cornerRadius: UIShellMetrics.detailHeroIconCornerRadius,
                         letterScale: UIShellMetrics.detailHeroLetterScale
                     )
-                    Text(title.isEmpty ? "(untitled)" : title)
+                    Text(verbatim: KdbxEntry.displayTitle(for: title))
                         .font(.system(size: 22, weight: .bold))
                         .multilineTextAlignment(.center)
                 }
@@ -124,11 +124,11 @@ struct EntryEditView: View {
 
                     Picker("Match", selection: $uriMatchMode) {
                         ForEach(URIMatchMode.allCases, id: \.self) { mode in
-                            Text(mode.displayName).tag(mode)
+                            Text(verbatim: mode.displayName).tag(mode)
                         }
                     }
                     .pickerStyle(.menu)
-                    Text(uriMatchMode.helpText)
+                    Text(verbatim: uriMatchMode.helpText)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     Divider().overlay(Color.primary.opacity(0.08))
@@ -211,9 +211,8 @@ struct EntryEditView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Entry" : "Edit Entry")
-        .toolbar {
-            EditActionsToolbarContent(onCancel: onCancel, onSave: save)
-            FavoriteToggleToolbarItem(isFavorite: $isFavorite)
+        .safeAreaInset(edge: .top, spacing: 0) {
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: save)
         }
         .sheet(isPresented: $showPasswordGenerator) {
             // The FULL host, not a registrable domain: PasswordRulesCatalog
@@ -351,14 +350,18 @@ struct EntryEditFieldsCard<Content: View>: View {
 /// two properties visible to `@testable import MyPass` from `MyPassTests`. `private`
 /// at file scope would still compile fine inside this file but would make them
 /// invisible to the test target, which is the one thing this comment exists to avoid.
+///
+/// Both properties return a `String` built with `String(localized:)` (not a
+/// `LocalizedStringResource`): the tests compare them with `XCTAssertEqual` against English
+/// text, and the picker shows them with `Text(verbatim:)` after they were localized here.
 extension URIMatchMode {
     var displayName: String {
         switch self {
-        case .registrableDomain: return "Registrable domain (recommended)"
-        case .host: return "Exact host"
-        case .startsWith: return "Starts with"
-        case .exact: return "Exact address"
-        case .never: return "Never (hide from extension)"
+        case .registrableDomain: return String(localized: "Registrable domain (recommended)", comment: "Entry editor: URL match mode name")
+        case .host: return String(localized: "Exact host", comment: "Entry editor: URL match mode name")
+        case .startsWith: return String(localized: "Starts with", comment: "Entry editor: URL match mode name")
+        case .exact: return String(localized: "Exact address", comment: "Entry editor: URL match mode name")
+        case .never: return String(localized: "Never (hide from extension)", comment: "Entry editor: URL match mode name")
         }
     }
 
@@ -377,20 +380,15 @@ extension URIMatchMode {
     var helpText: String {
         switch self {
         case .registrableDomain:
-            return "Matches example.com and any subdomain, such as login.example.com."
+            return String(localized: "Matches example.com and any subdomain, such as login.example.com.", comment: "Entry editor: URL match mode explanation")
         case .host:
-            return "Matches only this exact hostname and port. A different subdomain will not match."
+            return String(localized: "Matches only this exact hostname and port. A different subdomain will not match.", comment: "Entry editor: URL match mode explanation")
         case .startsWith:
-            return "Matches any page on the same site as this address — the scheme and host must be " +
-                "identical, so a lookalike domain such as example.com.attacker.com will never match " +
-                "even though it starts with the same text. Within that same site, this can still match " +
-                "more than intended: example.com/app also matches example.com/app-legacy, since both " +
-                "begin the same way."
+            return String(localized: "Matches any page on the same site as this address — the scheme and host must be identical, so a lookalike domain such as example.com.attacker.com will never match even though it starts with the same text. Within that same site, this can still match more than intended: example.com/app also matches example.com/app-legacy, since both begin the same way.", comment: "Entry editor: URL match mode explanation")
         case .exact:
-            return "Matches only this exact page address, including its path and query."
+            return String(localized: "Matches only this exact page address, including its path and query.", comment: "Entry editor: URL match mode explanation")
         case .never:
-            return "Hides this entry from the browser extension only — it stays fully visible and " +
-                "usable inside MyPass."
+            return String(localized: "Hides this entry from the browser extension only — it stays fully visible and usable inside MyPass.", comment: "Entry editor: URL match mode explanation")
         }
     }
 }

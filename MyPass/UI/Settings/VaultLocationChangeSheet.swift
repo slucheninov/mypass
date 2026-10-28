@@ -150,14 +150,15 @@ struct VaultLocationChangeSheet: View {
                 Text("MyPass will keep the vault in a folder inside your iCloud Drive.")
                     .fixedSize(horizontal: false, vertical: true)
                 if let chosenFolderURL {
-                    Text(chosenFolderURL.path)
+                    Text(verbatim: chosenFolderURL.path)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(2)
                         .truncationMode(.middle)
                 }
                 if let outsideICloudDriveWarning {
-                    Text(outsideICloudDriveWarning)
+                    // Already localized where it is set.
+                    Text(verbatim: outsideICloudDriveWarning)
                         .font(.caption)
                         .foregroundStyle(.orange)
                         .fixedSize(horizontal: false, vertical: true)
@@ -182,7 +183,7 @@ struct VaultLocationChangeSheet: View {
 
         case .finished:
             VStack(alignment: .leading, spacing: 8) {
-                Label(successMessage ?? "Done.", systemImage: "checkmark.circle.fill")
+                Label(successMessage ?? String(localized: "Done.", comment: "Vault location change sheet: fallback success message shown when the move finished without a more specific message"), systemImage: "checkmark.circle.fill")
                     .foregroundStyle(.green)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -193,16 +194,16 @@ struct VaultLocationChangeSheet: View {
     private var strategyChooser: some View {
         VStack(alignment: .leading, spacing: 12) {
             if let probe, probe.exists {
-                Text("That location already contains a vault\(Self.describe(probe)). Choose what to do with it.")
+                Text(verbatim: Self.existingVaultMessage(for: probe))
                     .fixedSize(horizontal: false, vertical: true)
                 Picker("", selection: $strategy) {
                     ForEach([VaultMigrationStrategy.merge, .adoptRemote, .overwriteRemote]) { option in
-                        Text(Self.title(for: option)).tag(option)
+                        Text(verbatim: Self.title(for: option)).tag(option)
                     }
                 }
                 .pickerStyle(.radioGroup)
                 .labelsHidden()
-                Text(Self.explanation(for: strategy))
+                Text(verbatim: Self.explanation(for: strategy))
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .fixedSize(horizontal: false, vertical: true)
@@ -253,7 +254,7 @@ struct VaultLocationChangeSheet: View {
 
     private func confirmPasswordAndContinue() {
         guard vaultSession.verifyPassword(confirmPassword) else {
-            errorMessage = "Incorrect password."
+            errorMessage = String(localized: "Incorrect password.", comment: "Vault location change sheet: message")
             return
         }
         if case .locked = vaultSession.state {
@@ -274,8 +275,8 @@ struct VaultLocationChangeSheet: View {
         panel.canChooseDirectories = true
         panel.canCreateDirectories = true
         panel.allowsMultipleSelection = false
-        panel.prompt = "Use Folder"
-        panel.message = "Choose a folder inside iCloud Drive for the MyPass vault. MyPass will create a \"MyPass\" subfolder inside it if needed."
+        panel.prompt = String(localized: "Use Folder", comment: "Open panel confirm button for choosing the iCloud Drive vault folder")
+        panel.message = String(localized: "Choose a folder inside iCloud Drive for the MyPass vault. MyPass will create a \"MyPass\" subfolder inside it if needed.", comment: "Open panel message for choosing the iCloud Drive vault folder")
         panel.directoryURL = ICloudDriveLocation.iCloudDriveRootURL
 
         guard panel.runModal() == .OK, let folderURL = panel.url else { return }
@@ -293,11 +294,11 @@ struct VaultLocationChangeSheet: View {
             chosenFolderURL = vaultFolderURL
             outsideICloudDriveWarning = ICloudDriveLocation.isInsideICloudDrive(vaultFolderURL)
                 ? nil
-                : "This folder is not inside iCloud Drive, so iCloud will not sync it. MyPass will still keep the vault there."
+                : String(localized: "This folder is not inside iCloud Drive, so iCloud will not sync it. MyPass will still keep the vault there.", comment: "Vault location change sheet: warning")
             chosenFolderBookmark = try iCloudBackend.createFolderBookmark(for: vaultFolderURL)
         } catch {
             chosenFolderBookmark = nil
-            errorMessage = "MyPass could not keep access to that folder: \(error)"
+            errorMessage = String(localized: "MyPass could not keep access to that folder: \(String(describing: error))", comment: "Vault location change sheet: message")
         }
     }
 
@@ -347,7 +348,7 @@ struct VaultLocationChangeSheet: View {
         // step, so the user sees an explanatory error instead of a
         // migration that silently no-ops before destroying data.
         if Self.destinationIsSameFileAsSource(sourceStore: sourceStore, destinationBackend: backend) {
-            errorMessage = "The vault is already at that location. Nothing was changed."
+            errorMessage = String(localized: "The vault is already at that location. Nothing was changed.", comment: "Vault location change sheet: message")
             return
         }
 
@@ -378,13 +379,13 @@ struct VaultLocationChangeSheet: View {
         let destinationData: Data
         do {
             guard let data = try destinationBackend.read() else {
-                errorMessage = "MyPass could not read the vault at the new location. Nothing was changed."
+                errorMessage = String(localized: "MyPass could not read the vault at the new location. Nothing was changed.", comment: "Vault location change sheet: message")
                 step = .confirmStrategy
                 return
             }
             destinationData = data
         } catch {
-            errorMessage = "MyPass could not read the vault at the new location. Nothing was changed."
+            errorMessage = String(localized: "MyPass could not read the vault at the new location. Nothing was changed.", comment: "Vault location change sheet: message")
             step = .confirmStrategy
             return
         }
@@ -392,7 +393,7 @@ struct VaultLocationChangeSheet: View {
         do {
             try vaultSession.verifyDestinationOpens(data: destinationData)
         } catch {
-            errorMessage = "The vault at the new location could not be opened with your password. Nothing was changed."
+            errorMessage = String(localized: "The vault at the new location could not be opened with your password. Nothing was changed.", comment: "Vault location change sheet: message")
             step = .confirmStrategy
             return
         }
@@ -411,7 +412,7 @@ struct VaultLocationChangeSheet: View {
                       bookmarkData: chosenFolderBookmark,
                       localBackupDirectory: applicationSupportBackupsDirectory
                   ) else {
-                errorMessage = "MyPass could not switch to the new location. Nothing was changed. Choose the folder again and retry."
+                errorMessage = String(localized: "MyPass could not switch to the new location. Nothing was changed. Choose the folder again and retry.", comment: "Vault location change sheet: message")
                 step = .confirmStrategy
                 return
             }
@@ -449,15 +450,15 @@ struct VaultLocationChangeSheet: View {
                 sourceStore.primaryVaultFileURL,
                 destinationStore.primaryVaultFileURL
             ) {
-                sourceDeleteWarning = "The vault was moved, but MyPass detected the old location was the same file as the new one and left it in place."
+                sourceDeleteWarning = String(localized: "The vault was moved, but MyPass detected the old location was the same file as the new one and left it in place.", comment: "Vault location change sheet: message")
             } else {
                 do {
                     try VaultLocationMoveSupport.deleteSourceVault(at: sourceStore)
                 } catch {
                     if let path = sourceStore.primaryVaultFileURL?.path {
-                        sourceDeleteWarning = "The vault was moved, but an old copy could not be removed at \(path)."
+                        sourceDeleteWarning = String(localized: "The vault was moved, but an old copy could not be removed at \(path).", comment: "Vault location change sheet: message")
                     } else {
-                        sourceDeleteWarning = "The vault was moved, but the previous copy could not be removed."
+                        sourceDeleteWarning = String(localized: "The vault was moved, but the previous copy could not be removed.", comment: "Vault location change sheet: message")
                     }
                 }
             }
@@ -502,7 +503,7 @@ struct VaultLocationChangeSheet: View {
                       bookmarkData: chosenFolderBookmark,
                       localBackupDirectory: applicationSupportBackupsDirectory
                   ) else {
-                errorMessage = "MyPass could not use that folder. Choose the folder again and retry."
+                errorMessage = String(localized: "MyPass could not use that folder. Choose the folder again and retry.", comment: "Vault location change sheet: message")
                 return
             }
             vaultSession.updatePrimaryStore(newStore)
@@ -518,7 +519,7 @@ struct VaultLocationChangeSheet: View {
             iCloudFolderBookmark: &syncICloudFolderBookmarkData
         )
         vaultLocationRawValue = targetLocation.rawValue
-        successMessage = "Vault location set. Choose a master password to finish setting up your vault."
+        successMessage = String(localized: "Vault location set. Choose a master password to finish setting up your vault.", comment: "Vault location change sheet: message")
         step = .finished
     }
 
@@ -534,7 +535,7 @@ struct VaultLocationChangeSheet: View {
 
     private func makeICloudTargetBackend() -> iCloudBackend? {
         guard let chosenFolderBookmark else {
-            errorMessage = "Choose a folder first."
+            errorMessage = String(localized: "Choose a folder first.", comment: "Vault location change sheet: message")
             return nil
         }
         do {
@@ -573,49 +574,57 @@ struct VaultLocationChangeSheet: View {
         return failingBookmark == persistedBookmark
     }
 
-    static func describe(_ probe: VaultMigrationTargetProbe) -> String {
-        var parts: [String] = []
-        if let byteCount = probe.byteCount {
-            parts.append(ByteCountFormatter.string(fromByteCount: Int64(byteCount), countStyle: .file))
+    /// The "that location already contains a vault" sentence. The size and the modification date
+    /// are optional, so there is one whole localized sentence per combination instead of a
+    /// sentence stitched together from fragments: a translator sees (and can word, punctuate and
+    /// order) each full sentence, rather than inheriting English " (" / ", " separators.
+    static func existingVaultMessage(for probe: VaultMigrationTargetProbe) -> String {
+        let size = probe.byteCount.map { ByteCountFormatter.string(fromByteCount: Int64($0), countStyle: .file) }
+        let modified = probe.modificationDate?.formatted(date: .abbreviated, time: .shortened)
+        switch (size, modified) {
+        case let (size?, modified?):
+            return String(localized: "That location already contains a vault (\(size), modified \(modified)). Choose what to do with it.", comment: "Vault location change sheet: message when the target already holds a vault. First placeholder is the file size (for example 4 KB), second is the last modification date and time")
+        case let (size?, nil):
+            return String(localized: "That location already contains a vault (\(size)). Choose what to do with it.", comment: "Vault location change sheet: message when the target already holds a vault. The placeholder is the file size (for example 4 KB); the modification date is unknown")
+        case let (nil, modified?):
+            return String(localized: "That location already contains a vault (modified \(modified)). Choose what to do with it.", comment: "Vault location change sheet: message when the target already holds a vault. The placeholder is the last modification date and time; the file size is unknown")
+        case (nil, nil):
+            return String(localized: "That location already contains a vault. Choose what to do with it.", comment: "Vault location change sheet: message when the target already holds a vault and neither its size nor its modification date is known")
         }
-        if let modificationDate = probe.modificationDate {
-            parts.append("modified \(modificationDate.formatted(date: .abbreviated, time: .shortened))")
-        }
-        return parts.isEmpty ? "" : " (\(parts.joined(separator: ", ")))"
     }
 
     static func title(for strategy: VaultMigrationStrategy) -> String {
         switch strategy {
-        case .seedRemote: return "Move the vault to the new location"
-        case .merge: return "Merge both vaults (recommended)"
-        case .adoptRemote: return "Use the vault already at the new location"
-        case .overwriteRemote: return "Replace the vault at the new location"
+        case .seedRemote: return String(localized: "Move the vault to the new location", comment: "Vault location change sheet: migration strategy option")
+        case .merge: return String(localized: "Merge both vaults (recommended)", comment: "Vault location change sheet: migration strategy option")
+        case .adoptRemote: return String(localized: "Use the vault already at the new location", comment: "Vault location change sheet: migration strategy option")
+        case .overwriteRemote: return String(localized: "Replace the vault at the new location", comment: "Vault location change sheet: migration strategy option")
         }
     }
 
     static func explanation(for strategy: VaultMigrationStrategy) -> String {
         switch strategy {
         case .seedRemote:
-            return "The new location has no vault yet, so the current vault is moved there unchanged."
+            return String(localized: "The new location has no vault yet, so the current vault is moved there unchanged.", comment: "Vault location change sheet: message")
         case .merge:
-            return "Keeps every entry from both sides, using the same merge rules as normal syncing. Both copies end up identical."
+            return String(localized: "Keeps every entry from both sides, using the same merge rules as normal syncing. Both copies end up identical.", comment: "Vault location change sheet: message")
         case .adoptRemote:
-            return "Replaces the current vault with the one already at the new location. The current vault is snapshotted into the backups folder first."
+            return String(localized: "Replaces the current vault with the one already at the new location. The current vault is snapshotted into the backups folder first.", comment: "Vault location change sheet: message")
         case .overwriteRemote:
-            return "Replaces the vault at the new location with the current one. The copy currently there is discarded."
+            return String(localized: "Replaces the vault at the new location with the current one. The copy currently there is discarded.", comment: "Vault location change sheet: message")
         }
     }
 
     static func successMessage(for outcome: VaultMigrationOutcome) -> String {
         switch outcome.strategy {
         case .seedRemote:
-            return "The vault is now at the new location."
+            return String(localized: "The vault is now at the new location.", comment: "Vault location change sheet: message")
         case .merge:
-            return "Both vaults were merged. The current vault and the new location now hold the same entries."
+            return String(localized: "Both vaults were merged. The current vault and the new location now hold the same entries.", comment: "Vault location change sheet: message")
         case .adoptRemote:
-            return "MyPass now uses the vault that was already at the new location. The previous vault was kept in the backups folder."
+            return String(localized: "MyPass now uses the vault that was already at the new location. The previous vault was kept in the backups folder.", comment: "Vault location change sheet: message")
         case .overwriteRemote:
-            return "The new location now holds the current vault."
+            return String(localized: "The new location now holds the current vault.", comment: "Vault location change sheet: message")
         }
     }
 
@@ -626,25 +635,25 @@ struct VaultLocationChangeSheet: View {
         if let migrationError = error as? VaultMigrationError {
             switch migrationError {
             case .vaultLocked:
-                return "Unlock MyPass before changing the vault location."
+                return String(localized: "Unlock MyPass before changing the vault location.", comment: "Vault location change sheet: message")
             case .remoteNotAValidVault:
-                return "The file at that location is not a MyPass vault. Nothing was changed on either side."
+                return String(localized: "The file at that location is not a MyPass vault. Nothing was changed on either side.", comment: "Vault location change sheet: message")
             case .remotePasswordMismatch:
-                return "The vault at that location uses a different password. Nothing was changed on either side."
+                return String(localized: "The vault at that location uses a different password. Nothing was changed on either side.", comment: "Vault location change sheet: message")
             case .remoteUnreadable(let underlying):
                 if let backendError = underlying as? iCloudBackendError {
                     return message(forICloudBackendError: backendError)
                 }
-                return "MyPass could not read that location: \(underlying)"
+                return String(localized: "MyPass could not read that location: \(String(describing: underlying))", comment: "Vault location change sheet: message")
             case .remoteWriteFailed(let underlying):
                 if let backendError = underlying as? iCloudBackendError {
                     return message(forICloudBackendError: backendError)
                 }
-                return "MyPass could not write to that location: \(underlying). The current vault was not changed."
+                return String(localized: "MyPass could not write to that location: \(String(describing: underlying)). The current vault was not changed.", comment: "Vault location change sheet: message")
             case .serializedVaultInvalid:
-                return "MyPass could not prepare the vault for the move. Nothing was written to the new location."
+                return String(localized: "MyPass could not prepare the vault for the move. Nothing was written to the new location.", comment: "Vault location change sheet: message")
             case .localWriteFailed(let underlying):
-                return "The new location is now ahead of the current vault: writing the result failed (\(underlying)). Try again and choose \u{201C}Use the vault already at the new location\u{201D} to catch up."
+                return String(localized: "The new location is now ahead of the current vault: writing the result failed (\(String(describing: underlying))). Try again and choose \u{201C}Use the vault already at the new location\u{201D} to catch up.", comment: "Vault location change sheet: message")
             }
         }
         return "\(error)"
@@ -653,11 +662,11 @@ struct VaultLocationChangeSheet: View {
     private static func message(forICloudBackendError backendError: iCloudBackendError) -> String {
         switch backendError {
         case .folderBookmarkUnresolvable, .folderUnavailable:
-            return "That folder is no longer reachable. Choose the iCloud Drive folder again."
+            return String(localized: "That folder is no longer reachable. Choose the iCloud Drive folder again.", comment: "Vault location change sheet: message")
         case .downloadTimedOut:
-            return "The vault at that location is still downloading from iCloud. Wait until it finishes, then try again."
+            return String(localized: "The vault at that location is still downloading from iCloud. Wait until it finishes, then try again.", comment: "Vault location change sheet: message")
         case .containerUnavailable:
-            return "MyPass keeps the vault in a folder in iCloud Drive, not a private iCloud container. Choose a folder to continue."
+            return String(localized: "MyPass keeps the vault in a folder in iCloud Drive, not a private iCloud container. Choose a folder to continue.", comment: "Vault location change sheet: message")
         }
     }
 }

@@ -23,6 +23,17 @@ extension KdbxEntry {
         set { setFieldValue(newValue, forKey: "Title", isProtected: false) }
     }
 
+    /// The title to show in the UI: the stored title verbatim, or a localized placeholder when it
+    /// is empty. `title` itself stays the raw vault value (it is what gets saved and searched);
+    /// only this placeholder is interface text. Returned as a `String`, so views must show it with
+    /// `Text(verbatim:)` / a plain `String` rather than expecting a second catalog lookup.
+    var displayTitle: String { Self.displayTitle(for: title) }
+
+    /// Same rule for a title that is not (yet) stored on an entry, such as an edit form's draft.
+    static func displayTitle(for title: String) -> String {
+        title.isEmpty ? String(localized: "(untitled)", comment: "Placeholder shown for an entry that has no title") : title
+    }
+
     var login: String {
         get { fieldValue(forKey: "UserName") }
         set { setFieldValue(newValue, forKey: "UserName", isProtected: false) }
@@ -119,8 +130,10 @@ public extension KdbxEntry {
     static let additionalURLsStringArrayKey = "KP2A_URL"
 
     /// Primary URL (if non-empty) followed by `KP2A_URL` StringArray extras, deduplicated,
-    /// order preserved. Setting the first element becomes the primary `URL` field; the
-    /// remainder is stored as the `KP2A_URL` StringArray. An empty array clears both.
+    /// order preserved. Empty extras are skipped just like an empty primary, so the first
+    /// element (and `primaryWebsiteURL`) is never "". Setting the first element becomes the
+    /// primary `URL` field; the remainder is stored as the `KP2A_URL` StringArray. An empty
+    /// array clears both.
     var urls: [String] {
         get {
             var result: [String] = []
@@ -128,7 +141,7 @@ public extension KdbxEntry {
                 result.append(url)
             }
             if let array = stringArrays.first(where: { $0.key == Self.additionalURLsStringArrayKey }) {
-                for value in array.values where !result.contains(value) {
+                for value in array.values where !value.isEmpty && !result.contains(value) {
                     result.append(value)
                 }
             }
@@ -143,6 +156,11 @@ public extension KdbxEntry {
             }
         }
     }
+
+    /// The website that Open Website / Copy Website act on: the first of `urls`. Reading
+    /// `url` directly would be "" for an entry whose only addresses are `KP2A_URL` extras,
+    /// even though the detail view already shows a Website row for it.
+    var primaryWebsiteURL: String? { urls.first }
 
     /// Non-standard fields to render as browse/edit custom-field rows. `KP2A_URL` is never
     /// present here — it lives in `stringArrays`, a separate collection from `fields`.

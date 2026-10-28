@@ -23,12 +23,12 @@ struct CardDetailView: View {
             VStack(spacing: 20) {
                 VStack(spacing: 12) {
                     LetterAvatarView(
-                        title: entry.title.isEmpty ? "(untitled)" : entry.title,
+                        title: entry.displayTitle,
                         size: UIShellMetrics.detailHeroIconSize,
                         cornerRadius: UIShellMetrics.detailHeroIconCornerRadius,
                         letterScale: UIShellMetrics.detailHeroLetterScale
                     )
-                    Text(entry.title.isEmpty ? "(untitled)" : entry.title)
+                    Text(verbatim: entry.displayTitle)
                         .font(.system(size: 22, weight: .bold))
                         .multilineTextAlignment(.center)
                 }
@@ -45,7 +45,7 @@ struct CardDetailView: View {
 
                     ForEach(entry.additionalFields, id: \.key) { field in
                         DetailFieldDivider()
-                        DetailFieldRow(label: field.key, value: field.value)
+                        DetailFieldRow(verbatimLabel: field.key, value: field.value)
                             .contextMenu {
                                 Button("Copy \(field.key)") { copy(field.value) }
                             }
@@ -57,9 +57,6 @@ struct CardDetailView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle("Card")
-        .toolbar {
-            DetailActionsToolbarContent(onEdit: { navigationState.presentEdit(entryID: entry.uuid) })
-        }
         .onChange(of: navigationState.selectedEntryID) { _, newID in
             isCardNumberRevealed = false
             isCVVRevealed = false
@@ -75,7 +72,7 @@ struct CardDetailView: View {
             Text("Card Number")
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            Text(isCardNumberRevealed ? entry.cardNumber : String(repeating: "•", count: max(entry.cardNumber.count, 8)))
+            Text(verbatim: isCardNumberRevealed ? entry.cardNumber : String(repeating: "•", count: max(entry.cardNumber.count, 8)))
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             Button {
@@ -102,7 +99,7 @@ struct CardDetailView: View {
             Text("CVV")
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            Text(isCVVRevealed ? entry.cvv : String(repeating: "•", count: max(entry.cvv.count, 3)))
+            Text(verbatim: isCVVRevealed ? entry.cvv : String(repeating: "•", count: max(entry.cvv.count, 3)))
                 .multilineTextAlignment(.trailing)
                 .frame(maxWidth: .infinity, alignment: .trailing)
             Button {
