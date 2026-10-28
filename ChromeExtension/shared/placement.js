@@ -74,21 +74,46 @@ var mypassPlacement = (function () {
 
   // A host can land somewhere other than where it was told (an `html` transform, CSS zoom, a
   // dialog with its own transform). Comparing the host's measured rect with the intended one and
-  // shifting by the difference once is cheaper and more general than listing the CSS properties
-  // that create a containing block. Returns null when within tolerance.
-  function correction(intended, measured, tolerance) {
+  // shifting by the difference is cheaper and more general than listing the CSS properties that
+  // create a containing block. Returns null when within tolerance.
+  //
+  // The difference is a VIEWPORT distance, but `left`/`top` on the host are LOCAL pixels of its
+  // containing block. Under a scaled block a local delta d moves the host by d * scale on
+  // screen, so a single unscaled shift leaves d * (1 - scale) behind (scale 0.5: a 50 px gap
+  // closes by 25 px). `scale` ({x, y}, see scaleFrom) converts the gap into local pixels; the
+  // caller still re-measures afterwards, because the scale is only an estimate.
+  function correction(intended, measured, tolerance, scale) {
     var limit = typeof tolerance === 'number' ? tolerance : 1;
-    var dx = intended.left - measured.left;
-    var dy = intended.top - measured.top;
-    if (Math.abs(dx) <= limit && Math.abs(dy) <= limit) return null;
-    return { dx: dx, dy: dy };
+    var gapX = intended.left - measured.left;
+    var gapY = intended.top - measured.top;
+    if (Math.abs(gapX) <= limit && Math.abs(gapY) <= limit) return null;
+    var sx = usableScale(scale && scale.x);
+    var sy = usableScale(scale && scale.y);
+    return { dx: gapX / sx, dy: gapY / sy };
+  }
+
+  // Scale factors outside this range are a measurement accident (a collapsed or huge box), not a
+  // real containing-block scale; dividing by them would throw the host across the page.
+  function usableScale(value) {
+    return typeof value === 'number' && isFinite(value) && value >= 0.05 && value <= 20 ? value : 1;
+  }
+
+  // The containing block's effective scale, read off the host itself: its rendered size
+  // (getBoundingClientRect, after transforms) over its layout size (offsetWidth/offsetHeight,
+  // before them). Anything unmeasurable reads as 1, which is the old behaviour.
+  function scaleFrom(measured, layoutWidth, layoutHeight) {
+    return {
+      x: layoutWidth > 0 && measured && measured.width > 0 ? usableScale(measured.width / layoutWidth) : 1,
+      y: layoutHeight > 0 && measured && measured.height > 0 ? usableScale(measured.height / layoutHeight) : 1
+    };
   }
 
   return {
     needsBox: needsBox,
     placeIcon: placeIcon,
     placeFloating: placeFloating,
-    correction: correction
+    correction: correction,
+    scaleFrom: scaleFrom
   };
 })();
 

@@ -417,7 +417,7 @@ const correctedHost = fakeElement('div');
 positionHostToField(correctedHost, { top: 100, left: 50, width: 200, height: 30 }, {}, [], null, { dx: -8, dy: -19 });
 assert.strictEqual(correctedHost.style.top, '83px');
 assert.strictEqual(correctedHost.style.left, '210px');
-const { measurePlacementOffset, mountParentFor, buildSettingsRow } = require('../content.js');
+const { measurePlacementOffset, settlePlacementOffset, mountParentFor, buildSettingsRow } = require('../content.js');
 assert.deepStrictEqual(
   measurePlacementOffset({ getBoundingClientRect: () => ({ left: 18, top: 39, width: 26, height: 26 }) }, { left: 10, top: 20 }),
   { dx: -8, dy: -19 },
@@ -433,6 +433,61 @@ assert.strictEqual(
   null,
   'a display:none host measures as 0x0 and is never "corrected"'
 );
+
+// A containing block that scales and shifts its `position:fixed` host (`html{transform:scale(s)}`
+// with some origin offset): `left`/`top` are LOCAL pixels, the measured rect is VIEWPORT pixels.
+// One unscaled shift of the viewport gap used to leave d * (1 - s) behind (scale .5: a 50 px gap
+// closed by 25 px), for the icon and for the picker alike.
+function scaledHost(scale, originX, originY) {
+  const host = fakeElement('div');
+  const local = (name) => parseFloat(host.style[name]) || 0;
+  host.getBoundingClientRect = () => ({
+    left: originX + local('left') * scale,
+    top: originY + local('top') * scale,
+    width: (parseFloat(host.style.width) || 0) * scale,
+    height: (parseFloat(host.style.height) || 0) * scale,
+  });
+  Object.defineProperty(host, 'offsetWidth', { get: () => Math.round(parseFloat(host.style.width) || 0) });
+  Object.defineProperty(host, 'offsetHeight', { get: () => Math.round(parseFloat(host.style.height) || 0) });
+  return host;
+}
+const iconField = { top: 300, left: 40, width: 300, height: 40 };
+[0.5, 2, 1].forEach((scale) => {
+  // inline icon: same call sequence as placeIconHost
+  const iconHost = scaledHost(scale, 30, 70);
+  const first = positionHostToField(iconHost, iconField, {});
+  const iconSettled = settlePlacementOffset(iconHost, first.intended, null, (offset) => {
+    positionHostToField(iconHost, iconField, {}, [], null, offset);
+  });
+  const iconRect = iconHost.getBoundingClientRect();
+  assert.ok(iconSettled.settled, 'icon at scale ' + scale + ' settles');
+  assert.ok(Math.abs(iconRect.left - first.intended.left) <= 1 && Math.abs(iconRect.top - first.intended.top) <= 1,
+    'icon at scale ' + scale + ' lands on its intended viewport position, not d * (1 - scale) away');
+
+  // account picker: same call sequence as positionOpenPanel
+  const panelHost = scaledHost(scale, -25, 55);
+  panelHost.style.setProperty('width', '240px', 'important');
+  panelHost.style.setProperty('height', '120px', 'important');
+  const placed = require('../shared/placement.js').placeFloating(iconField, { width: 240, height: 120 }, { innerWidth: 1280, innerHeight: 800 });
+  const panelSettled = settlePlacementOffset(panelHost, { left: placed.left, top: placed.top }, { dx: 0, dy: 0 }, (offset) => {
+    panelHost.style.setProperty('top', String(placed.top + offset.dy) + 'px', 'important');
+    panelHost.style.setProperty('left', String(placed.left + offset.dx) + 'px', 'important');
+  });
+  const panelRect = panelHost.getBoundingClientRect();
+  assert.ok(panelSettled.settled, 'picker at scale ' + scale + ' settles');
+  assert.ok(Math.abs(panelRect.left - placed.left) <= 1 && Math.abs(panelRect.top - placed.top) <= 1,
+    'picker at scale ' + scale + ' lands on its intended viewport position');
+});
+// An unmeasurable host (display:none, 0x0) is accepted as settled without being moved.
+const hiddenSettle = settlePlacementOffset({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }) },
+  { left: 10, top: 20 }, null, () => assert.fail('a 0x0 host must never be shifted'));
+assert.ok(hiddenSettle.settled);
+// A host that never converges (it ignores the style writes) stops after a bounded number of passes.
+let stubbornApplies = 0;
+const stubborn = settlePlacementOffset({ getBoundingClientRect: () => ({ left: 90, top: 90, width: 20, height: 20 }) },
+  { left: 10, top: 10 }, null, () => { stubbornApplies += 1; });
+assert.strictEqual(stubborn.settled, false);
+assert.strictEqual(stubbornApplies, 3, 'the settle loop is bounded');
 
 // Mount rule: inside the open modal dialog for a dialog field, otherwise under <html> (never
 // <body>, whose transform/margin used to shift the icon).

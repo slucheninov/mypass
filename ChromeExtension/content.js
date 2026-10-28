@@ -583,15 +583,38 @@
     return doc.documentElement;
   }
 
-  // Compares where a host actually landed with where it was told to go and returns the one
-  // shift that closes the gap (null when it is already right). Applies nothing itself so the
-  // caller can remember the result per host instead of re-measuring on every scroll frame.
+  // Compares where a host actually landed with where it was told to go and returns the shift,
+  // in the host's own (local) CSS pixels, that closes the gap (null when it is already right).
+  // Applies nothing itself. The local scale comes from the host's rendered size over its layout
+  // size, so a scaled containing block (`html{transform:scale(.5)}`) does not halve the shift.
   function measurePlacementOffset(host, intended) {
     if (!host || typeof host.getBoundingClientRect !== 'function') return null;
     const measured = host.getBoundingClientRect();
     if (!measured || !(measured.width > 0)) return null;
-    return shared.placement.correction(intended, measured, 1);
+    const scale = shared.placement.scaleFrom(measured, host.offsetWidth, host.offsetHeight);
+    return shared.placement.correction(intended, measured, 1, scale);
   }
+
+  // A scale is only an estimate (offsetWidth is rounded), so one shift can still leave a gap:
+  // apply it, measure again, and repeat a few times. `target` is where the host should be in
+  // viewport coordinates; `apply(offset)` writes the host's styles for a given {dx, dy}.
+  // Returns the offset and whether the host ended within tolerance, so callers cache the
+  // offset as verified only when it really is.
+  const PLACEMENT_SETTLE_PASSES = 3;
+  function settlePlacementOffset(host, target, offset, apply) {
+    let current = offset || { dx: 0, dy: 0 };
+    for (let pass = 0; pass < PLACEMENT_SETTLE_PASSES; pass += 1) {
+      const fix = measurePlacementOffset(host, target);
+      if (!fix) return { offset: current, settled: true };
+      current = { dx: current.dx + fix.dx, dy: current.dy + fix.dy };
+      apply(current);
+    }
+    return { offset: current, settled: !measurePlacementOffset(host, target) };
+  }
+
+  // Syncs that may re-run the settle loop for one host before it is accepted as it is; keeps a
+  // page whose host never converges from costing a layout read per scroll frame forever.
+  const PLACEMENT_VERIFY_TRIES = 3;
 
   // An ancestor that is the containing block of `position:fixed` descendants (a transform,
   // perspective, filter or backdrop-filter, `contain: layout|paint|strict|content`, or a
@@ -1021,6 +1044,7 @@
       if (parent && record.host.parentNode !== parent) {
         parent.appendChild(record.host);
         record.verified = false;
+        record.verifyTries = 0;
         record.offset = null;
       }
       const found = findFieldBox(input);
@@ -1030,17 +1054,14 @@
         record.host, rect, window, controls, fieldClipRect(input, window), record.offset, box
       );
       if (result.fits && !record.verified) {
-        record.verified = true;
-        const fix = measurePlacementOffset(record.host, {
-          left: result.intended.left + (record.offset ? record.offset.dx : 0),
-          top: result.intended.top + (record.offset ? record.offset.dy : 0),
-        });
-        if (fix) {
-          record.offset = { dx: (record.offset ? record.offset.dx : 0) + fix.dx, dy: (record.offset ? record.offset.dy : 0) + fix.dy };
+        const settled = settlePlacementOffset(record.host, result.intended, record.offset, (offset) => {
           positionHostToField(
-            record.host, rect, window, controls, fieldClipRect(input, window), record.offset, box
+            record.host, rect, window, controls, fieldClipRect(input, window), offset, box
           );
-        }
+        });
+        record.offset = settled.offset;
+        record.verifyTries = (record.verifyTries || 0) + 1;
+        record.verified = settled.settled || record.verifyTries >= PLACEMENT_VERIFY_TRIES;
       }
     }
 
@@ -1160,14 +1181,17 @@
       host.style.setProperty('left', String(placed.left + openPanel.dx) + 'px', 'important');
       host.style.setProperty('min-width', String(Math.min(rect.width, 320)) + 'px', 'important');
       if (!openPanel.verified) {
-        openPanel.verified = true;
-        const fix = measurePlacementOffset(host, { left: placed.left + openPanel.dx, top: placed.top + openPanel.dy });
-        if (fix) {
-          openPanel.dx += fix.dx;
-          openPanel.dy += fix.dy;
-          host.style.setProperty('top', String(placed.top + openPanel.dy) + 'px', 'important');
-          host.style.setProperty('left', String(placed.left + openPanel.dx) + 'px', 'important');
-        }
+        const settled = settlePlacementOffset(
+          host, { left: placed.left, top: placed.top }, { dx: openPanel.dx, dy: openPanel.dy },
+          (offset) => {
+            host.style.setProperty('top', String(placed.top + offset.dy) + 'px', 'important');
+            host.style.setProperty('left', String(placed.left + offset.dx) + 'px', 'important');
+          }
+        );
+        openPanel.dx = settled.offset.dx;
+        openPanel.dy = settled.offset.dy;
+        openPanel.verifyTries = (openPanel.verifyTries || 0) + 1;
+        openPanel.verified = settled.settled || openPanel.verifyTries >= PLACEMENT_VERIFY_TRIES;
       }
     }
 
@@ -1570,7 +1594,7 @@
       buildTotpCandidateQueryResponse, buildNewPasswordFieldQueryResponse, buildGeneratePasswordRow,
       classifyGeneratePasswordResponse, showGeneratePasswordMessage,
       KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField, fieldControlRects, fieldClipRect, fieldVisualBox, findFieldBox,
-      mountParentFor, measurePlacementOffset, buildSettingsRow,
+      mountParentFor, measurePlacementOffset, settlePlacementOffset, buildSettingsRow,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
       FRAME_FEATURE_POLICY, isFeatureEnabledInFrame, buildMutationSweep, observeTotpCandidates,

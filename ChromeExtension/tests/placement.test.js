@@ -87,4 +87,20 @@ assert.strictEqual(placement.correction({ left: 10, top: 20 }, { left: 10.5, top
 assert.deepStrictEqual(placement.correction({ left: 10, top: 20 }, { left: 18, top: 39 }, 1), { dx: -8, dy: -19 },
   'html/body transform offsets are measured, not enumerated');
 
+// A scaled containing block: local pixels move the host by local * scale on screen, so the
+// viewport gap is divided by the scale. Without it a 50 px gap at scale .5 closes by only 25 px.
+assert.deepStrictEqual(placement.correction({ left: 100, top: 80 }, { left: 50, top: 30 }, 1, { x: 0.5, y: 0.5 }), { dx: 100, dy: 100 },
+  'a 50 px viewport gap at scale 0.5 needs a 100 px local shift');
+assert.deepStrictEqual(placement.correction({ left: 100, top: 80 }, { left: 50, top: 30 }, 1, { x: 2, y: 2 }), { dx: 25, dy: 25 },
+  'a 50 px viewport gap at scale 2 needs a 25 px local shift');
+assert.deepStrictEqual(placement.correction({ left: 100, top: 80 }, { left: 50, top: 30 }, 1, { x: 0, y: NaN }), { dx: 50, dy: 50 },
+  'an unusable scale reads as 1 instead of dividing by zero');
+assert.strictEqual(placement.correction({ left: 10, top: 20 }, { left: 10.4, top: 20.4 }, 1, { x: 0.5, y: 0.5 }), null,
+  'tolerance applies to the viewport gap, whatever the scale');
+assert.deepStrictEqual(placement.scaleFrom({ width: 14, height: 13 }, 28, 26), { x: 0.5, y: 0.5 }, 'rendered over layout size');
+assert.deepStrictEqual(placement.scaleFrom({ width: 56, height: 52 }, 28, 26), { x: 2, y: 2 });
+assert.deepStrictEqual(placement.scaleFrom({ width: 0, height: 0 }, 28, 26), { x: 1, y: 1 }, 'collapsed box reads as 1');
+assert.deepStrictEqual(placement.scaleFrom({ width: 10, height: 10 }, 0, 0), { x: 1, y: 1 }, 'no layout size reads as 1');
+assert.deepStrictEqual(placement.scaleFrom({ width: 1, height: 1 }, 1000, 1000), { x: 1, y: 1 }, 'an absurd ratio is ignored');
+
 console.log('placement.test.js: placeIcon / placeFloating / correction OK');
