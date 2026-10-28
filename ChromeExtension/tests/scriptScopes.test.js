@@ -125,6 +125,8 @@ assertDisjoint('service worker', [
   'shared/password-generator.js',
   'shared/security-watch.js',
   'shared/notification-settings.js',
+  'shared/autofill-settings.js',
+  'shared/prompt-record.js',
   'background.js'
 ]);
 
@@ -143,5 +145,10 @@ assertDisjoint('create.html', createScripts);
 const generatorScripts = scriptSources(fs.readFileSync(path.join(__dirname, '..', 'generator.html'), 'utf8'));
 assert.ok(generatorScripts.indexOf('shared/password-generator.js') < generatorScripts.indexOf('generator.js'));
 assertDisjoint('generator.html', generatorScripts);
+
+const promptScripts = scriptSources(fs.readFileSync(path.join(__dirname, '..', 'prompt.html'), 'utf8'));
+assert.ok(promptScripts.indexOf('shared/prompt-card.js') < promptScripts.indexOf('prompt.js'), 'the card loads before the page script');
+assert.ok(!promptScripts.includes('popup.js'), 'the prompt window is its own page, not popup.html');
+assertDisjoint('prompt.html', promptScripts);
 
 console.log('scriptScopes.test.js: no global scope collisions OK');

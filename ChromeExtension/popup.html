@@ -4,6 +4,7 @@
   <meta charset="utf-8">
   <title>MyPass</title>
   <link rel="stylesheet" href="shared/ui.css">
+  <link rel="stylesheet" href="shared/prompt-card.css">
   <style>
     html {
       width: 400px;
@@ -752,6 +753,10 @@
       <button id="passkey-checking-cancel-btn" type="button" class="btn-secondary">Cancel</button>
     </section>
 
+    <section id="prompt-panel" hidden>
+      <div id="prompt-card-root"></div>
+    </section>
+
     <section id="passkey-save-panel" hidden>
       <h1 class="panel-title">Save passkey</h1>
       <p class="panel-helper passkey-summary" id="passkey-save-summary"></p>
@@ -1013,6 +1018,7 @@
   <script src="shared/notification-settings.js"></script>
   <script src="shared/appearance-settings.js"></script>
   <script src="shared/theme.js"></script>
+  <script src="shared/prompt-card.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>

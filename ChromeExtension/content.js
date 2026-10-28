@@ -35,6 +35,7 @@
         pageIdentifier: require('./shared/page-identifier.js'),
         securityWatch: require('./shared/security-watch.js'),
         autofillSettings: require('./shared/autofill-settings.js'),
+        placement: require('./shared/placement.js'),
       }
     : {
         urlMatch: mypassUrlMatch,
@@ -46,6 +47,7 @@
         pageIdentifier: mypassPageIdentifier,
         securityWatch: mypassSecurityWatch,
         autofillSettings: mypassAutofillSettings,
+        placement: mypassPlacement,
       };
   const hostnameMatches = shared.urlMatch.hostnameMatches;
   const securityWatch = shared.securityWatch;
@@ -191,12 +193,30 @@
   }
 
   // Same trust gate as handleIconActivate/handleEntrySelect, generalized for the Save/Dismiss
-  // buttons on the two page-injected banners (showTotpSaveBanner, showSaveBanner). Those
+  // buttons on the page-injected security warning (and any other control this script puts in a document the page can see). Those
   // buttons live in a document the page script can see and dispatch synthetic click events
   // at, unlike the popup, so every handler that sends a message or mutates state must first
   // confirm the event was user-generated. Returns a listener suitable for addEventListener,
   // rather than checking inline in each handler, so every banner button site gets the same
   // gate the same way.
+  // `event.isTrusted` alone does NOT prove a person acted: form.requestSubmit() and
+  // form.submit-by-script run from page code still dispatch a submit event whose isTrusted is
+  // true. Opening browser UI (the popup or a window) needs a real gesture, so a login submit
+  // must also happen inside a live user activation (navigator.userActivation.isActive: a click,
+  // a tap or a non-modifier keydown within the last few seconds, set by the browser and not
+  // forgeable from page script). That covers both a mouse click on a submit button and Enter in
+  // a field, trusted or JS-handled, and fails closed where the API is missing. Limits, accepted:
+  // a page that waits longer than the activation window before submitting gets no prompt, and a
+  // page can still call requestSubmit() from inside a click the user really made.
+  function hasLiveUserActivation(nav) {
+    const target = nav === undefined ? (typeof navigator !== 'undefined' ? navigator : null) : nav;
+    return !!(target && target.userActivation && target.userActivation.isActive === true);
+  }
+
+  function isUserSubmit(event, nav) {
+    return isTrustedActivation(event) && hasLiveUserActivation(nav);
+  }
+
   function trustedClickHandler(handler) {
     return function (event) {
       if (!isTrustedActivation(event)) return;
@@ -218,45 +238,41 @@
     return true;
   }
 
-  // Gates the Save-banner's proposeSaveTotp send on the actual getCredentials response
-  // instead of treating locked/pairingRequired/error as "zero matches" (which used to fire
-  // a blind proposal even while locked or unpaired). Same trust model as the password-save
-  // flow and popup.js's Add-2FA gating: only a real credentialList response may route to a
-  // proposal or the multi-match picker; anything else neither sends proposeSaveTotp nor
-  // touches storage. Also records this click's dismissal (same as the x button) up front,
-  // independent of the async response, since banner.remove() in the caller is itself a
-  // childList mutation the MutationObserver will redetect ~400ms later — without this, the
-  // still-present candidate would re-show the banner and a second Save would duplicate the
-  // proposal.
-  function routeBannerCredentialsResponse(response, url, otpauthOrSecret, state, priority, sendMessage) {
-    state.totpBannerDismissed = { priority };
+  // The save-login and save-2FA offers used to be banners injected at the bottom of the page.
+  // They are now prompts shown in the MyPass popup (or its window fallback): this script only
+  // ASKS, and the background, which owns the pending record, validates the sender (tab, frame,
+  // document, url), re-reads the offerSave* switches and decides how to surface it. The secret
+  // travels once, to the background; the popup only ever receives a redacted view, and no
+  // banner here means nothing in the page's DOM for page script to click or read.
+  const PROMPT_DEDUPE_MS = 120000;
 
-    const kind = classifyGetCredentialsResponse(response);
-    if (kind === 'locked') {
-      state.vaultLocked = true;
-      return;
-    }
-    if (kind !== 'credentialList') {
-      // pairingRequired / error / unknown: never fire a blind save proposal.
-      return;
-    }
-    state.vaultLocked = false;
-    const credentials = response.credentials;
-    if (credentials.length === 0) {
-      sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret });
-    } else if (credentials.length === 1) {
-      sendMessage({ type: 'proposeSaveTotp', url, otpauthOrSecret, entryId: credentials[0].id });
-    } else {
-      chrome.storage.session.set({ pendingTotpCandidate: { url, otpauthOrSecret } }, () => {
-        sendMessage({ type: 'openPopupForTotpPicker' });
-      });
-    }
+  // A login submit raises at most one prompt per distinct credential pair per 120 s (the
+  // prompt's own lifetime): a re-submitted identical form must not keep re-opening the popup
+  // after the user dismissed it. Returns whether a request was sent.
+  function requestSavePrompt(url, username, password, state, sendMessage, now) {
+    const at = typeof now === 'number' ? now : Date.now();
+    const key = url + '\u0000' + username + '\u0000' + password;
+    const last = state.lastLoginPrompt;
+    if (last && last.key === key && at - last.at < PROMPT_DEDUPE_MS) return false;
+    state.lastLoginPrompt = { key, at };
+    sendMessage({ type: 'requestPrompt', kind: 'saveLogin', url, username, password });
+    return true;
+  }
+
+  // `priority` is the detected candidate's own priority (1=link, 2=text, 3=QR, 4=manual key).
+  // Offering counts as the dismissal: with no in-page banner there is nothing to re-show, so
+  // `shouldShowTotpBanner`'s "an offered candidate suppresses only equal-or-weaker-priority
+  // ones" rule stores the ACTUAL priority, not a hardcoded weakest value.
+  function requestTotpPrompt(url, otpauthOrSecret, state, priority, sendMessage) {
+    state.totpBannerDismissed = { priority };
+    sendMessage({ type: 'requestPrompt', kind: 'saveTotp', url, otpauthOrSecret });
+    return true;
   }
 
   // What the content script answers a popup's `{ type: 'queryTotpCandidate' }` request
   // with — the current page's strongest TOTP candidate (or null), so the popup's Add-2FA
   // section can prefill itself and reveal only when there is something to act on. Extracted
-  // as its own (unguarded, exported) function — like routeBannerCredentialsResponse above —
+  // as its own (unguarded, exported) function — like requestTotpPrompt above —
   // since the chrome.runtime.onMessage listener that calls it lives inside the browser-only
   // wiring guard below and isn't reachable from tests without a full DOM/chrome stub.
   function buildTotpCandidateQueryResponse(root) {
@@ -270,50 +286,6 @@
   function buildNewPasswordFieldQueryResponse(root) {
     const hasNewPasswordField = findFillableFields(root).some((field) => field.kind === 'password' && field.isNewPassword);
     return { hasNewPasswordField };
-  }
-
-  // `priority` is the detected candidate's own priority (1=link, 2=text, 3=QR, 4=manual key),
-  // threaded in from the caller's detection result. On
-  // dismiss we store that ACTUAL priority — not a hardcoded weakest value — so that
-  // `shouldShowTotpBanner`'s "session-dismiss suppresses only equal-or-weaker-priority
-  // candidates" rule holds even when the dismissed candidate was already the strongest kind.
-  function showTotpSaveBanner(url, otpauthOrSecret, state, priority) {
-    if (state.totpBannerShown) return;
-    state.totpBannerShown = true;
-
-    const banner = document.createElement('div');
-    banner.style.cssText =
-      'position:fixed;bottom:16px;right:16px;z-index:2147483647;background:#134e4a;' +
-      'color:#f0fdfa;padding:12px 16px;border-radius:8px;font-family:sans-serif;' +
-      'font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;gap:8px;';
-    banner.textContent = 'Save 2FA to MyPass?';
-
-    const saveButton = document.createElement('button');
-    saveButton.textContent = 'Save';
-    saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
-    saveButton.addEventListener('click', trustedClickHandler(() => {
-      sendRuntimeMessage({ type: 'getCredentials', url }, (response) => {
-        routeBannerCredentialsResponse(
-          response, url, otpauthOrSecret, state, priority,
-          (message) => sendRuntimeMessage(message)
-        );
-      });
-      banner.remove();
-      state.totpBannerShown = false;
-    }));
-
-    const closeButton = document.createElement('button');
-    closeButton.textContent = '×';
-    closeButton.style.cssText = 'margin-left:8px;cursor:pointer;background:none;border:none;color:inherit;';
-    closeButton.addEventListener('click', trustedClickHandler(() => {
-      banner.remove();
-      state.totpBannerShown = false;
-      state.totpBannerDismissed = { priority };
-    }));
-
-    banner.appendChild(saveButton);
-    banner.appendChild(closeButton);
-    document.body.appendChild(banner);
   }
 
   // The mutation sweep serves two consumers with OPPOSITE frame rules: attaching icons must
@@ -363,7 +335,7 @@
         if (!mayOfferSave()) return;
         const detected = detectTotpCandidateWithPriority(document);
         if (shouldShowTotpBanner(detected, state)) {
-          showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+          requestTotpPrompt(location.href, detected.candidate, state, detected.priority, sendRuntimeMessage);
         }
       },
       isTopFrame,
@@ -399,8 +371,8 @@
         // A page-synthesized 'load' event must not evict the QR cache or force a sweep.
         if (!isTrustedActivation(event)) return;
         // A dead extension context (unpacked reload) must not re-run the sweep: with no
-        // background service worker to answer it, attachIcons()/showTotpSaveBanner() would
-        // inject dead UI into a page nothing can ever service again. teardownExtensionContext
+        // background service worker to answer it, attachIcons()/requestTotpPrompt() would
+        // act on into a page nothing can ever service again. teardownExtensionContext
         // removes this listener once sendRuntimeMessage first observes the context is gone,
         // but this early-return also protects the gap before that first detection.
         if (!isExtensionContextAlive()) return;
@@ -430,39 +402,6 @@
     const EventCtor = (view && view.Event) || Event;
     input.dispatchEvent(new EventCtor('input', { bubbles: true }));
     input.dispatchEvent(new EventCtor('change', { bubbles: true }));
-  }
-
-  function showSaveBanner(url, username, password, state) {
-    if (state.bannerShown) return;
-    state.bannerShown = true;
-
-    const banner = document.createElement('div');
-    banner.style.cssText =
-      'position:fixed;bottom:16px;right:16px;z-index:2147483647;background:#1f2937;' +
-      'color:#f9fafb;padding:12px 16px;border-radius:8px;font-family:sans-serif;' +
-      'font-size:13px;box-shadow:0 2px 8px rgba(0,0,0,0.3);display:flex;align-items:center;gap:8px;';
-    banner.textContent = 'Save password to MyPass?';
-
-    const saveButton = document.createElement('button');
-    saveButton.textContent = 'Save';
-    saveButton.style.cssText = 'margin-left:8px;cursor:pointer;';
-    saveButton.addEventListener('click', trustedClickHandler(() => {
-      sendRuntimeMessage({ type: 'proposeSaveLogin', url, username, password });
-      banner.remove();
-      state.bannerShown = false;
-    }));
-
-    const closeButton = document.createElement('button');
-    closeButton.textContent = '×';
-    closeButton.style.cssText = 'margin-left:8px;cursor:pointer;background:none;border:none;color:inherit;';
-    closeButton.addEventListener('click', trustedClickHandler(() => {
-      banner.remove();
-      state.bannerShown = false;
-    }));
-
-    banner.appendChild(saveButton);
-    banner.appendChild(closeButton);
-    document.body.appendChild(banner);
   }
 
   // Built from DOM nodes rather than an innerHTML string: sites that enforce the
@@ -511,7 +450,7 @@
     'background:#ffffff;color:#1d1d1f;border:1px solid #d2d2d7;border-radius:8px;' +
     'box-shadow:0 4px 16px rgba(0,0,0,0.18);' +
     "font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',sans-serif;font-size:13px;" +
-    'line-height:1.35;}' +
+    'line-height:1.35;max-height:var(--mypass-panel-max-height,70vh);overflow-y:auto;}' +
     '.row{all:unset;box-sizing:border-box;display:flex;align-items:center;gap:8px;' +
     'width:100%;padding:7px 10px;border-radius:6px;cursor:pointer;text-align:left;' +
     'color:#1d1d1f;overflow:hidden;}' +
@@ -527,6 +466,8 @@
     '.ring{flex-shrink:0;width:18px;height:18px;}' +
     '.ring svg{display:block;width:100%;height:100%;}' +
     '.message{padding:7px 10px;color:#6e6e73;}' +
+    '.settings-row{margin-top:2px;border-top:1px solid #e5e5ea;border-radius:0 0 6px 6px;' +
+    'color:#6e6e73;font-size:12px;}' +
     '.unlock{all:unset;box-sizing:border-box;display:block;width:100%;margin-top:2px;' +
     'padding:7px 10px;border-radius:6px;cursor:pointer;text-align:center;' +
     'background:#007aff;color:#ffffff;}' +
@@ -543,6 +484,7 @@
     '.row:hover,.row:focus-visible{background:#2c2c2e;}' +
     '.entry-username{color:#98989d;}' +
     '.message{color:#98989d;}' +
+    '.settings-row{border-top-color:#3a3a3c;color:#98989d;}' +
     // Slightly brighter green so the 2FA ring stays legible against the dark panel surface.
     '.ring circle{stroke:#30d158;}' +
     '}';
@@ -559,8 +501,11 @@
     // setProperty(..., 'important') because a page's own `!important` CSS rule (e.g.
     // [data-mypass-inline-icon]{display:none!important}) would otherwise beat a plain
     // inline style and could hide or mislocate the control.
-    host.style.setProperty('position', 'absolute', 'important');
-    // z-index one below the banners' 2147483647 so a save banner still wins if they overlap.
+    // `fixed`, not `absolute`: coordinates are the viewport numbers getBoundingClientRect
+    // returns, so a <body> margin, `position:relative`, or `transform` cannot shift the control
+    // (it used to land 8-40 px away on such pages). Hosts are mounted by mountParentFor.
+    host.style.setProperty('position', 'fixed', 'important');
+    // z-index one below the in-page security warning's 2147483647 so that warning still wins.
     host.style.setProperty('z-index', '2147483646', 'important');
     host.style.setProperty('display', 'block', 'important');
     host.style.setProperty('pointer-events', 'auto', 'important');
@@ -580,6 +525,10 @@
     button.setAttribute('type', 'button');
     button.setAttribute('aria-label', 'Fill from MyPass');
     button.setAttribute('title', 'Fill from MyPass');
+    // The accessible name stays "Fill from MyPass"; these only say a list opens and whether it
+    // currently is (togglePanel/closePanel keep aria-expanded in step).
+    button.setAttribute('aria-haspopup', 'true');
+    button.setAttribute('aria-expanded', 'false');
     button.appendChild(buildKeyGlyph(doc));
     shadow.appendChild(button);
     return { host, shadow, button };
@@ -596,40 +545,78 @@
 
   // Writes to the overlay host only. The page's own input is never given padding, a
   // wrapper, or any attribute — that is the whole reason for the overlay approach.
-  function positionHostToField(host, rect, viewport, obstacles = [], clipRect = null) {
-    const scrollX = viewport && typeof viewport.scrollX === 'number' ? viewport.scrollX : 0;
-    const scrollY = viewport && typeof viewport.scrollY === 'number' ? viewport.scrollY : 0;
-    const size = Math.min(28, rect.height - 4);
-    const inset = 6;
-    const top = rect.top + (rect.height - size) / 2;
-    let left = rect.left + rect.width - size - inset;
-    // A site's reveal/clear control may overlay the same end of the input. Reserve its
-    // actual bounds instead of a fixed password-field offset, which wastes space on sites
-    // with no reveal control. Right-to-left ordering also handles adjacent controls.
-    obstacles.slice().sort((a, b) => b.left - a.left).forEach((obstacle) => {
-      if (obstacle.width <= 0 || obstacle.height <= 0) return;
-      if (obstacle.top >= top + size || obstacle.top + obstacle.height <= top) return;
-      if (obstacle.left < left + size + 4 && obstacle.left + obstacle.width > left - 4) {
-        left = obstacle.left - size - 4;
-      }
-    });
+  //
+  // Viewport coordinates on a `position:fixed` host: `viewport` is kept in the signature for
+  // callers but scroll offsets are deliberately ignored. `offset` is the one-time correction
+  // correctHostPlacement measured for this host (an `html` transform, zoom), {dx, dy}.
+  function positionHostToField(host, rect, viewport, obstacles = [], clipRect = null, offset = null, box = null) {
+    const placed = shared.placement.placeIcon(rect, obstacles, clipRect, box);
+    const dx = offset && typeof offset.dx === 'number' ? offset.dx : 0;
+    const dy = offset && typeof offset.dy === 'number' ? offset.dy : 0;
+    const left = placed.left + dx;
+    const top = placed.top + dy;
     // Tiny fields have no room for both typing and a useful button. The toolbar popup
     // remains available; never grow a button beyond the input or cover most of its text.
-    const insideClip = !clipRect || (left >= clipRect.left && top >= clipRect.top &&
-      left + size <= clipRect.right && top + size <= clipRect.bottom);
-    const fits = size >= 20 && left - rect.left >= 36 && insideClip;
-    host.style.setProperty('display', fits ? 'block' : 'none', 'important');
-    host.style.setProperty('position', 'absolute', 'important');
-    host.style.setProperty('width', String(size) + 'px', 'important');
-    host.style.setProperty('height', String(size) + 'px', 'important');
-    host.style.setProperty('top', String(top + scrollY) + 'px', 'important');
-    host.style.setProperty('left', String(left + scrollX) + 'px', 'important');
+    host.style.setProperty('display', placed.fits ? 'block' : 'none', 'important');
+    host.style.setProperty('position', 'fixed', 'important');
+    host.style.setProperty('width', String(placed.size) + 'px', 'important');
+    host.style.setProperty('height', String(placed.size) + 'px', 'important');
+    host.style.setProperty('top', String(top) + 'px', 'important');
+    host.style.setProperty('left', String(left) + 'px', 'important');
+    return { fits: placed.fits, intended: { left: placed.left, top: placed.top } };
+  }
+
+  // Where a host for `input` is mounted. A field inside an open modal <dialog> lives in the
+  // browser top layer, which paints above every z-index; a host under <html> would be covered
+  // and not clickable, so it goes inside that dialog instead. Everything else goes under
+  // <html>, not <body>: a `transform`/`filter` on <body> makes it the containing block for
+  // fixed descendants and shifts them. `:modal` is Chrome 105+ (the manifest floor is 127),
+  // but an unsupported selector throws, so guard it rather than lose the icon.
+  function mountParentFor(input) {
+    const doc = (input && input.ownerDocument) || document;
+    try {
+      const dialog = input && typeof input.closest === 'function' ? input.closest('dialog:modal') : null;
+      if (dialog) return dialog;
+    } catch (error) {
+      // Unsupported pseudo-class: fall through to the document mount.
+    }
+    return doc.documentElement;
+  }
+
+  // Compares where a host actually landed with where it was told to go and returns the one
+  // shift that closes the gap (null when it is already right). Applies nothing itself so the
+  // caller can remember the result per host instead of re-measuring on every scroll frame.
+  function measurePlacementOffset(host, intended) {
+    if (!host || typeof host.getBoundingClientRect !== 'function') return null;
+    const measured = host.getBoundingClientRect();
+    if (!measured || !(measured.width > 0)) return null;
+    return shared.placement.correction(intended, measured, 1);
+  }
+
+  // An ancestor that is the containing block of `position:fixed` descendants (a transform,
+  // perspective, filter or backdrop-filter, `contain: layout|paint|strict|content`, or a
+  // will-change naming one of those). Any other ancestor is bypassed by a fixed child, so its
+  // `overflow` does not clip it.
+  function isFixedContainingBlock(style) {
+    if (!style) return false;
+    const set = (value) => typeof value === 'string' && value !== '' && value !== 'none' && value !== 'auto';
+    return set(style.transform) || set(style.perspective) || set(style.filter) || set(style.backdropFilter)
+      || set(style.translate) || set(style.rotate) || set(style.scale)
+      || /layout|paint|strict|content/.test(style.contain || '')
+      || /transform|perspective|filter|backdrop-filter|translate|rotate|scale|contain/.test(style.willChange || '');
   }
 
   function fieldClipRect(input, viewport) {
     const clip = { left: 0, top: 0, right: viewport.innerWidth, bottom: viewport.innerHeight };
     const doc = input.ownerDocument;
-    // Hosts live under body, so they do not inherit a field's overflow clipping. Intersect
+    // A `position:fixed` field is laid out against the viewport: an `overflow:hidden` wrapper
+    // that is not its containing block does not clip it (confirmed in Chrome: the field stays
+    // fully visible and clickable while the wrapper is 100 x 40 px). Ignoring that hid the icon
+    // on such pages. Once the walk meets a real containing block the field is clipped by it and
+    // by every ancestor above it, so the normal rule resumes from there.
+    const inputStyle = viewport.getComputedStyle(input) || {};
+    let escapesClipping = inputStyle.position === 'fixed';
+    // Hosts live under <html> (or a modal dialog), so they do not inherit a field's overflow clipping. Intersect
     // every ancestor scrollport per axis and require the whole button to remain inside it:
     // a partially clipped field must not leave a clickable logo over neighbouring content.
     // Root/body overflow is propagated to the viewport, whose bounds are already included.
@@ -637,6 +624,8 @@
       ancestor && ancestor !== doc.body && ancestor !== doc.documentElement;
       ancestor = ancestor.parentElement) {
       const style = viewport.getComputedStyle(ancestor);
+      if (escapesClipping && isFixedContainingBlock(style)) escapesClipping = false;
+      if (escapesClipping) continue;
       const clipsX = /^(auto|scroll|hidden|clip)$/.test(style.overflowX);
       const clipsY = /^(auto|scroll|hidden|clip)$/.test(style.overflowY);
       if (!clipsX && !clipsY) continue;
@@ -657,10 +646,60 @@
     return clip;
   }
 
-  function fieldControlRects(input) {
-    // Limit inspection to the field's wrapper: controls elsewhere in a form must not
-    // change its alignment. SVGs inside a button inherit the button's measured bounds.
-    const wrapper = input.parentElement;
+  // The visible field box around a slim input: a Material-style field is a 48 px box whose
+  // <input> is only 22 px tall, and an icon sized from the input alone is too small to show.
+  // Walks a few ancestors and keeps the outermost one that hugs the input (within BOX_SLACK px
+  // before, above and below it, no taller than BOX_MAX_HEIGHT), so a row or card around the field
+  // is never mistaken for it. Zero-size ancestors (display:contents) are stepped over. Reads
+  // geometry only; nothing on the page is touched. Returns {element, rect: {left, top, width,
+  // height}} or null.
+  //
+  // The end side tolerates BOX_END_SLACK instead: sites make room for their own controls (a
+  // reveal and a clear button, a suffix) by narrowing the input or by padding the field. On the
+  // pz.gov.pl password field the site's CSS shrinks the input by 3.375rem (54 px) inside its
+  // container, 70 px short of the visible box with the field's own padding; a 24 px limit saw no
+  // box there and the icon stayed hidden. 72 px is room for three 24 px control slots, still far
+  // below a row or card, and only the end side gets it. An input tall enough for the icon never
+  // reaches the walk (placement ignores the box for it), which keeps the per-frame sync cheap.
+  const BOX_SLACK = 24;
+  const BOX_END_SLACK = 72;
+  const BOX_MAX_HEIGHT = 80;
+  const BOX_MAX_LEVELS = 4;
+  function findFieldBox(input) {
+    const inner = input.getBoundingClientRect();
+    if (!shared.placement.needsBox(inner)) return null;
+    let best = null;
+    let ancestor = input.parentElement;
+    for (let level = 0; ancestor && level < BOX_MAX_LEVELS; level += 1, ancestor = ancestor.parentElement) {
+      const rect = ancestor.getBoundingClientRect();
+      if (!(rect.width > 0) || !(rect.height > 0)) continue;
+      const hugs = rect.left <= inner.left + 1 && rect.top <= inner.top + 1
+        && rect.left + rect.width >= inner.left + inner.width - 1
+        && rect.top + rect.height >= inner.top + inner.height - 1
+        && inner.left - rect.left <= BOX_SLACK && inner.top - rect.top <= BOX_SLACK
+        && rect.left + rect.width - (inner.left + inner.width) <= BOX_END_SLACK
+        && rect.top + rect.height - (inner.top + inner.height) <= BOX_SLACK
+        && rect.height <= BOX_MAX_HEIGHT;
+      if (!hugs) break;
+      if (rect.height > inner.height + 1) {
+        best = { element: ancestor, rect: { left: rect.left, top: rect.top, width: rect.width, height: rect.height } };
+      }
+    }
+    return best;
+  }
+
+  function fieldVisualBox(input) {
+    const found = findFieldBox(input);
+    return found ? found.rect : null;
+  }
+
+  // Visible site controls (reveal, clear, suffix buttons) the icon must stay clear of. `scope`
+  // is the field box when there is one: its controls are not all inside the input's own
+  // container (a suffix button is a sibling of it). Without a box the scan is limited to the
+  // input's container, so controls elsewhere in a form never change an icon's alignment. SVGs
+  // inside a button inherit the button's measured bounds.
+  function fieldControlRects(input, scope) {
+    const wrapper = scope || input.parentElement;
     if (!wrapper) return [];
     return Array.from(wrapper.querySelectorAll('button, [role="button"], a[href]'))
       .filter((control) => {
@@ -808,6 +847,17 @@
     return row;
   }
 
+  // "MyPass settings", the last row of the picker in every state. It carries no page data and
+  // the caller sends one fixed message, so there is nothing for a page to steer.
+  function buildSettingsRow(doc, onClick) {
+    const row = doc.createElement('button');
+    row.setAttribute('type', 'button');
+    row.setAttribute('class', 'row settings-row');
+    row.textContent = 'MyPass settings';
+    row.addEventListener('click', (event) => onClick(event));
+    return row;
+  }
+
   // Decides what the generate-password row's click handler does with the bridge's
   // response — pure, so the branch a user actually sees is unit-testable without a DOM.
   // A successful generatedPassword response fills; every other shape surfaces a message
@@ -886,9 +936,8 @@
 
     const state = {
       lastCredentialList: [],
-      bannerShown: false,
+      lastLoginPrompt: null,
       vaultLocked: false,
-      totpBannerShown: false,
       totpBannerDismissed: null,
     };
     // Defaults match today's page until chrome.storage answers. Icons wait for
@@ -964,6 +1013,37 @@
       });
     }
 
+    // Places one icon host and, the first time it lands in a given mount parent, measures where
+    // it really ended up. A mismatch (an `html` transform, CSS zoom, a transformed dialog) is
+    // stored on the record and reused, so scrolling does not force a layout read per frame.
+    function placeIconHost(record, input, rect) {
+      const parent = mountParentFor(input);
+      if (parent && record.host.parentNode !== parent) {
+        parent.appendChild(record.host);
+        record.verified = false;
+        record.offset = null;
+      }
+      const found = findFieldBox(input);
+      const box = found ? found.rect : null;
+      const controls = fieldControlRects(input, found ? found.element : null);
+      const result = positionHostToField(
+        record.host, rect, window, controls, fieldClipRect(input, window), record.offset, box
+      );
+      if (result.fits && !record.verified) {
+        record.verified = true;
+        const fix = measurePlacementOffset(record.host, {
+          left: result.intended.left + (record.offset ? record.offset.dx : 0),
+          top: result.intended.top + (record.offset ? record.offset.dy : 0),
+        });
+        if (fix) {
+          record.offset = { dx: (record.offset ? record.offset.dx : 0) + fix.dx, dy: (record.offset ? record.offset.dy : 0) + fix.dy };
+          positionHostToField(
+            record.host, rect, window, controls, fieldClipRect(input, window), record.offset, box
+          );
+        }
+      }
+    }
+
     function syncIconPositions() {
       syncScheduled = false;
       pruneDetachedIcons();
@@ -973,8 +1053,9 @@
         // important for the same reason as buildIconHost/positionHostToField: a plain
         // assignment here would silently drop the !important flag those set initially.
         record.host.style.setProperty('display', offscreen ? 'none' : 'block', 'important');
-        if (!offscreen) positionHostToField(record.host, rect, window, fieldControlRects(input), fieldClipRect(input, window));
+        if (!offscreen) placeIconHost(record, input, rect);
       });
+      positionOpenPanel();
     }
 
     function scheduleSync() {
@@ -989,20 +1070,23 @@
       // has nowhere to mount the host. Such a document cannot contain an <input> either,
       // so this should be unreachable — but "should be" is not a guarantee worth an
       // uncaught TypeError in a stranger's ad frame.
-      if (!document.body) return;
+      if (!document.body || !document.documentElement) return;
       const { host, button } = buildIconHost(document);
       button.addEventListener('click', (event) => {
         handleIconActivate(event, () => togglePanel(input, kind, isNewPassword));
       });
+      const record = { host, button, verified: false, offset: null };
+      attachedIcons.set(input, record);
       // Position synchronously before the first paint so the icon never flashes at the
-      // body origin and then jumps into place on the next rAF.
-      positionHostToField(host, input.getBoundingClientRect(), window, fieldControlRects(input), fieldClipRect(input, window));
-      document.body.appendChild(host);
-      attachedIcons.set(input, { host });
+      // viewport origin and then jumps into place on the next rAF. The host must be in the
+      // document before it can be measured, so mount first (placeIconHost does that too).
+      const parent = mountParentFor(input);
+      parent.appendChild(host);
+      placeIconHost(record, input, input.getBoundingClientRect());
 
       const resizeObserver = new ResizeObserver(scheduleSync);
       resizeObserver.observe(input);
-      attachedIcons.get(input).resizeObserver = resizeObserver;
+      record.resizeObserver = resizeObserver;
       scheduleSync();
     }
 
@@ -1042,8 +1126,49 @@
       // stopPanelRingAnimation is itself a no-op once already stopped, so this is idempotent.
       stopPanelRingAnimation();
       if (!openPanel) return;
+      setIconExpanded(openPanel.input, false);
       openPanel.host.remove();
       openPanel = null;
+    }
+
+    // aria-expanded mirrors whether this field's picker is open. Set on open, and cleared by
+    // closePanel for every way a panel goes away (Escape, outside click, selection, the field
+    // leaving the document).
+    function setIconExpanded(input, expanded) {
+      const record = attachedIcons.get(input);
+      if (record && record.button) record.button.setAttribute('aria-expanded', expanded ? 'true' : 'false');
+    }
+
+    // Opens below the field, flips above when there is not enough room, clamps into the
+    // viewport, and caps the height so a long list scrolls inside the panel. Re-run on every
+    // scroll/resize sync because the host is fixed. A field scrolled out of view closes the
+    // panel instead of leaving it floating over unrelated content.
+    function positionOpenPanel() {
+      if (!openPanel) return;
+      const rect = openPanel.input.getBoundingClientRect();
+      if (rect.bottom < 0 || rect.top > window.innerHeight || rect.width === 0) {
+        closePanel();
+        return;
+      }
+      const host = openPanel.host;
+      const box = host.getBoundingClientRect();
+      const placed = shared.placement.placeFloating(
+        rect, { width: Math.max(box.width, 1), height: Math.max(box.height, 1) }, window
+      );
+      host.style.setProperty('--mypass-panel-max-height', String(placed.maxHeight) + 'px', 'important');
+      host.style.setProperty('top', String(placed.top + openPanel.dy) + 'px', 'important');
+      host.style.setProperty('left', String(placed.left + openPanel.dx) + 'px', 'important');
+      host.style.setProperty('min-width', String(Math.min(rect.width, 320)) + 'px', 'important');
+      if (!openPanel.verified) {
+        openPanel.verified = true;
+        const fix = measurePlacementOffset(host, { left: placed.left + openPanel.dx, top: placed.top + openPanel.dy });
+        if (fix) {
+          openPanel.dx += fix.dx;
+          openPanel.dy += fix.dy;
+          host.style.setProperty('top', String(placed.top + openPanel.dy) + 'px', 'important');
+          host.style.setProperty('left', String(placed.left + openPanel.dx) + 'px', 'important');
+        }
+      }
     }
 
     // Runs once sendRuntimeMessage detects the extension context is gone (an unpacked
@@ -1118,13 +1243,23 @@
           }));
           content.root.appendChild(generateRow);
         }
+        // Last row in every state, so settings stay reachable from the page even in a window
+        // with no toolbar button to click.
+        content.root.appendChild(buildSettingsRow(document, (event) => {
+          if (!isTrustedActivation(event)) return;
+          sendRuntimeMessage({ type: 'openMyPassSettings' });
+          closePanel();
+        }));
         shadow.appendChild(content.root);
-        const rect = input.getBoundingClientRect();
-        host.style.setProperty('position', 'absolute', 'important');
-        host.style.setProperty('top', String(rect.bottom + window.scrollY + 4) + 'px', 'important');
-        host.style.setProperty('left', String(rect.left + window.scrollX) + 'px', 'important');
-        document.body.appendChild(host);
-        openPanel = { host, input };
+        // Mounted invisibly first so it can be measured before the flip/clamp decision.
+        host.style.setProperty('visibility', 'hidden', 'important');
+        host.style.setProperty('top', '0px', 'important');
+        host.style.setProperty('left', '0px', 'important');
+        mountParentFor(input).appendChild(host);
+        openPanel = { host, input, dx: 0, dy: 0, verified: false };
+        setIconExpanded(input, true);
+        positionOpenPanel();
+        if (openPanel && openPanel.host === host) host.style.setProperty('visibility', 'visible', 'important');
 
         // Animate the countdown ring(s) on a single shared 1Hz ticker while the panel stays
         // open — purely cosmetic, driven by the wall clock (panelRingFraction), never by the
@@ -1142,16 +1277,21 @@
 
     function attachSubmitListener(loginForm) {
       if (!loginForm.form) return;
-      loginForm.form.addEventListener('submit', () => {
+      loginForm.form.addEventListener('submit', (event) => {
+        // A save prompt opens browser UI (the popup or a window), so only a submit the user
+        // really caused may raise one. A synthetic `submit` is refused by isTrusted, but
+        // form.requestSubmit() is "trusted" too, so a live user activation is required as well
+        // (see isUserSubmit); the background additionally throttles opening per tab.
+        if (!isUserSubmit(event)) return;
         if (
           runsHere('saveBanner') &&
           pageAutofillSettings.offerSaveLogin &&
-          !state.vaultLocked && !state.totpBannerShown && state.lastCredentialList.length === 0
+          !state.vaultLocked && state.lastCredentialList.length === 0
         ) {
           const username = loginForm.usernameInput ? loginForm.usernameInput.value : '';
           const password = loginForm.passwordInput.value;
           if (password) {
-            showSaveBanner(location.href, username, password, state);
+            requestSavePrompt(location.href, username, password, state, sendRuntimeMessage);
           }
         }
       });
@@ -1159,6 +1299,16 @@
 
     let addressSnapshot = null;
     chrome.runtime.onMessage.addListener((message, _sender, sendResponse) => {
+      // The background asks the exact document that raised a prompt (tab, frame, documentId)
+      // whether it is still the one on screen before it shows or saves anything. A navigated
+      // document has a new documentId, so this never even arrives; the url lets the background
+      // also catch a same-document history.pushState to another host. Only the extension's own
+      // background can reach this listener, and nothing secret is returned.
+      if (message.type === 'promptStillValid') {
+        if (_sender && _sender.id !== chrome.runtime.id) return;
+        sendResponse({ type: 'ok', url: location.href });
+        return;
+      }
       if (message.type === 'queryAddressForm') {
         if (window.top !== window || message.url !== location.href) return;
         const groups = pageAutofillSettings.showAddresses ? shared.addressForm.collect(document) : [];
@@ -1255,7 +1405,7 @@
       if (!runsHere('totpScan') || !pageAutofillSettings.offerSaveTotp) return;
       const detected = detectTotpCandidateWithPriority(document);
       if (shouldShowTotpBanner(detected, state)) {
-        showTotpSaveBanner(location.href, detected.candidate, state, detected.priority);
+        requestTotpPrompt(location.href, detected.candidate, state, detected.priority, sendRuntimeMessage);
       }
     }
 
@@ -1306,6 +1456,13 @@
 
     window.addEventListener('scroll', scheduleSync, { capture: true, passive: true });
     window.addEventListener('resize', scheduleSync, { passive: true });
+    // A focus change often follows a layout change the observers cannot see (an accordion, a
+    // sticky header, a field revealed by a transition). One cheap re-measure covers it.
+    document.addEventListener('focusin', scheduleSync, true);
+    // A site's clear button usually appears on the first keystroke by dropping its `hidden`
+    // attribute, which no observer here sees (childList only), so the icon would sit on top of
+    // it until some other event re-measured. Typing is that event; scheduleSync is rAF-coalesced.
+    document.addEventListener('input', scheduleSync, true);
 
     function isOwnHost(node) {
       if (!node) return false;
@@ -1408,11 +1565,12 @@
       detectOtpauthLink, detectOtpauthText, isBase32Secret, detectManualSetupKey,
       decodeQrFromImage, detectQrCandidate,
       detectTotpCandidateWithPriority, shouldShowTotpBanner,
-      classifyGetCredentialsResponse, chooseInlinePanel, routeBannerCredentialsResponse,
-      isTrustedActivation, handleIconActivate, handleEntrySelect, trustedClickHandler,
+      classifyGetCredentialsResponse, chooseInlinePanel, requestSavePrompt, requestTotpPrompt,
+      isTrustedActivation, hasLiveUserActivation, isUserSubmit, handleIconActivate, handleEntrySelect, trustedClickHandler,
       buildTotpCandidateQueryResponse, buildNewPasswordFieldQueryResponse, buildGeneratePasswordRow,
-      classifyGeneratePasswordResponse, showGeneratePasswordMessage, showTotpSaveBanner, showSaveBanner,
-      KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField, fieldControlRects, fieldClipRect,
+      classifyGeneratePasswordResponse, showGeneratePasswordMessage,
+      KEY_ICON_PATH_D, buildKeyGlyph, buildShadowHost, buildIconHost, positionHostToField, fieldControlRects, fieldClipRect, fieldVisualBox, findFieldBox,
+      mountParentFor, measurePlacementOffset, buildSettingsRow,
       buildPanelHost, buildPanelContent, ICON_HOST_STYLE, PANEL_HOST_STYLE,
       panelRingFraction,
       FRAME_FEATURE_POLICY, isFeatureEnabledInFrame, buildMutationSweep, observeTotpCandidates,

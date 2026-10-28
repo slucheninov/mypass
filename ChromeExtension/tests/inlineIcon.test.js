@@ -52,6 +52,19 @@ assert.strictEqual(isFieldVisible(fakeInput({ type: 'text' })), true, 'plain vis
 assert.strictEqual(isFieldVisible(fakeInput({ type: 'text' }, { hidden: true })), false, 'offsetParent null is not fillable');
 assert.strictEqual(isFieldVisible(fakeInput({ type: 'text', disabled: '' })), false, 'disabled attribute excluded');
 assert.strictEqual(isFieldVisible(fakeInput({ type: 'text' }, { readOnly: true })), false, 'readOnly property excluded');
+// position:fixed inputs have offsetParent === null even though they are rendered, so the old
+// offsetParent-only test excluded them and they never got an icon. A rendered box (client rects)
+// that is not visibility:hidden is what "visible" means; display:none still has no box.
+function fixedInput(rects, visibility, attrs) {
+  const input = fakeInput({ type: 'text', ...(attrs || {}) }, { hidden: true });
+  input.getClientRects = () => new Array(rects).fill({});
+  input.ownerDocument = { defaultView: { getComputedStyle: () => ({ visibility: visibility || 'visible' }) } };
+  return input;
+}
+assert.strictEqual(isFieldVisible(fixedInput(1)), true, 'a position:fixed input (offsetParent null, has a box) is fillable');
+assert.strictEqual(isFieldVisible(fixedInput(0)), false, 'display:none (no box) stays excluded');
+assert.strictEqual(isFieldVisible(fixedInput(1, 'hidden')), false, 'visibility:hidden stays excluded');
+assert.strictEqual(isFieldVisible(fixedInput(1, 'visible', { disabled: '' })), false, 'a fixed but disabled input is still excluded');
 console.log('inlineIcon.test.js: isFieldVisible OK');
 
 // findFillableFields
@@ -378,22 +391,80 @@ for (const prop of ['position', 'z-index', 'display', 'pointer-events']) {
   );
 }
 
-// positioning writes only to the host's own style — the page's input is untouched.
-// scrollX/scrollY are deliberately NON-ZERO so dropping scroll compensation fails here,
-// and the expected values are pinned exactly so the arithmetic cannot drift.
+// positioning writes only to the host's own style — the page's input is untouched. The host is
+// `position:fixed` and uses VIEWPORT coordinates (getBoundingClientRect numbers): scroll offsets
+// are deliberately NON-ZERO here and must have no effect, because adding them is exactly what
+// displaced the icon on pages whose <body> has a margin, `position:relative` or a transform.
+// The expected values are pinned exactly so the arithmetic cannot drift.
 const host = fakeElement('div');
 positionHostToField(host, { top: 100, left: 50, width: 200, height: 30 }, { scrollX: 40, scrollY: 200 });
-assert.strictEqual(host.style.position, 'absolute');
-assert.strictEqual(host.style.top, '302px', 'the 26px button is vertically centered in the 30px field');
-assert.strictEqual(host.style.left, '258px', 'the button has a 6px trailing inset, with scroll compensation');
+assert.strictEqual(host.style.position, 'fixed');
+assert.strictEqual(host.style.top, '102px', 'the 26px button is vertically centered in the 30px field; scroll is ignored');
+assert.strictEqual(host.style.left, '218px', 'the button has a 6px trailing inset; scroll is ignored');
 assert.strictEqual(host.style.priority.top, 'important', 'top is set !important');
 assert.strictEqual(host.style.priority.left, 'important', 'left is set !important');
 assert.strictEqual(host.style.priority.position, 'important', 'position is set !important');
+assert.strictEqual(built.host.style.position, 'fixed', 'a freshly built host is already fixed');
 
 const unscrolledHost = fakeElement('div');
 positionHostToField(unscrolledHost, { top: 100, left: 50, width: 200, height: 30 }, { scrollX: 0, scrollY: 0 });
-assert.strictEqual(unscrolledHost.style.top, '102px', 'without scroll the top is 200px higher');
-assert.strictEqual(unscrolledHost.style.left, '218px', 'without scroll the left is 40px further left');
+assert.strictEqual(unscrolledHost.style.top, '102px', 'identical with and without scroll');
+assert.strictEqual(unscrolledHost.style.left, '218px', 'identical with and without scroll');
+
+// The one-time containing-block correction (an `html` transform, zoom) shifts the written
+// coordinates by the measured offset and nothing else.
+const correctedHost = fakeElement('div');
+positionHostToField(correctedHost, { top: 100, left: 50, width: 200, height: 30 }, {}, [], null, { dx: -8, dy: -19 });
+assert.strictEqual(correctedHost.style.top, '83px');
+assert.strictEqual(correctedHost.style.left, '210px');
+const { measurePlacementOffset, mountParentFor, buildSettingsRow } = require('../content.js');
+assert.deepStrictEqual(
+  measurePlacementOffset({ getBoundingClientRect: () => ({ left: 18, top: 39, width: 26, height: 26 }) }, { left: 10, top: 20 }),
+  { dx: -8, dy: -19 },
+  'a host that landed 8/19 px away is measured, not guessed'
+);
+assert.strictEqual(
+  measurePlacementOffset({ getBoundingClientRect: () => ({ left: 10, top: 20, width: 26, height: 26 }) }, { left: 10, top: 20 }),
+  null,
+  'a host that landed correctly needs no correction'
+);
+assert.strictEqual(
+  measurePlacementOffset({ getBoundingClientRect: () => ({ left: 0, top: 0, width: 0, height: 0 }) }, { left: 10, top: 20 }),
+  null,
+  'a display:none host measures as 0x0 and is never "corrected"'
+);
+
+// Mount rule: inside the open modal dialog for a dialog field, otherwise under <html> (never
+// <body>, whose transform/margin used to shift the icon).
+const rootEl = { tagName: 'HTML' };
+const dialogEl = { tagName: 'DIALOG' };
+assert.strictEqual(
+  mountParentFor({ ownerDocument: { documentElement: rootEl }, closest: (sel) => (sel === 'dialog:modal' ? dialogEl : null) }),
+  dialogEl, 'a field inside dialog:modal mounts inside that dialog so it is not under the top layer'
+);
+assert.strictEqual(
+  mountParentFor({ ownerDocument: { documentElement: rootEl }, closest: () => null }),
+  rootEl, 'an ordinary field mounts under documentElement'
+);
+assert.strictEqual(
+  mountParentFor({ ownerDocument: { documentElement: rootEl }, closest: () => { throw new SyntaxError(':modal unsupported'); } }),
+  rootEl, 'an unsupported :modal selector falls back to documentElement instead of losing the icon'
+);
+
+// The settings row is a real <button>; only a trusted click may act, and the row carries no page data.
+const settingsClicks = [];
+const settingsRow = buildSettingsRow(fakeDocument, (event) => { if (event.isTrusted === true) settingsClicks.push(event); });
+assert.strictEqual(settingsRow.tagName, 'BUTTON');
+assert.strictEqual(settingsRow.getAttribute('type'), 'button');
+assert.strictEqual(settingsRow.textContent, 'MyPass settings');
+settingsRow.dispatch('click', { isTrusted: false });
+settingsRow.dispatch('click', { isTrusted: true });
+assert.strictEqual(settingsClicks.length, 1, 'only the trusted click is acted on');
+
+// The icon button announces a popup list and its state (the accessible name is unchanged).
+assert.strictEqual(built.button.getAttribute('aria-haspopup'), 'true');
+assert.strictEqual(built.button.getAttribute('aria-expanded'), 'false');
+assert.strictEqual(built.button.getAttribute('aria-label'), 'Fill from MyPass');
 
 // Actual overlapping controls move the button; unrelated submit buttons and controls
 // on a neighbouring row must not. Input coordinates remain the positioning boundary.
@@ -450,6 +521,109 @@ positionHostToField(clippedHost, { ...visibleInClip, left: 100 }, {}, [], clipBo
 assert.strictEqual(clippedHost.style.display, 'none', 'horizontal clipping is respected independently');
 positionHostToField(clippedHost, visibleInClip, {}, [], clipBounds);
 assert.strictEqual(clippedHost.style.display, 'block', 'scrolling the field back into the container restores the logo');
+// A position:fixed field is laid out against the viewport, so an overflow:hidden wrapper that is
+// not its containing block does not clip it (reproduced in headless Chrome with a 100 x 40 px
+// wrapper: the field stayed fully visible, and the icon was wrongly hidden). A wrapper that IS
+// the containing block (transform, filter, contain: ...) does clip it.
+{
+  const doc = { body: {}, documentElement: {} };
+  const wrapper = (style, parent) => ({
+    parentElement: parent || doc.body, clientLeft: 0, clientTop: 0, clientWidth: 100, clientHeight: 40,
+    offsetWidth: 100, offsetHeight: 40, getBoundingClientRect: () => ({ left: 8, top: 8, width: 100, height: 40 }),
+    style: { overflowX: 'hidden', overflowY: 'hidden', ...style },
+  });
+  const view = { innerWidth: 800, innerHeight: 600, getComputedStyle: (el) => el.style || {} };
+  const field = (position, parent) => ({ ownerDocument: doc, parentElement: parent, style: { position } });
+  const viewport = { left: 0, top: 0, right: 800, bottom: 600 };
+  assert.deepStrictEqual(fieldClipRect(field('fixed', wrapper({})), view), viewport,
+    'a fixed field escapes a plain overflow:hidden wrapper');
+  assert.deepStrictEqual(fieldClipRect(field('static', wrapper({})), view), { left: 8, top: 8, right: 108, bottom: 48 },
+    'a normal field is still clipped by it');
+  assert.deepStrictEqual(fieldClipRect(field('fixed', wrapper({ transform: 'matrix(1, 0, 0, 1, 0, 0)' })), view),
+    { left: 8, top: 8, right: 108, bottom: 48 }, 'a transformed wrapper is the containing block and clips');
+  assert.deepStrictEqual(fieldClipRect(field('fixed', wrapper({ contain: 'paint' })), view),
+    { left: 8, top: 8, right: 108, bottom: 48 }, 'contain: paint too');
+  assert.deepStrictEqual(fieldClipRect(field('fixed', wrapper({ filter: 'blur(0px)' })), view),
+    { left: 8, top: 8, right: 108, bottom: 48 }, 'filter too');
+  // an overflow wrapper ABOVE the containing block still clips; one BELOW it (between field and block) does not
+  const outerClipping = wrapper({});
+  const block = wrapper({ transform: 'translateZ(0)', overflowX: 'visible', overflowY: 'visible' }, outerClipping);
+  const openBlock = wrapper({ transform: 'translateZ(0)', overflowX: 'visible', overflowY: 'visible' });
+  assert.deepStrictEqual(fieldClipRect(field('fixed', wrapper({}, openBlock)), view), viewport,
+    'between field and containing block: bypassed');
+  assert.deepStrictEqual(fieldClipRect(field('fixed', wrapper({}, block)), view), { left: 8, top: 8, right: 108, bottom: 48 },
+    'above the containing block: still clips');
+}
+// fieldVisualBox: the outermost tight ancestor box around a slim input (a Material field is a
+// 48 px box around a 22 px input; the box carries the visible height). Measured on pz.gov.pl:
+// infix 59,305 516x46 / flex 59,305 516x46 / wrapper 42,304 550x48 / form-field 30,296 574x56.
+{
+  const { fieldVisualBox } = require('../content.js');
+  const box = (left, top, width, height, parent) => ({ parentElement: parent || null, getBoundingClientRect: () => ({ left, top, width, height, right: left + width, bottom: top + height }) });
+  const formField = box(30, 296, 574, 56);
+  const wrapper = box(42, 304, 550, 48, formField);
+  const flex = box(59, 305, 516, 46, wrapper);
+  const infix = box(59, 305, 516, 46, flex);
+  const slimInput = box(59, 317, 516, 22, infix);
+  assert.deepStrictEqual(fieldVisualBox(slimInput), { left: 42, top: 304, width: 550, height: 48 },
+    'takes the outermost tight box and stops at the one with a 29 px side gap');
+  assert.strictEqual(fieldVisualBox(box(59, 317, 516, 22, null)), null, 'no ancestor, no box');
+  assert.strictEqual(fieldVisualBox(box(59, 317, 516, 22, box(59, 317, 516, 22))), null, 'a wrapper no taller than the input adds nothing');
+  const tallRow = box(0, 200, 900, 400);
+  assert.strictEqual(fieldVisualBox(box(59, 317, 516, 22, tallRow)), null, 'a big layout container is not a field box');
+  const collapsed = box(0, 0, 0, 0, wrapper);
+  assert.deepStrictEqual(fieldVisualBox(box(59, 317, 516, 22, collapsed)), { left: 42, top: 304, width: 550, height: 48 },
+    'a display:contents style zero-size ancestor is skipped, not a stopper');
+  // pz.gov.pl PASSWORD field, measured live: the site's own CSS (`width: calc(100% - 3.375rem)`)
+  // makes the input 54 px narrower than its container to reserve room for a 24 px reveal button
+  // and a 14 px clear button, so the container is wider than the input on the end side only.
+  // infix/flex 59,448 516x46 / wrapper 42,447 550x48 / form-field 30,439 574x56; input 59,460 462x22.
+  {
+    const { findFieldBox } = require('../content.js');
+    const formField = box(30, 439, 574, 56);
+    const wrapper = box(42, 447, 550, 48, formField);
+    const flex = box(59, 448, 516, 46, wrapper);
+    const infix = box(59, 448, 516, 46, flex);
+    const password = box(59, 460, 462, 22, infix);
+    assert.deepStrictEqual(fieldVisualBox(password), { left: 42, top: 447, width: 550, height: 48 },
+      'room reserved at the end for the site\'s own controls does not stop the box');
+    assert.strictEqual(findFieldBox(password).element, wrapper, 'the chosen box is the element, so controls can be read from it');
+    // The extra end room is bounded: a field next to a wide sibling area is not a field box.
+    assert.strictEqual(fieldVisualBox(box(59, 460, 300, 22, box(59, 448, 500, 46))), null, '200 px of free end room is not reserved control space');
+    // ...and only the end side gets it: a gap before the input, or above/below it, still stops the walk.
+    assert.strictEqual(fieldVisualBox(box(100, 460, 462, 22, box(59, 448, 503, 46))), null, 'a 41 px gap before the input stops the walk');
+    assert.strictEqual(fieldVisualBox(box(59, 460, 462, 22, box(59, 420, 516, 100))), null, 'a tall container above and below stops the walk');
+  }
+  // A field that is already tall enough never uses the box, so the ancestors are not measured at all.
+  {
+    let reads = 0;
+    const spyParent = { parentElement: null, getBoundingClientRect() { reads += 1; return { left: 0, top: 0, width: 600, height: 60, right: 600, bottom: 60 }; } };
+    assert.strictEqual(fieldVisualBox(box(10, 10, 500, 36, spyParent)), null, 'a 36 px input is sized from itself');
+    assert.strictEqual(reads, 0, 'no ancestor geometry is read for a tall input');
+  }
+  // the box reaches the placed host: a 22 px input gets a visible, 28 px icon
+  const slimHost = fakeElement('div');
+  positionHostToField(slimHost, { top: 317, left: 59, width: 516, height: 22 }, {}, [],
+    { left: 42, top: 304, right: 592, bottom: 352 }, null, { left: 42, top: 304, width: 550, height: 48 });
+  assert.strictEqual(slimHost.style.display, 'block', 'the slim input gets its icon');
+  assert.deepStrictEqual([slimHost.style.width, slimHost.style.top, slimHost.style.left], ['28px', '314px', '558px']);
+}
+// Site controls are read from the chosen field box, not just from the input's own container: a
+// Material suffix button is a sibling of the container that holds the input.
+{
+  const { fieldControlRects } = require('../content.js');
+  const rectOf = (left, top, width, height) => ({ left, top, width, height, right: left + width, bottom: top + height });
+  const control = (left, top, width, height, display) => ({ display: display || 'block', getBoundingClientRect: () => rectOf(left, top, width, height) });
+  const view = { getComputedStyle: (el) => ({ visibility: 'visible', display: el.display }) };
+  const scope = (controls) => ({ querySelectorAll: () => controls });
+  const suffix = control(536, 444, 40, 40);
+  const reveal = control(527, 460, 24, 25);
+  const hiddenClear = control(0, 0, 0, 0, 'none');
+  const input = { parentElement: scope([reveal, hiddenClear]), ownerDocument: { defaultView: view } };
+  assert.deepStrictEqual(fieldControlRects(input), [rectOf(527, 460, 24, 25)], 'default scope is the input\'s container; display:none is skipped');
+  assert.deepStrictEqual(fieldControlRects(input, scope([reveal, suffix, hiddenClear])), [rectOf(527, 460, 24, 25), rectOf(536, 444, 40, 40)],
+    'a given field box is scanned instead, so a suffix outside the container is an obstacle');
+}
 console.log('inlineIcon.test.js: icon host OK');
 
 // buildShadowHost is the bare scaffolding shared by the icon and the panel — the panel
@@ -904,7 +1078,7 @@ const { observeTotpCandidates } = require('../content.js');
 
   // An SVG/XML document: everything a document normally has, except a body.
   global.document = { querySelectorAll: () => [], querySelector: () => null };
-  const state = { totpBannerShown: false, totpBannerDismissed: null };
+  const state = { totpBannerDismissed: null };
 
   let result;
   assert.doesNotThrow(
