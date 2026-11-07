@@ -267,14 +267,60 @@ final class VaultSession: ObservableObject, VaultFlushing {
         }
     }
 
-    /// Runs a permanent-delete `body` and drops the drafts of `entryIDs` only when `mutate`
-    /// accepted it. `mutate` returns false while locked or quitting; deleting the drafts first
-    /// would then lose them (and stop open editors) for entries that still exist.
+    /// Runs a permanent-delete `body`, which returns the IDs of the entries it ACTUALLY removed
+    /// (a stale ID removes nothing and must not cost anyone their drafts), and drops those
+    /// entries' drafts once the vault write that includes the deletion is durable.
+    ///
+    /// `mutate` returns false while locked or quitting; deleting the drafts then would lose
+    /// them for entries that still exist. And `mutate` returns before the write happens: if
+    /// the save fails or the app quits first, the entry is still in the vault on disk, so its
+    /// drafts must survive. Hence the file deletion is parked in `pendingDraftDeletions`,
+    /// tied to the generation of the save that carries this change, and applied when that
+    /// save or any later one (each snapshot is cumulative) succeeds. A failed save leaves it
+    /// pending for the next success; a lock discards it and the drafts then expire through the
+    /// 7-day purge or the orphan logic.
+    ///
+    /// The discard notification is posted immediately, not on durability: it only tells open
+    /// editors to stop writing drafts for an entry that is gone from the in-memory vault.
+    ///
+    /// Orphan recovery must not offer the parked drafts back: the entry is already absent from
+    /// the open database, so they would look like never-saved notes. The simplest correct rule
+    /// is to exclude `pendingDraftDeletionIDs` from the orphan candidates (the editors union
+    /// it into the "known" IDs). If the save never succeeds, the next launch loads the old
+    /// vault where the entry still exists and its drafts are ordinary drafts again.
     @discardableResult
-    func mutateDeletingNoteDrafts(entryIDs: [UUID], _ body: (inout KdbxDatabase) -> Void) -> Bool {
-        guard mutate(body) else { return false }
-        deleteNoteDrafts(entryIDs: entryIDs)
+    func mutateDeletingNoteDrafts(_ body: (inout KdbxDatabase) -> Set<UUID>) -> Bool {
+        var deleted: Set<UUID> = []
+        guard mutate({ database in deleted = body(&database) }, deletingDraftsFor: { deleted }) else { return false }
+        for id in deleted {
+            NotificationCenter.default.post(name: .noteDraftsDiscarded, object: nil, userInfo: ["entryID": id])
+        }
         return true
+    }
+
+    /// Entries whose drafts are waiting for a durable save. Main thread.
+    var pendingDraftDeletionIDs: Set<UUID> {
+        writeStateLock.lock()
+        defer { writeStateLock.unlock() }
+        return pendingDraftDeletions.reduce(into: Set<UUID>()) { $0.formUnion($1.ids) }
+    }
+
+    private var pendingDraftDeletions: [(generation: Int, ids: Set<UUID>)] = []
+
+    /// Any thread, after a local write of `generation` reached disk (or was provably identical
+    /// to what is on disk). Runs the parked deletions of that generation and older ones.
+    private func applyPendingDraftDeletions(throughGeneration generation: Int) {
+        writeStateLock.lock()
+        let due = pendingDraftDeletions.filter { $0.generation <= generation }
+        pendingDraftDeletions.removeAll { $0.generation <= generation }
+        writeStateLock.unlock()
+        guard !due.isEmpty else { return }
+        let ids = due.flatMap(\.ids)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, let store = self.noteDraftStore else { return }
+            let vaultID = self.draftVaultID
+            for id in ids { store.deleteAll(vaultID: vaultID, entryID: id) }
+        }
     }
 
     var currentDatabase: KdbxDatabase? {
@@ -332,6 +378,11 @@ final class VaultSession: ObservableObject, VaultFlushing {
         touchAccessPersistWorkItem = nil
         state = .locked
         sessionPassword = nil
+        // A write still in flight may succeed after this, but the drafts of entries deleted
+        // in it survive on purpose (they expire via the 7-day purge or the orphan logic).
+        writeStateLock.lock()
+        pendingDraftDeletions.removeAll()
+        writeStateLock.unlock()
     }
 
     /// Swaps the primary store the session reads/writes from — used when the
@@ -518,6 +569,8 @@ final class VaultSession: ObservableObject, VaultFlushing {
         try fileStore.save(data: data)
         recordSuccessfulWrite(data, database: db)
         noteSynchronousDurableWrite()
+        // The whole current state, including every parked deletion, is on disk.
+        applyPendingDraftDeletions(throughGeneration: .max)
     }
 
     /// Applies `body` and queues the save. Returns `false`, without running `body`, when the
@@ -525,11 +578,17 @@ final class VaultSession: ObservableObject, VaultFlushing {
     /// acknowledge the change to someone else (the extension bridge) must not do so then.
     @discardableResult
     func mutate(_ body: (inout KdbxDatabase) -> Void) -> Bool {
+        mutate(body, deletingDraftsFor: { [] })
+    }
+
+    /// `draftIDs` is read after `body` ran; those entries' drafts are parked until the save
+    /// carrying this change is durable (see `mutateDeletingNoteDrafts`).
+    private func mutate(_ body: (inout KdbxDatabase) -> Void, deletingDraftsFor draftIDs: () -> Set<UUID>) -> Bool {
         guard !isQuitInProgress, case .unlocked(var db) = state else { return false }
         body(&db)
         state = .unlocked(db)
         hasDirtyLocalChanges = true
-        persist(db)
+        persist(db, deletingDraftsFor: draftIDs())
         return true
     }
 
@@ -918,7 +977,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
         }
     }
 
-    private func persist(_ db: KdbxDatabase) {
+    private func persist(_ db: KdbxDatabase, deletingDraftsFor draftIDs: Set<UUID> = []) {
         guard let sessionPassword else { return }
         // Deep-copy the group tree synchronously (main thread, no concurrent
         // writer yet) so the background save operates on a fully independent
@@ -929,6 +988,11 @@ final class VaultSession: ObservableObject, VaultFlushing {
             recycleBinGroupUUID: db.recycleBinGroupUUID
         )
         let generation = beginLocalWrite()
+        if !draftIDs.isEmpty {
+            writeStateLock.lock()
+            pendingDraftDeletions.append((generation, draftIDs))
+            writeStateLock.unlock()
+        }
         persistQueue.async { [weak self, fileStore, syncEngine] in
             guard let self else { return }
 
@@ -944,6 +1008,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
             // `persistQueue`, the only queue that ever touches it.
             if snapshot == self.lastSuccessfullyWrittenDatabase {
                 self.finishLocalWrite(generation: generation, result: .wrote)
+                self.applyPendingDraftDeletions(throughGeneration: generation)
                 DispatchQueue.main.async { [weak self] in
                     self?.hasDirtyLocalChanges = false
                     self?.lastSaveError = nil
@@ -977,6 +1042,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
             self.lastSuccessfullyWrittenDatabase = snapshot
             // The local file is durable from here; the quit-time flush does not wait for the sync below.
             self.finishLocalWrite(generation: generation, result: .wrote)
+            self.applyPendingDraftDeletions(throughGeneration: generation)
 
             guard let syncEngine else {
                 DispatchQueue.main.async { [weak self] in

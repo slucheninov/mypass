@@ -103,7 +103,7 @@ struct NotesEditView: View {
         drafts = NoteDraftEditorModel(
             store: store, vaultID: vaultSession.draftVaultID, entryID: entryID,
             savedNotes: existingEntry?.notesBody ?? "", entryLastModified: existingEntry?.lastModificationTime,
-            databaseEntryIDs: existingEntry == nil ? knownEntryIDs : nil)
+            databaseEntryIDs: existingEntry == nil ? knownEntryIDs.union(vaultSession.pendingDraftDeletionIDs) : nil)
     }
 
     private var knownEntryIDs: Set<UUID> {
