@@ -45,8 +45,8 @@ enum EntryActions {
     }
 
     static func deletePermanently(entryID: UUID, in vaultSession: VaultSession) {
-        vaultSession.mutate { database in
-            GroupTreeOperations.permanentlyDeleteEntry(withID: entryID, in: database.rootGroup, deletedObjects: &database.deletedObjects)
+        vaultSession.mutateDeletingNoteDrafts { database in
+            GroupTreeOperations.permanentlyDeleteEntry(withID: entryID, in: database.rootGroup, deletedObjects: &database.deletedObjects) ? [entryID] : []
         }
     }
 

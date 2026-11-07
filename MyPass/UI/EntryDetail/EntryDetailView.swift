@@ -274,8 +274,8 @@ struct EntryDetailView: View {
             }
             .alert("Delete Permanently?", isPresented: $showDeletePermanentlyAlert) {
                 Button("Delete Permanently", role: .destructive) {
-                    vaultSession.mutate { database in
-                        GroupTreeOperations.permanentlyDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects)
+                    vaultSession.mutateDeletingNoteDrafts { database in
+                        GroupTreeOperations.permanentlyDeleteEntry(withID: entry.uuid, in: database.rootGroup, deletedObjects: &database.deletedObjects) ? [entry.uuid] : []
                     }
                     navigationState.selectedEntryID = nil
                 }

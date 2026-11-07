@@ -116,7 +116,7 @@ struct GroupSidebarView: View {
     }
 
     private func emptyRecycleBin() {
-        vaultSession.mutate { database in
+        vaultSession.mutateDeletingNoteDrafts { database in
             GroupTreeOperations.emptyRecycleBin(
                 in: database.rootGroup,
                 deletedObjects: &database.deletedObjects,

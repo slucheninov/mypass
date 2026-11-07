@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import MyPassKit
 
@@ -17,6 +18,10 @@ struct EntryEditView: View {
     @State private var password: String = ""
     @State private var url: String = ""
     @State private var notes: String = ""
+    // Draft key for the notes card; a new entry keeps this UUID on save.
+    @State private var entryID: UUID
+    @EnvironmentObject private var vaultSession: VaultSession
+    @State private var drafts: NoteDraftEditorModel?
     @State private var otpauthInput: String = ""
     @State private var extraFields: [(key: String, value: String)] = []
     @State private var showPasswordGenerator = false
@@ -59,6 +64,7 @@ struct EntryEditView: View {
         _password = State(initialValue: existingEntry?.password ?? "")
         _url = State(initialValue: existingEntry?.url ?? "")
         _notes = State(initialValue: existingEntry?.notes ?? "")
+        _entryID = State(initialValue: existingEntry?.uuid ?? UUID())
         _extraFields = State(initialValue: (existingEntry?.additionalFields ?? [])
             .map { (key: $0.key, value: $0.value) })
         _isFavorite = State(initialValue: existingEntry?.isFavorite ?? false)
@@ -133,9 +139,16 @@ struct EntryEditView: View {
                         .foregroundStyle(.secondary)
                     Divider().overlay(Color.primary.opacity(0.08))
 
-                    TextField("Notes", text: $notes, axis: .vertical)
-                        .lineLimit(3...8)
-                        .frame(minHeight: 80)
+                    // Login notes are plain text, so the card omits the markdown toolbar.
+                    if let drafts {
+                        NoteDraftRecoverySection(model: drafts)
+                    }
+                    NotesEditorCard(
+                        text: $notes,
+                        restoreRequests: drafts?.restoreRequests.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher(),
+                        entryID: entryID,
+                        controller: drafts?.controller
+                    )
                     Divider().overlay(Color.primary.opacity(0.08))
 
                     if showOTPField {
@@ -212,8 +225,10 @@ struct EntryEditView: View {
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Entry" : "Edit Entry")
         .safeAreaInset(edge: .top, spacing: 0) {
-            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: save)
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save)
         }
+        .onAppear(perform: openDrafts)
+        .onDisappear { drafts?.cancel() }
         .sheet(isPresented: $showPasswordGenerator) {
             // The FULL host, not a registrable domain: PasswordRulesCatalog
             // walks upward from the host to the registrable-domain ceiling
@@ -277,10 +292,31 @@ struct EntryEditView: View {
         performSave()
     }
 
+    /// Editors exist only while the vault is unlocked, so the store's Keychain key is
+    /// loaded here (a plain read, never an auth prompt).
+    private func openDrafts() {
+        guard drafts == nil, let store = vaultSession.noteDraftStore else { return }
+        store.unlock()
+        drafts = NoteDraftEditorModel(
+            store: store, vaultID: vaultSession.draftVaultID, entryID: entryID,
+            savedNotes: existingEntry?.notes ?? "", entryLastModified: existingEntry?.lastModificationTime,
+            databaseEntryIDs: existingEntry == nil ? knownEntryIDs.union(vaultSession.pendingDraftDeletionIDs) : nil)
+    }
+
+    private var knownEntryIDs: Set<UUID> {
+        guard let root = vaultSession.currentDatabase?.rootGroup else { return [] }
+        return Set(EntrySearch.allEntries(in: root).map(\.uuid))
+    }
+
+    private func cancel() {
+        drafts?.cancel()
+        onCancel()
+    }
+
     private func performSave() {
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
-            uuid: UUID(),
+            uuid: drafts?.entryID ?? entryID,
             iconID: 0,
             fields: [],
             creationTime: now,
@@ -315,6 +351,7 @@ struct EntryEditView: View {
         }
 
         onSave(entry, selectedGroupID)
+        drafts?.discardAfterSave()
     }
 }
 
