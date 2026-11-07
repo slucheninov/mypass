@@ -93,7 +93,15 @@ struct EntryBrowseActionRow: View {
 
     @ViewBuilder
     private var menuContent: some View {
-        let model = EntryActionMenuModel(entry: entry, isInRecycleBin: isInRecycleBin)
+        let model = EntryActionMenuModel(
+            entry: entry,
+            isInRecycleBin: isInRecycleBin,
+            notesRevealed: !NotesProtection.isBlurred(
+                notes: entry.notesBody,
+                state: navigationState.notesReveal,
+                entryID: entry.uuid
+            )
+        )
         ForEach(Array(model.sections.enumerated()), id: \.offset) { index, section in
             if index > 0 { Divider() }
             ForEach(Array(section.enumerated()), id: \.offset) { _, item in

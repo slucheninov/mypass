@@ -1695,6 +1695,22 @@
         }
       }
     },
+    "Click to show" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нажмите, чтобы показать"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Натисніть, щоб показати"
+          }
+        }
+      }
+    },
     "Clipboard" : {
       "localizations" : {
         "ru" : {
@@ -1949,6 +1965,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Скопіювати нотатку"
+          }
+        }
+      }
+    },
+    "Copy Notes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать заметки"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопіювати нотатки"
           }
         }
       }
@@ -5236,6 +5268,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Нотатки"
+          }
+        }
+      }
+    },
+    "Notes hidden" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Заметки скрыты"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нотатки приховано"
           }
         }
       }

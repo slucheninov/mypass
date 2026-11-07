@@ -31,7 +31,7 @@ struct EntryActionMenuModel: Equatable {
 
     let sections: [[Item]]
 
-    init(entry: KdbxEntry, isInRecycleBin: Bool) {
+    init(entry: KdbxEntry, isInRecycleBin: Bool, notesRevealed: Bool = true) {
         var sections: [[Item]] = [
             [.toggleFavorite(isFavorite: entry.isFavorite), .moveToGroup]
         ]
@@ -51,7 +51,7 @@ struct EntryActionMenuModel: Equatable {
             copyGroup.append(.copy(.cardNumber, isEnabled: !entry.cardNumber.isEmpty))
             copyGroup.append(.copy(.cvv, isEnabled: !entry.cvv.isEmpty))
         case .notes:
-            copyGroup.append(.copy(.note, isEnabled: !entry.notesBody.isEmpty))
+            copyGroup.append(.copy(.note, isEnabled: !entry.notesBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && notesRevealed))
         case .address:
             break
         }

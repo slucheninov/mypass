@@ -200,9 +200,17 @@ struct EntryDetailView: View {
                             value: entry.lastModificationTime.formatted(date: .abbreviated, time: .shortened)
                         )
 
-                        if !entry.notes.isEmpty {
+                        if NotesProtection.hasContent(entry.notes) {
                             DetailFieldDivider()
-                            DetailFieldRow(label: "Notes", value: entry.notes)
+                            // The value goes through ProtectedNotesBlock so the text stays out
+                            // of the view tree until the user clicks to reveal it.
+                            DetailFieldContentRow(label: "Notes") {
+                                ProtectedNotesBlock(entryID: entry.uuid, notes: entry.notes) {
+                                    Text(verbatim: entry.notes)
+                                        .multilineTextAlignment(.trailing)
+                                        .frame(maxWidth: .infinity, alignment: .trailing)
+                                }
+                            }
                         }
 
                         ForEach(entry.additionalFields, id: \.key) { field in
@@ -574,13 +582,40 @@ struct DetailFieldRow: View {
     }
 
     var body: some View {
+        DetailFieldRowLayout(label: label) {
+            Text(verbatim: value)
+                .multilineTextAlignment(.trailing)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+        }
+    }
+}
+
+/// Same row as `DetailFieldRow` but with an arbitrary value view (used for the protected
+/// Notes value). Both share `DetailFieldRowLayout` so label width and padding cannot drift.
+struct DetailFieldContentRow<Value: View>: View {
+    private let label: Text
+    private let value: Value
+
+    init(label: LocalizedStringKey, @ViewBuilder value: () -> Value) {
+        self.label = Text(label)
+        self.value = value()
+    }
+
+    var body: some View {
+        DetailFieldRowLayout(label: label) { value }
+    }
+}
+
+private struct DetailFieldRowLayout<Value: View>: View {
+    let label: Text
+    @ViewBuilder let value: () -> Value
+
+    var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             label
                 .foregroundStyle(.secondary)
                 .frame(width: 100, alignment: .leading)
-            Text(verbatim: value)
-                .multilineTextAlignment(.trailing)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            value()
         }
         .font(.body)
         .padding(.horizontal, 16)

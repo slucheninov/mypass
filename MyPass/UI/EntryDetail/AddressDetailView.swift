@@ -20,8 +20,12 @@ struct AddressDetailView: View {
             (label("Address Line 1"), a.addressLine1), (label("Address Line 2"), a.addressLine2),
             (label("City"), a.city), (label("Region"), a.region), (label("Postal Code"), a.postalCode),
             (label("Country"), a.countryName.isEmpty ? a.countryCode : a.countryName),
-            (label("Phone"), a.phone), (label("Email"), a.email), (label("Notes"), entry.notes)
+            (label("Phone"), a.phone), (label("Email"), a.email)
         ].filter { !$0.1.isEmpty }
+    }
+
+    private var notesBlurred: Bool {
+        NotesProtection.isBlurred(notes: entry.notes, state: navigationState.notesReveal, entryID: entry.uuid)
     }
 
     var body: some View {
@@ -33,6 +37,18 @@ struct AddressDetailView: View {
                     ForEach(rows, id: \.label) { row in
                         DetailFieldRow(verbatimLabel: row.label, value: row.value)
                             .contextMenu { Button("Copy \(row.label)") { copy(row.value) } }
+                        DetailFieldDivider()
+                    }
+                    if NotesProtection.hasContent(entry.notes) {
+                        DetailFieldContentRow(label: "Notes") {
+                            ProtectedNotesBlock(entryID: entry.uuid, notes: entry.notes) {
+                                Text(verbatim: entry.notes)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(maxWidth: .infinity, alignment: .trailing)
+                            }
+                        }
+                        // Copy is disabled while blurred so the menu cannot leak the text.
+                        .contextMenu { Button("Copy Notes") { copy(entry.notes) }.disabled(notesBlurred) }
                         DetailFieldDivider()
                     }
                     ForEach(entry.additionalFields, id: \.key) { field in
