@@ -78,6 +78,15 @@ final class EntryActionMenuModelTests: XCTestCase {
         XCTAssertEqual(sections(entry)[1], [.copy(.note, isEnabled: true)])
     }
 
+    func testCopyNoteDisabledWhileNotesBlurred() {
+        var entry = makeEntry(.notes)
+        entry.notesBody = "hello"
+        let blurred = EntryActionMenuModel(entry: entry, isInRecycleBin: false, notesRevealed: false)
+        XCTAssertEqual(blurred.sections[1], [.copy(.note, isEnabled: false)])
+        let revealed = EntryActionMenuModel(entry: entry, isInRecycleBin: false, notesRevealed: true)
+        XCTAssertEqual(revealed.sections[1], [.copy(.note, isEnabled: true)])
+    }
+
     func testAddressHasNoCopyGroupAndNoEmptySection() {
         let s = sections(makeEntry(.address))
         XCTAssertEqual(s.count, 3)
