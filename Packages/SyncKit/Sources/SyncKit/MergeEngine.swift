@@ -137,7 +137,10 @@ public enum MergeEngine {
         let alreadyPresent = result.history.contains { historical in
             historical.uuid == loserForHistory.uuid &&
             historical.lastModificationTime == loserForHistory.lastModificationTime &&
-            historical.fields == loserForHistory.fields
+            historical.fields == loserForHistory.fields &&
+            // An attachment-only change leaves uuid, mtime and fields equal; without this
+            // the losing version would be treated as already recorded and its attachments dropped.
+            historical.attachments == loserForHistory.attachments
         }
         if !alreadyPresent {
             result.history.append(loserForHistory)
