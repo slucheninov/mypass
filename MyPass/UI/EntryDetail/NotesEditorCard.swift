@@ -7,8 +7,8 @@ import MyPassKit
 /// semantic ones so the card reads correctly in light and dark mode.
 struct NotesEditorCard: View {
     @Binding var text: String
-    /// Text to load through the undoable `.replaceAll` command (draft restore); cleared once taken.
-    @Binding var restoreRequest: String?
+    /// Draft-restore requests; each one becomes an undoable `.replaceAll` command.
+    private let restoreRequests: AnyPublisher<String, Never>
     let entryID: UUID
     @ObservedObject private var controller: DraftControllerBox
     let placeholder: LocalizedStringKey
@@ -24,18 +24,23 @@ struct NotesEditorCard: View {
 
     init(
         text: Binding<String>,
-        restoreRequest: Binding<String?> = .constant(nil),
+        restoreRequests: AnyPublisher<String, Never> = Empty().eraseToAnyPublisher(),
         entryID: UUID,
         controller: NoteDraftController?,
         placeholder: LocalizedStringKey = "Add notes",
         showsMarkdownToolbar: Bool = false
     ) {
         _text = text
-        _restoreRequest = restoreRequest
+        self.restoreRequests = restoreRequests
         self.entryID = entryID
         self.controller = DraftControllerBox(controller)
         self.placeholder = placeholder
         self.showsMarkdownToolbar = showsMarkdownToolbar
+    }
+
+    /// A restore must be one undo step, hence `.replaceAll` and not a plain text assignment.
+    static func command(forRestoring text: String) -> MarkdownEditorCommand {
+        .replaceAll(text)
     }
 
     /// Short "Draft saved 1:05 PM" status, nil when nothing has been saved yet.
@@ -94,10 +99,8 @@ struct NotesEditorCard: View {
         .onChange(of: text) { _, newValue in
             controller.controller?.noteTextChanged(newValue)
         }
-        .onChange(of: restoreRequest) { _, newValue in
-            guard let newValue else { return }
-            command = .replaceAll(newValue)
-            restoreRequest = nil
+        .onReceive(restoreRequests) { restored in
+            command = Self.command(forRestoring: restored)
         }
         .onReceive(ticker) { _ in
             controller.controller?.tick()

@@ -77,9 +77,26 @@ final class NoteDraftLifecycleTests: XCTestCase {
         store.save(notes: "kept", vaultID: vault, entryID: entry)
         let model = NoteDraftEditorModel(store: store, vaultID: vault, entryID: entry, savedNotes: "base", entryLastModified: nil)
         XCTAssertEqual(model.pendingDraft?.notes, "kept")
+        var received: [String] = []
+        let token = model.restoreRequests.sink { received.append($0) }
         model.restore(model.pendingDraft!)
-        XCTAssertEqual(model.restoreRequest, "kept")
+        token.cancel()
+        XCTAssertEqual(received, ["kept"])
+        guard case .replaceAll(let text) = NotesEditorCard.command(forRestoring: received[0]) else {
+            return XCTFail("restore must be an undoable replaceAll command")
+        }
+        XCTAssertEqual(text, "kept")
         XCTAssertNil(model.pendingDraft)
+    }
+
+    func testRestoringTheNewestDraftThenCancelWritesNoDuplicateVersion() {
+        let store = makeStore()
+        store.save(notes: "kept", vaultID: vault, entryID: entry)
+        let model = NoteDraftEditorModel(store: store, vaultID: vault, entryID: entry, savedNotes: "base", entryLastModified: nil)
+        model.restore(model.pendingDraft!)
+        model.controller.noteTextChanged("kept")
+        model.cancel()
+        XCTAssertEqual(notes(store), ["kept"])
     }
 
     func testDeleteRemovesDraftsAndBanner() {

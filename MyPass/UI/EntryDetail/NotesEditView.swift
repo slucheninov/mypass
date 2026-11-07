@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import MyPassKit
 
@@ -62,7 +63,7 @@ struct NotesEditView: View {
 
             NotesEditorCard(
                 text: $notesBody,
-                restoreRequest: restoreRequestBinding,
+                restoreRequests: drafts?.restoreRequests.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher(),
                 entryID: entryID,
                 controller: drafts?.controller,
                 showsMarkdownToolbar: true
@@ -86,10 +87,6 @@ struct NotesEditView: View {
         }
         .onAppear(perform: openDrafts)
         .onDisappear { drafts?.cancel() }
-    }
-
-    private var restoreRequestBinding: Binding<String?> {
-        Binding(get: { drafts?.restoreRequest }, set: { drafts?.restoreRequest = $0 })
     }
 
     /// Editors exist only while the vault is unlocked, so the store's Keychain key is

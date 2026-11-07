@@ -18,9 +18,15 @@ struct NoteDraftVersionsSheet: View {
                                 Text(version.savedAt.formatted(date: .abbreviated, time: .shortened))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
-                                Text(verbatim: version.notes.isEmpty ? " " : version.notes)
-                                    .lineLimit(3)
-                                    .font(.callout)
+                                if version.notes.isEmpty {
+                                    Text("Empty note")
+                                        .font(.callout)
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text(verbatim: version.notes)
+                                        .lineLimit(3)
+                                        .font(.callout)
+                                }
                             }
                             Spacer(minLength: 8)
                             Button("Restore") { onRestore(version) }

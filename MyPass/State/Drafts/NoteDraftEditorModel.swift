@@ -8,9 +8,10 @@ final class NoteDraftEditorModel: ObservableObject {
     let controller: NoteDraftController
     @Published private(set) var pendingDraft: NoteDraftVersion?
     @Published private(set) var versions: [NoteDraftVersion]
-    /// Text for the editor to load through the undoable `.replaceAll` command; the card
-    /// clears it once handed over.
-    @Published var restoreRequest: String?
+    /// Emits the text the editor must load through the undoable `.replaceAll` command.
+    /// A subject, not a @Published value read through a Binding: the card subscribes to it
+    /// directly, so no parent re-render is needed for a restore to reach the editor.
+    let restoreRequests = PassthroughSubject<String, Never>()
     @Published var showsVersions = false
 
     private let store: NoteDraftStore
@@ -31,7 +32,7 @@ final class NoteDraftEditorModel: ObservableObject {
     }
 
     func restore(_ version: NoteDraftVersion) {
-        restoreRequest = version.notes
+        restoreRequests.send(version.notes)
         pendingDraft = nil
         showsVersions = false
     }

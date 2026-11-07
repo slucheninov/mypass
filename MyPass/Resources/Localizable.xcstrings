@@ -2679,6 +2679,28 @@
         }
       }
     },
+    "Empty note" : {
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Empty note"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Порожня нотатка"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пустая заметка"
+          }
+        }
+      }
+    },
     "Empty Recycle Bin?" : {
       "localizations" : {
         "ru" : {

@@ -1,3 +1,4 @@
+import Combine
 import SwiftUI
 import MyPassKit
 
@@ -144,7 +145,7 @@ struct EntryEditView: View {
                     }
                     NotesEditorCard(
                         text: $notes,
-                        restoreRequest: Binding(get: { drafts?.restoreRequest }, set: { drafts?.restoreRequest = $0 }),
+                        restoreRequests: drafts?.restoreRequests.eraseToAnyPublisher() ?? Empty().eraseToAnyPublisher(),
                         entryID: entryID,
                         controller: drafts?.controller
                     )
