@@ -24,6 +24,19 @@ final class EntryHistoryOperationsTests: XCTestCase {
         XCTAssertEqual(entry.history.first?.history.count, 0)
     }
 
+    func testRestoreVersionRestoresAttachmentsAndSnapshotsCurrentOnes() {
+        let now = Date()
+        var oldVersion = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        oldVersion.attachments = [KdbxAttachment(name: "a.txt", data: Data("a".utf8))]
+        var entry = KdbxEntry(uuid: oldVersion.uuid, iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
+        entry.attachments = [KdbxAttachment(name: "b.txt", data: Data("b".utf8))]
+
+        EntryHistoryOperations.restoreVersion(oldVersion, into: &entry)
+
+        XCTAssertEqual(entry.attachments.map(\.name), ["a.txt"])
+        XCTAssertEqual(entry.history.last?.attachments.map(\.name), ["b.txt"])
+    }
+
     func testClearHistoryRemovesAllVersions() {
         let now = Date()
         var entry = KdbxEntry(

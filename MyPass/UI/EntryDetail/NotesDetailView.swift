@@ -48,6 +48,8 @@ struct NotesDetailView: View {
                 .popover(isPresented: $showLargeType) {
                     LargeTypePopover(text: entry.notesBody, isMonospaced: false)
                 }
+
+                AttachmentsDetailSection(attachments: entry.attachments)
             }
             .frame(maxWidth: .infinity)
             .padding(.horizontal, 24)

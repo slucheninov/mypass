@@ -85,6 +85,7 @@ struct AttachmentsEditSection: View {
                         .labelStyle(.iconOnly)
                         .buttonStyle(.plain)
                         .foregroundStyle(.red)
+                        .accessibilityLabel(Text("Delete \(attachment.name)"))
                 }
             }
             if isDropTargeted {
