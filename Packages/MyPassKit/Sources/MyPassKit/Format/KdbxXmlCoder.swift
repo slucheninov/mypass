@@ -55,7 +55,7 @@ enum KdbxXmlCoderError: Error, Equatable {
 enum KdbxXmlCoder {
     private static let kdbxEpochOffsetFromUnix: Int64 = 62_135_596_800
 
-    static func encode(_ payload: KdbxXmlPayload, obfuscate: (Data) -> Data) -> Data {
+    static func encode(_ payload: KdbxXmlPayload, pool: KdbxAttachmentPool = .empty, obfuscate: (Data) -> Data) -> Data {
         let keePassFile = XMLElement(name: "KeePassFile")
         let metaElement = XMLElement(name: "Meta")
         if let recycleBinGroupUUID = payload.recycleBinGroupUUID {
@@ -64,7 +64,7 @@ enum KdbxXmlCoder {
         keePassFile.addChild(metaElement)
 
         let rootElement = XMLElement(name: "Root")
-        rootElement.addChild(groupElement(payload.rootGroup, obfuscate: obfuscate))
+        rootElement.addChild(groupElement(payload.rootGroup, pool: pool, obfuscate: obfuscate))
 
         let deletedObjectsElement = XMLElement(name: "DeletedObjects")
         for deleted in payload.deletedObjects {
@@ -88,7 +88,7 @@ enum KdbxXmlCoder {
     /// there is no case-insensitive spelling to worry about.
     private static let doctypeMarker = Data("<!DOCTYPE".utf8)
 
-    static func decode(_ xml: Data, deobfuscate: (Data) -> Data) throws -> KdbxXmlPayload {
+    static func decode(_ xml: Data, binaries: [KdbxInnerBinary] = [], deobfuscate: (Data) -> Data) throws -> KdbxXmlPayload {
         // `XMLDocument(data:options:)` auto-detects character encoding from a
         // BOM or the XML prolog's `encoding="..."` attribute, and can happily
         // parse UTF-16/UTF-32 input. The `<!DOCTYPE` byte-scan below only
@@ -229,7 +229,7 @@ enum KdbxXmlCoder {
         guard let groupElement = rootElement.elements(forName: "Group").first else {
             throw KdbxXmlCoderError.missingRequiredElement("Group")
         }
-        let rootGroup = try parseGroup(groupElement, deobfuscate: deobfuscate)
+        let rootGroup = try parseGroup(groupElement, binaries: binaries, deobfuscate: deobfuscate)
 
         var deletedObjects: [KdbxDeletedObject] = []
         if let deletedObjectsElement = rootElement.elements(forName: "DeletedObjects").first {
@@ -254,7 +254,7 @@ enum KdbxXmlCoder {
 
     // MARK: - Group / Entry / String
 
-    private static func groupElement(_ group: KdbxGroup, obfuscate: (Data) -> Data) -> XMLElement {
+    private static func groupElement(_ group: KdbxGroup, pool: KdbxAttachmentPool, obfuscate: (Data) -> Data) -> XMLElement {
         let el = XMLElement(name: "Group")
         el.addChild(textElement("UUID", base64(fromUuid: group.uuid)))
         el.addChild(textElement("Name", group.name))
@@ -277,15 +277,15 @@ enum KdbxXmlCoder {
             el.addChild(customDataElement)
         }
         for entry in group.entries {
-            el.addChild(entryElement(entry, obfuscate: obfuscate))
+            el.addChild(entryElement(entry, pool: pool, obfuscate: obfuscate))
         }
         for subgroup in group.subgroups {
-            el.addChild(groupElement(subgroup, obfuscate: obfuscate))
+            el.addChild(groupElement(subgroup, pool: pool, obfuscate: obfuscate))
         }
         return el
     }
 
-    private static func entryElement(_ entry: KdbxEntry, obfuscate: (Data) -> Data) -> XMLElement {
+    private static func entryElement(_ entry: KdbxEntry, pool: KdbxAttachmentPool, obfuscate: (Data) -> Data) -> XMLElement {
         let el = XMLElement(name: "Entry")
         el.addChild(textElement("UUID", base64(fromUuid: entry.uuid)))
         el.addChild(textElement("IconID", String(entry.iconID)))
@@ -298,13 +298,24 @@ enum KdbxXmlCoder {
         for field in entry.fields {
             el.addChild(stringFieldElement(field, obfuscate: obfuscate))
         }
+        // KeePass/KeePassXC order: <String>s, then <Binary>s, then <History> last.
+        // The value is always a `Ref` into the inner-header pool; KDBX4 never
+        // inlines binary content in entries.
+        for attachment in entry.attachments {
+            let binary = XMLElement(name: "Binary")
+            binary.addChild(textElement("Key", attachment.name))
+            let value = XMLElement(name: "Value")
+            value.addAttribute(XMLNode.attribute(withName: "Ref", stringValue: String(pool.index(of: attachment))) as! XMLNode)
+            binary.addChild(value)
+            el.addChild(binary)
+        }
         for stringArray in entry.stringArrays {
             el.addChild(stringArrayElement(stringArray))
         }
         if !entry.history.isEmpty {
             let historyElement = XMLElement(name: "History")
             for historicalEntry in entry.history {
-                historyElement.addChild(entryElement(historicalEntry, obfuscate: obfuscate))
+                historyElement.addChild(entryElement(historicalEntry, pool: pool, obfuscate: obfuscate))
             }
             el.addChild(historyElement)
         }
@@ -360,7 +371,7 @@ enum KdbxXmlCoder {
 
     // MARK: - Parsing
 
-    private static func parseGroup(_ element: XMLElement, deobfuscate: (Data) -> Data) throws -> KdbxGroup {
+    private static func parseGroup(_ element: XMLElement, binaries: [KdbxInnerBinary], deobfuscate: (Data) -> Data) throws -> KdbxGroup {
         guard let uuidString = element.elements(forName: "UUID").first?.stringValue,
               let uuid = uuid(fromBase64: uuidString) else {
             throw KdbxXmlCoderError.malformedXml
@@ -375,7 +386,7 @@ enum KdbxXmlCoder {
 
         var entries: [KdbxEntry] = []
         for entryEl in element.elements(forName: "Entry") {
-            entries.append(try parseEntry(entryEl, deobfuscate: deobfuscate))
+            entries.append(try parseEntry(entryEl, binaries: binaries, deobfuscate: deobfuscate))
         }
         var customData: [String: String] = [:]
         if let customDataElement = element.elements(forName: "CustomData").first {
@@ -392,7 +403,7 @@ enum KdbxXmlCoder {
 
         var subgroups: [KdbxGroup] = []
         for groupEl in element.elements(forName: "Group") {
-            subgroups.append(try parseGroup(groupEl, deobfuscate: deobfuscate))
+            subgroups.append(try parseGroup(groupEl, binaries: binaries, deobfuscate: deobfuscate))
         }
         return KdbxGroup(
             uuid: uuid, name: name, iconID: iconID,
@@ -402,7 +413,7 @@ enum KdbxXmlCoder {
         )
     }
 
-    private static func parseEntry(_ element: XMLElement, deobfuscate: (Data) -> Data) throws -> KdbxEntry {
+    private static func parseEntry(_ element: XMLElement, binaries: [KdbxInnerBinary], deobfuscate: (Data) -> Data) throws -> KdbxEntry {
         guard let uuidString = element.elements(forName: "UUID").first?.stringValue,
               let uuid = uuid(fromBase64: uuidString) else {
             throw KdbxXmlCoderError.malformedXml
@@ -438,6 +449,21 @@ enum KdbxXmlCoder {
             fields.append(KdbxField(key: key, value: value, isProtected: isProtected))
         }
 
+        var attachments: [KdbxAttachment] = []
+        for binaryEl in element.elements(forName: "Binary") {
+            guard let name = binaryEl.elements(forName: "Key").first?.stringValue,
+                  let ref = binaryEl.elements(forName: "Value").first?
+                      .attribute(forName: "Ref")?.stringValue,
+                  let index = Int(ref), binaries.indices.contains(index) else {
+                // A non-numeric or out-of-range Ref has no bytes to preserve, and
+                // throwing here would lock the user out of their whole vault over
+                // one broken attachment, so it is skipped instead of failing decode.
+                continue
+            }
+            attachments.append(KdbxAttachment(
+                name: name, data: binaries[index].content, isProtected: binaries[index].isProtected))
+        }
+
         var stringArrays: [KdbxStringArray] = []
         for arrayElement in element.elements(forName: "StringArray") {
             guard let keyElement = arrayElement.elements(forName: "Key").first,
@@ -451,12 +477,12 @@ enum KdbxXmlCoder {
         var history: [KdbxEntry] = []
         if let historyElement = element.elements(forName: "History").first {
             for historicalEl in historyElement.elements(forName: "Entry") {
-                history.append(try parseEntry(historicalEl, deobfuscate: deobfuscate))
+                history.append(try parseEntry(historicalEl, binaries: binaries, deobfuscate: deobfuscate))
             }
         }
 
         return KdbxEntry(
-            uuid: uuid, iconID: iconID, fields: fields, stringArrays: stringArrays,
+            uuid: uuid, iconID: iconID, fields: fields, stringArrays: stringArrays, attachments: attachments,
             creationTime: creationTime, lastModificationTime: lastModificationTime,
             lastAccessTime: lastAccessTime, locationChanged: locationChanged, history: history
         )

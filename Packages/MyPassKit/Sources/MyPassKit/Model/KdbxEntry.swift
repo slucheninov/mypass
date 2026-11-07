@@ -30,6 +30,26 @@ public struct KdbxStringArray: Equatable {
     }
 }
 
+/// A file attached to an entry (KDBX `<Binary>` entry element plus its inner-header
+/// binary). The bytes are embedded per entry rather than held in a database-level
+/// pool so that history snapshots and `MergeEngine` copy attachment data together
+/// with the entry value; the coder rebuilds (and deduplicates) the shared pool at
+/// save time.
+public struct KdbxAttachment: Equatable {
+    public var name: String
+    public var data: Data
+    /// Whether the inner-header binary carries the KDBX "memory protected" flag.
+    /// Defaults to `true` for new attachments (the conservative choice); flags read
+    /// from an existing vault are preserved verbatim by the coder.
+    public var isProtected: Bool
+
+    public init(name: String, data: Data, isProtected: Bool = true) {
+        self.name = name
+        self.data = data
+        self.isProtected = isProtected
+    }
+}
+
 /// A password entry: title/login/password/URL/notes/TOTP/custom fields are all
 /// represented uniformly as `KdbxField`s (matching the KDBX4 XML model), plus
 /// entry-level metadata and a `history` of past versions of itself.
@@ -42,6 +62,7 @@ public struct KdbxEntry: Equatable, Identifiable {
     public var iconID: Int
     public var fields: [KdbxField]
     public var stringArrays: [KdbxStringArray]
+    public var attachments: [KdbxAttachment]
     public var creationTime: Date
     public var lastModificationTime: Date
     public var lastAccessTime: Date
@@ -53,6 +74,7 @@ public struct KdbxEntry: Equatable, Identifiable {
         iconID: Int,
         fields: [KdbxField],
         stringArrays: [KdbxStringArray] = [],
+        attachments: [KdbxAttachment] = [],
         creationTime: Date,
         lastModificationTime: Date,
         lastAccessTime: Date,
@@ -63,6 +85,7 @@ public struct KdbxEntry: Equatable, Identifiable {
         self.iconID = iconID
         self.fields = fields
         self.stringArrays = stringArrays
+        self.attachments = attachments
         self.creationTime = creationTime
         self.lastModificationTime = lastModificationTime
         self.lastAccessTime = lastAccessTime

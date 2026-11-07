@@ -37,4 +37,21 @@ final class EntryHistoryOperationsTests: XCTestCase {
         EntryHistoryOperations.clearHistory(on: &entry)
         XCTAssertTrue(entry.history.isEmpty)
     }
+
+    func testAppendSnapshotKeepsAttachmentsOfStoredVersion() {
+        let now = Date()
+        let attachment = KdbxAttachment(name: "doc.pdf", data: Data([1, 2, 3]), isProtected: true)
+        let stored = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [], attachments: [attachment],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now,
+            history: []
+        )
+        var entry = stored
+        entry.attachments = []
+
+        EntryHistoryOperations.appendSnapshot(of: stored, to: &entry)
+
+        XCTAssertEqual(entry.history.count, 1)
+        XCTAssertEqual(entry.history.first?.attachments, [attachment])
+    }
 }

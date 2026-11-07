@@ -165,7 +165,7 @@ public struct KdbxDatabase: Equatable {
         // Step 9: XML payload (Task 14).
         let payload: KdbxXmlPayload
         do {
-            payload = try KdbxXmlCoder.decode(xmlData) { ciphertext in
+            payload = try KdbxXmlCoder.decode(xmlData, binaries: innerHeader.binaries) { ciphertext in
                 let keystream = streamCipher.nextBytes(ciphertext.count)
                 return Data(zip(ciphertext, keystream).map { $0 ^ $1 })
             }
@@ -208,11 +208,15 @@ public struct KdbxDatabase: Equatable {
         let hmacKeyBase = KeyDerivation.hmacKeyBase(masterSeed: masterSeed, transformedKey: transformedKey)
 
         let innerStreamKey = Self.randomBytes(count: 64)
-        let innerHeader = KdbxInnerHeader(innerRandomStreamID: .chaCha20, innerRandomStreamKey: innerStreamKey, binaries: [])
+        // The inner-header binary pool is rebuilt from the model on every save
+        // (deduplicated, first-use order, unreferenced binaries dropped) so entry
+        // attachments - including those on history snapshots - are never lost.
+        let pool = KdbxAttachmentPool(collecting: rootGroup)
+        let innerHeader = KdbxInnerHeader(innerRandomStreamID: .chaCha20, innerRandomStreamKey: innerStreamKey, binaries: pool.binaries)
         let streamCipher = try InnerRandomStreamCipher(streamID: .chaCha20, rawKey: innerStreamKey)
 
         let payload = KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects, recycleBinGroupUUID: recycleBinGroupUUID)
-        let xmlData = KdbxXmlCoder.encode(payload) { plaintext in
+        let xmlData = KdbxXmlCoder.encode(payload, pool: pool) { plaintext in
             let keystream = streamCipher.nextBytes(plaintext.count)
             return Data(zip(plaintext, keystream).map { $0 ^ $1 })
         }
