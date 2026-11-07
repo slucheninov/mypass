@@ -21,8 +21,8 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
             canUndo: Binding(get: { b.canUndo }, set: { b.canUndo = $0 }),
             canRedo: Binding(get: { b.canRedo }, set: { b.canRedo = $0 })
         )
-        // A window-less NSTextView has no undo manager; host it so it uses the
-        // window's, exactly like production.
+        // Hosted in a window so the window has its own (unrelated) undo manager;
+        // the text view must use the coordinator's manager, not that one.
         textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 200, height: 100))
         textView.allowsUndo = true
         textView.isRichText = false
@@ -34,6 +34,7 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
         // No run loop turns in a unit test, so the automatic per-event grouping
         // would fold everything into one group; groups are opened explicitly.
         window.undoManager?.groupsByEvent = false
+        coordinator.undoManager.groupsByEvent = false
     }
 
     override func tearDown() {
@@ -42,7 +43,7 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
     }
 
     private func type(_ s: String) {
-        let um = textView.undoManager!
+        let um = coordinator.undoManager
         textView.breakUndoCoalescing()
         um.beginUndoGrouping()
         textView.insertText(s, replacementRange: textView.selectedRange())
@@ -82,7 +83,7 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
     func testApplyingMarkdownWrapIsUndoable() {
         type("word")
         textView.setSelectedRange(NSRange(location: 0, length: 4))
-        let um = textView.undoManager!
+        let um = coordinator.undoManager
         um.beginUndoGrouping()
         coordinator.apply(.wrap(prefix: "**", suffix: "**"), to: textView)
         um.endUndoGrouping()
@@ -94,11 +95,39 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
 
     func testProgrammaticReplacementIsOneUndoStep() {
         type("original")
-        coordinator.replaceAll(in: textView, with: "restored from draft")
+        coordinator.perform(.replaceAll("restored from draft"), on: textView)
         XCTAssertEqual(textView.string, "restored from draft")
         XCTAssertEqual(box.text, "restored from draft")
         coordinator.perform(.undo, on: textView)
         XCTAssertEqual(textView.string, "original")
         XCTAssertTrue(box.canUndo)
+        coordinator.perform(.redo, on: textView)
+        XCTAssertEqual(textView.string, "restored from draft")
+    }
+
+    func testUndoDoesNotTouchWindowUndoManager() {
+        let windowManager = window.undoManager!
+        final class Target: NSObject { var fired = false }
+        let target = Target()
+        windowManager.beginUndoGrouping()
+        windowManager.registerUndo(withTarget: target) { $0.fired = true }
+        windowManager.endUndoGrouping()
+        coordinator.refreshUndoState(of: textView)
+        XCTAssertFalse(box.canUndo)
+        type("abc")
+        coordinator.perform(.undo, on: textView)
+        coordinator.perform(.undo, on: textView)
+        XCTAssertFalse(target.fired)
+        XCTAssertTrue(windowManager.canUndo)
+        XCTAssertEqual(textView.string, "")
+    }
+
+    func testExternalTextChangeResetsUndo() {
+        type("abc")
+        XCTAssertTrue(box.canUndo)
+        coordinator.setExternalText("other entry", in: textView)
+        XCTAssertEqual(textView.string, "other entry")
+        XCTAssertFalse(box.canUndo)
+        XCTAssertFalse(box.canRedo)
     }
 }

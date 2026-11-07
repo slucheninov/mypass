@@ -10,6 +10,8 @@ enum MarkdownWrapAction {
 /// through the responder chain on their own.
 enum MarkdownEditorCommand {
     case undo, redo
+    /// Replaces the whole text as ONE undoable step (restoring a draft).
+    case replaceAll(String)
 }
 
 struct MarkdownTextEditor: NSViewRepresentable {
@@ -57,10 +59,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
         context.coordinator.canUndo = $canUndo
         context.coordinator.canRedo = $canRedo
         if textView.string != text {
-            // Restore from a draft or an external change: register it as ONE
-            // undoable step instead of assigning `string`, which would silently
-            // drop the undo stack.
-            context.coordinator.replaceAll(in: textView, with: text)
+            // An external replacement (another entry loaded into a reused editor)
+            // is a new document: no undo registration, and the stack is cleared so
+            // Undo can never carry one entry's text into another. Draft restores
+            // use the undoable `.replaceAll` command instead.
+            context.coordinator.setExternalText(text, in: textView)
         }
         if let action = wrapAction {
             context.coordinator.apply(action, to: textView)
@@ -73,6 +76,11 @@ struct MarkdownTextEditor: NSViewRepresentable {
             // view update" console warning, which is an acceptable trade-off here.
             wrapAction = nil
         }
+        // The `command` reset and the canUndo/canRedo writes below happen inside the
+        // update pass, like the synchronous `wrapAction` reset above: deferring the
+        // command reset would let a re-entrant update re-run it, and the flag writes
+        // are guarded by inequality so they only fire on real changes. The cost is a
+        // possible one-time "modifying state during view update" console warning.
         if let pending = command {
             context.coordinator.perform(pending, on: textView)
             command = nil
@@ -88,6 +96,13 @@ struct MarkdownTextEditor: NSViewRepresentable {
         let text: Binding<String>
         weak var textView: NSTextView?
 
+        /// The editor's own undo stack. NSTextView would otherwise use the window's
+        /// manager, shared with the title field and others, so toolbar Undo could
+        /// revert unrelated edits and canUndo would reflect the whole window.
+        let undoManager = UndoManager()
+
+        func undoManager(for view: NSTextView) -> UndoManager? { undoManager }
+
         var canUndo: Binding<Bool>
         var canRedo: Binding<Bool>
 
@@ -102,20 +117,27 @@ struct MarkdownTextEditor: NSViewRepresentable {
         }
 
         func refreshUndoState(of textView: NSTextView) {
-            // Always go through `textView.undoManager` so the window's manager is
-            // used in production.
-            let canUndoNow = textView.undoManager?.canUndo ?? false
-            let canRedoNow = textView.undoManager?.canRedo ?? false
+            let canUndoNow = undoManager.canUndo
+            let canRedoNow = undoManager.canRedo
             if canUndo.wrappedValue != canUndoNow { canUndo.wrappedValue = canUndoNow }
             if canRedo.wrappedValue != canRedoNow { canRedo.wrappedValue = canRedoNow }
         }
 
         func perform(_ command: MarkdownEditorCommand, on textView: NSTextView) {
             switch command {
-            case .undo: textView.undoManager?.undo()
-            case .redo: textView.undoManager?.redo()
+            case .undo: undoManager.undo()
+            case .redo: undoManager.redo()
+            case .replaceAll(let newText): replaceAll(in: textView, with: newText)
             }
             text.wrappedValue = textView.string
+            refreshUndoState(of: textView)
+        }
+
+        /// Loads text that did not come from the user (another entry): not undoable,
+        /// and the stack is reset because it is a new document.
+        func setExternalText(_ newText: String, in textView: NSTextView) {
+            textView.string = newText
+            undoManager.removeAllActions()
             refreshUndoState(of: textView)
         }
 
@@ -125,14 +147,19 @@ struct MarkdownTextEditor: NSViewRepresentable {
         /// merging with neighbouring typing.
         func replaceAll(in textView: NSTextView, with newText: String) {
             let full = NSRange(location: 0, length: (textView.string as NSString).length)
-            let manager = textView.undoManager
+            let manager = undoManager
             textView.breakUndoCoalescing()
-            manager?.beginUndoGrouping()
+            manager.beginUndoGrouping()
             if textView.shouldChangeText(in: full, replacementString: newText) {
                 textView.replaceCharacters(in: full, with: newText)
                 textView.didChangeText()
+            } else {
+                // The delegate vetoed the change (or the view is not editable): the
+                // content must still end up replaced, just not as an undo step.
+                textView.string = newText
+                text.wrappedValue = newText
             }
-            manager?.endUndoGrouping()
+            manager.endUndoGrouping()
             textView.breakUndoCoalescing()
         }
 
