@@ -228,8 +228,11 @@ extension GroupTreeOperations {
     /// Permanently removes every entry (and any stray subgroups) inside the
     /// Recycle Bin, tombstoning each for sync. The bin group itself stays.
     /// A safe no-op when the bin is missing or already empty.
-    static func emptyRecycleBin(in root: KdbxGroup, deletedObjects: inout [KdbxDeletedObject], recycleBinGroupUUID: UUID?) {
-        guard let binUUID = recycleBinGroupUUID, let bin = findGroup(uuid: binUUID, in: root) else { return }
+    /// Returns the IDs of the entries it removed.
+    @discardableResult
+    static func emptyRecycleBin(in root: KdbxGroup, deletedObjects: inout [KdbxDeletedObject], recycleBinGroupUUID: UUID?) -> Set<UUID> {
+        guard let binUUID = recycleBinGroupUUID, let bin = findGroup(uuid: binUUID, in: root) else { return [] }
+        let removedEntryIDs = Set(collectEntriesInSubtree(bin).map(\.uuid))
         let now = Date()
 
         for entry in collectEntriesInSubtree(bin) {
@@ -243,5 +246,6 @@ extension GroupTreeOperations {
 
         bin.entries.removeAll()
         bin.subgroups.removeAll()
+        return removedEntryIDs
     }
 }

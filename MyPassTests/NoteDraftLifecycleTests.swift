@@ -160,20 +160,106 @@ final class NoteDraftLifecycleTests: XCTestCase {
         let token = NotificationCenter.default.addObserver(forName: .noteDraftsDiscarded, object: nil, queue: nil) { _ in discarded = true }
         defer { NotificationCenter.default.removeObserver(token) }
         // Locked session: mutate returns false.
-        XCTAssertFalse(session.mutateDeletingNoteDrafts(entryIDs: [entry]) { _ in })
+        XCTAssertFalse(session.mutateDeletingNoteDrafts { _ in [entry] })
         XCTAssertEqual(store.versions(vaultID: session.draftVaultID, entryID: entry).map(\.notes), ["keep me"])
         XCTAssertFalse(discarded)
     }
 
-    func testPermanentDeleteRemovesDraftsWhenMutateSucceeds() throws {
-        let store = makeStore()
-        let session = VaultSession(fileStore: VaultFileStore(directory: dir.appendingPathComponent("vault")))
-        session.noteDraftStore = store
+    // MARK: - Durable draft deletion
+
+    private func makeEntry() -> KdbxEntry {
+        let now = Date()
+        return KdbxEntry(uuid: entry, iconID: 0, fields: [], creationTime: now, lastModificationTime: now,
+                         lastAccessTime: now, locationChanged: now, history: [])
+    }
+
+    private func waitUntil(timeout: TimeInterval = 20, _ condition: () -> Bool) {
+        let deadline = Date(timeIntervalSinceNow: timeout)
+        while !condition(), Date() < deadline { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
+    }
+
+    /// An unlocked session holding one saved entry (`entry`) and a draft for it.
+    private func makeSessionWithEntryAndDraft() throws -> (VaultSession, ControllableVaultStore, NoteDraftStore) {
+        let vaultStore = ControllableVaultStore(directory: dir.appendingPathComponent("vault"))
+        let session = VaultSession(fileStore: vaultStore)
+        let drafts = makeStore()
+        session.noteDraftStore = drafts
         try session.unlock(password: "pw")
-        store.unlock()
-        store.save(notes: "gone", vaultID: session.draftVaultID, entryID: entry)
-        XCTAssertTrue(session.mutateDeletingNoteDrafts(entryIDs: [entry]) { _ in })
-        XCTAssertEqual(store.versions(vaultID: session.draftVaultID, entryID: entry), [])
+        session.mutate { $0.rootGroup.entries.append(self.makeEntry()) }
+        waitUntil { vaultStore.saveCount >= 1 }
+        drafts.save(notes: "draft", vaultID: session.draftVaultID, entryID: entry)
+        return (session, vaultStore, drafts)
+    }
+
+    private func deleteEntry(_ session: VaultSession, id: UUID) -> Bool {
+        session.mutateDeletingNoteDrafts { database in
+            let removed = GroupTreeOperations.permanentlyDeleteEntry(
+                withID: id, in: database.rootGroup, deletedObjects: &database.deletedObjects)
+            return removed ? [id] : []
+        }
+    }
+
+    func testPermanentDeleteRemovesDraftsOnceTheSaveIsDurable() throws {
+        let (session, _, drafts) = try makeSessionWithEntryAndDraft()
+        XCTAssertTrue(deleteEntry(session, id: entry))
+        waitUntil { drafts.versions(vaultID: session.draftVaultID, entryID: self.entry).isEmpty }
+        XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry), [])
+        XCTAssertTrue(session.pendingDraftDeletionIDs.isEmpty)
+    }
+
+    func testPermanentDeleteOfStaleIDKeepsDraftsAndPostsNothing() throws {
+        let (session, vaultStore, drafts) = try makeSessionWithEntryAndDraft()
+        let stale = UUID()
+        drafts.save(notes: "stale draft", vaultID: session.draftVaultID, entryID: stale)
+        var discarded = false
+        let token = NotificationCenter.default.addObserver(forName: .noteDraftsDiscarded, object: nil, queue: nil) { _ in discarded = true }
+        defer { NotificationCenter.default.removeObserver(token) }
+        let savesBefore = vaultStore.saveCount
+        XCTAssertTrue(deleteEntry(session, id: stale))
+        // Force a later durable save so a wrongly queued deletion would have run by now.
+        session.mutate { $0.rootGroup.entries[0].title = "later" }
+        waitUntil { vaultStore.saveCount > savesBefore }
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+        XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: stale).map(\.notes), ["stale draft"])
+        XCTAssertFalse(discarded)
+        XCTAssertTrue(session.pendingDraftDeletionIDs.isEmpty)
+    }
+
+    func testFailedSaveKeepsDraftsPending() throws {
+        let (session, vaultStore, drafts) = try makeSessionWithEntryAndDraft()
+        vaultStore.failWrites(with: CocoaError(.fileWriteNoPermission))
+        XCTAssertTrue(deleteEntry(session, id: entry))
+        waitUntil { session.lastSaveError != nil }
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry).map(\.notes), ["draft"])
+        XCTAssertEqual(session.pendingDraftDeletionIDs, [entry])
+    }
+
+    func testFailureFollowedByLaterSuccessDeletesTheDrafts() throws {
+        let (session, vaultStore, drafts) = try makeSessionWithEntryAndDraft()
+        vaultStore.failWrites(with: CocoaError(.fileWriteNoPermission))
+        XCTAssertTrue(deleteEntry(session, id: entry))
+        waitUntil { session.lastSaveError != nil }
+        XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry).map(\.notes), ["draft"])
+
+        vaultStore.failWrites(with: nil)
+        session.mutate { $0.rootGroup.name = "renamed" }
+        waitUntil { drafts.versions(vaultID: session.draftVaultID, entryID: self.entry).isEmpty }
+        XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry), [])
+        XCTAssertTrue(session.pendingDraftDeletionIDs.isEmpty)
+    }
+
+    func testLockBeforeSuccessKeepsDraftsAndClearsPending() throws {
+        let (session, vaultStore, drafts) = try makeSessionWithEntryAndDraft()
+        vaultStore.holdWrites()
+        XCTAssertTrue(deleteEntry(session, id: entry))
+        XCTAssertEqual(session.pendingDraftDeletionIDs, [entry])
+        session.lock()
+        XCTAssertTrue(session.pendingDraftDeletionIDs.isEmpty)
+        vaultStore.releaseWrites()
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+        drafts.unlock()
+        XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry).map(\.notes), ["draft"])
     }
 
     func testDraftVaultIDIsStableHexAndDiffersPerPath() {
