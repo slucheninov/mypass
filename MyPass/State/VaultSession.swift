@@ -267,6 +267,16 @@ final class VaultSession: ObservableObject, VaultFlushing {
         }
     }
 
+    /// Runs a permanent-delete `body` and drops the drafts of `entryIDs` only when `mutate`
+    /// accepted it. `mutate` returns false while locked or quitting; deleting the drafts first
+    /// would then lose them (and stop open editors) for entries that still exist.
+    @discardableResult
+    func mutateDeletingNoteDrafts(entryIDs: [UUID], _ body: (inout KdbxDatabase) -> Void) -> Bool {
+        guard mutate(body) else { return false }
+        deleteNoteDrafts(entryIDs: entryIDs)
+        return true
+    }
+
     var currentDatabase: KdbxDatabase? {
         guard case .unlocked(let db) = state else { return nil }
         return db
