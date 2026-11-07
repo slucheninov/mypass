@@ -103,9 +103,12 @@ struct KdbxInnerHeader: Equatable {
                     value: withUnsafeBytes(of: innerRandomStreamID.rawValue.littleEndian) { Data($0) })
         appendField(id: InnerHeaderFieldID.innerRandomStreamKey, value: innerRandomStreamKey)
         for binary in binaries {
-            var value = Data([binary.isProtected ? 0x01 : 0x00])
-            value.append(binary.content)
-            appendField(id: InnerHeaderFieldID.binary, value: value)
+            // Written straight into `out` (flag byte, then content) instead of via a
+            // temporary `Data`, which would hold a second copy of a large attachment.
+            out.append(InnerHeaderFieldID.binary)
+            out.append(contentsOf: withUnsafeBytes(of: Int32(binary.content.count + 1).littleEndian) { Data($0) })
+            out.append(binary.isProtected ? 0x01 : 0x00)
+            out.append(binary.content)
         }
         appendField(id: InnerHeaderFieldID.end, value: Data())
         return out

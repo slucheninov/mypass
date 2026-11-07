@@ -125,24 +125,49 @@ public enum MergeEngine {
             } else if r.lastModificationTime > l.lastModificationTime {
                 return appendToHistoryIfNeeded(winner: r, loser: l)
             } else {
-                return l
+                // Equal mtimes (KDBX stores whole seconds, so two devices can tie):
+                // keep local as current but do not lose a distinct remote version.
+                return appendToHistoryIfNeeded(winner: l, loser: r)
             }
         }
     }
 
+    /// Folds `loser` into `winner`'s history. Both entries' existing histories are
+    /// unioned too (the loser's own snapshots may carry attachments the winner never
+    /// saw), deduplicated on uuid, mtime, fields and attachments, oldest first.
+    /// `loser` itself is added as a snapshot only when it differs from the winner's
+    /// current content, so an equal-mtime merge of identical copies adds nothing.
     private static func appendToHistoryIfNeeded(winner: KdbxEntry, loser: KdbxEntry) -> KdbxEntry {
         var result = winner
-        var loserForHistory = loser
-        loserForHistory.history = []
-        let alreadyPresent = result.history.contains { historical in
-            historical.uuid == loserForHistory.uuid &&
-            historical.lastModificationTime == loserForHistory.lastModificationTime &&
-            historical.fields == loserForHistory.fields
+        var loserSnapshot = loser
+        loserSnapshot.history = []
+
+        var candidates = winner.history + loser.history
+        let sameAsWinner = loserSnapshot.lastModificationTime == winner.lastModificationTime &&
+            loserSnapshot.fields == winner.fields &&
+            loserSnapshot.attachments == winner.attachments
+        if !sameAsWinner {
+            candidates.append(loserSnapshot)
         }
-        if !alreadyPresent {
-            result.history.append(loserForHistory)
+
+        var merged: [KdbxEntry] = []
+        for candidate in candidates where !merged.contains(where: { isSameVersion($0, candidate) }) {
+            merged.append(candidate)
         }
+        // Stable oldest-first ordering; ties keep their union order.
+        result.history = merged.enumerated().sorted {
+            ($0.element.lastModificationTime, $0.offset) < ($1.element.lastModificationTime, $1.offset)
+        }.map(\.element)
         return result
+    }
+
+    private static func isSameVersion(_ a: KdbxEntry, _ b: KdbxEntry) -> Bool {
+        a.uuid == b.uuid &&
+            a.lastModificationTime == b.lastModificationTime &&
+            a.fields == b.fields &&
+            // An attachment-only change leaves uuid, mtime and fields equal; without this
+            // the losing version would be treated as already recorded and its attachments dropped.
+            a.attachments == b.attachments
     }
 
     // MARK: - Parent disambiguation for moves (rule 6)

@@ -71,6 +71,17 @@ public struct KdbxDatabase: Equatable {
     /// Mirrors KDBX4's `Meta/RecycleBinUUID`: a UUID reference to whichever
     /// group is currently the recycle bin, independent of that group's name.
     public var recycleBinGroupUUID: UUID?
+    /// Number of entry attachment records `open` skipped because their binary
+    /// reference was missing or invalid. Those records carry no bytes, so they
+    /// cannot be kept, and the next save will omit them; callers can use this to
+    /// warn first. Diagnostic only: excluded from `==`, and 0 for databases not
+    /// produced by `open`.
+    public var droppedAttachmentReferences: Int = 0
+
+    public static func == (lhs: KdbxDatabase, rhs: KdbxDatabase) -> Bool {
+        lhs.rootGroup == rhs.rootGroup && lhs.deletedObjects == rhs.deletedObjects &&
+            lhs.recycleBinGroupUUID == rhs.recycleBinGroupUUID
+    }
 
     public init(rootGroup: KdbxGroup, deletedObjects: [KdbxDeletedObject], recycleBinGroupUUID: UUID? = nil) {
         self.rootGroup = rootGroup
@@ -165,7 +176,7 @@ public struct KdbxDatabase: Equatable {
         // Step 9: XML payload (Task 14).
         let payload: KdbxXmlPayload
         do {
-            payload = try KdbxXmlCoder.decode(xmlData) { ciphertext in
+            payload = try KdbxXmlCoder.decode(xmlData, binaries: innerHeader.binaries) { ciphertext in
                 let keystream = streamCipher.nextBytes(ciphertext.count)
                 return Data(zip(ciphertext, keystream).map { $0 ^ $1 })
             }
@@ -173,7 +184,9 @@ public struct KdbxDatabase: Equatable {
             throw KdbxDatabaseError.corruptFile("xml payload: \(error)")
         }
 
-        return KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects, recycleBinGroupUUID: payload.recycleBinGroupUUID)
+        var database = KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects, recycleBinGroupUUID: payload.recycleBinGroupUUID)
+        database.droppedAttachmentReferences = payload.droppedAttachmentReferences
+        return database
     }
 
     public func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {
@@ -208,11 +221,15 @@ public struct KdbxDatabase: Equatable {
         let hmacKeyBase = KeyDerivation.hmacKeyBase(masterSeed: masterSeed, transformedKey: transformedKey)
 
         let innerStreamKey = Self.randomBytes(count: 64)
-        let innerHeader = KdbxInnerHeader(innerRandomStreamID: .chaCha20, innerRandomStreamKey: innerStreamKey, binaries: [])
+        // The inner-header binary pool is rebuilt from the model on every save
+        // (deduplicated, first-use order, unreferenced binaries dropped) so entry
+        // attachments - including those on history snapshots - are never lost.
+        let pool = KdbxAttachmentPool(collecting: rootGroup)
+        let innerHeader = KdbxInnerHeader(innerRandomStreamID: .chaCha20, innerRandomStreamKey: innerStreamKey, binaries: pool.binaries)
         let streamCipher = try InnerRandomStreamCipher(streamID: .chaCha20, rawKey: innerStreamKey)
 
         let payload = KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects, recycleBinGroupUUID: recycleBinGroupUUID)
-        let xmlData = KdbxXmlCoder.encode(payload) { plaintext in
+        let xmlData = KdbxXmlCoder.encode(payload, pool: pool) { plaintext in
             let keystream = streamCipher.nextBytes(plaintext.count)
             return Data(zip(plaintext, keystream).map { $0 ^ $1 })
         }
