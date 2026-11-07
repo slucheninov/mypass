@@ -103,6 +103,30 @@ final class KdbxXmlCoderAttachmentTests: XCTestCase {
         XCTAssertEqual(none.rootGroup.entries[0].attachments, [])
     }
 
+    func testDecodeCountsDroppedAttachmentReferencesAndKeepsTheRest() throws {
+        let xml = try xmlWithBinaries([("gone", "7"), ("bad", "x"), ("ok", "0")])
+        let bins = [KdbxInnerBinary(isProtected: true, content: Data([1]))]
+        let decoded = try KdbxXmlCoder.decode(xml, binaries: bins, deobfuscate: identity)
+        XCTAssertEqual(decoded.droppedAttachmentReferences, 2)
+        XCTAssertEqual(decoded.rootGroup.entries[0].attachments.map(\.name), ["ok"])
+
+        let hist = try KdbxXmlCoder.decode(try xmlWithBinaries([("gone", "7")], history: true),
+                                           binaries: bins, deobfuscate: identity)
+        XCTAssertEqual(hist.droppedAttachmentReferences, 1)
+
+        let clean = try KdbxXmlCoder.decode(try xmlWithBinaries([("ok", "0")]), binaries: bins, deobfuscate: identity)
+        XCTAssertEqual(clean.droppedAttachmentReferences, 0)
+    }
+
+    func testOpenedDatabaseExposesDroppedAttachmentReferencesWithoutAffectingEquality() throws {
+        let db = KdbxDatabase(rootGroup: payload([entry([att("a", [1])])]).rootGroup, deletedObjects: [])
+        let reopened = try KdbxDatabase.open(data: db.save(password: "pw", cipher: .chaCha20, compression: .none), password: "pw")
+        XCTAssertEqual(reopened.droppedAttachmentReferences, 0)
+        var flagged = reopened
+        flagged.droppedAttachmentReferences = 3
+        XCTAssertEqual(flagged, reopened)
+    }
+
     func testDuplicateNamesWithinOneEntryAreBothPreserved() throws {
         let p = payload([entry([att("dup.txt", [1]), att("dup.txt", [2])])])
         let pool = KdbxAttachmentPool(collecting: p.rootGroup)
