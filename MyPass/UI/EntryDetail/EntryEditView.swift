@@ -22,6 +22,8 @@ struct EntryEditView: View {
     @State private var entryID: UUID
     @EnvironmentObject private var vaultSession: VaultSession
     @State private var drafts: NoteDraftEditorModel?
+    @State private var attachmentsModel: AttachmentsEditModel
+    @State private var isDropTargeted = false
     @State private var otpauthInput: String = ""
     @State private var extraFields: [(key: String, value: String)] = []
     @State private var showPasswordGenerator = false
@@ -64,6 +66,7 @@ struct EntryEditView: View {
         _password = State(initialValue: existingEntry?.password ?? "")
         _url = State(initialValue: existingEntry?.url ?? "")
         _notes = State(initialValue: existingEntry?.notes ?? "")
+        _attachmentsModel = State(initialValue: AttachmentsEditModel(attachments: existingEntry?.attachments ?? []))
         _entryID = State(initialValue: existingEntry?.uuid ?? UUID())
         _extraFields = State(initialValue: (existingEntry?.additionalFields ?? [])
             .map { (key: $0.key, value: $0.value) })
@@ -212,6 +215,8 @@ struct EntryEditView: View {
                     }
                 }
 
+                AttachmentsEditSection(model: $attachmentsModel, isDropTargeted: isDropTargeted)
+
                 if existingEntry != nil {
                     Button("Delete", role: .destructive, action: onDelete)
                         .buttonStyle(.plain)
@@ -223,9 +228,11 @@ struct EntryEditView: View {
             .padding(.horizontal, 24)
         }
         .background(UIShellMetrics.detailColumnBackground)
+        .attachmentDrop(model: $attachmentsModel, isTargeted: $isDropTargeted)
         .navigationTitle(existingEntry == nil ? "New Entry" : "Edit Entry")
         .safeAreaInset(edge: .top, spacing: 0) {
-            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save)
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save,
+                               canSave: !attachmentsModel.isLoadingDrops)
         }
         .onAppear(perform: openDrafts)
         .onDisappear { drafts?.cancel() }
@@ -285,6 +292,7 @@ struct EntryEditView: View {
     }
 
     private func save() {
+        guard !attachmentsModel.isLoadingDrops else { return }
         if isReplacingTotp {
             showReplaceTotpAlert = true
             return
@@ -325,6 +333,7 @@ struct EntryEditView: View {
             locationChanged: now,
             history: []
         )
+        entry = attachmentsModel.applying(to: entry)
         entry.title = EntryEditSaveLogic.resolvedTitle(draftTitle: title, url: url)
         entry.login = login
         entry.password = password

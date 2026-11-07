@@ -15,6 +15,9 @@ enum EntryHistoryOperations {
     static func restoreVersion(_ version: KdbxEntry, into entry: inout KdbxEntry) {
         let current = entry
         entry.fields = version.fields
+        // Attachments are part of a version (history snapshots carry them), so a restore
+        // must bring them back too; the current ones are preserved by the snapshot below.
+        entry.attachments = version.attachments
         entry.lastModificationTime = Date()
         entry.lastAccessTime = Date()
         appendSnapshot(of: current, to: &entry)

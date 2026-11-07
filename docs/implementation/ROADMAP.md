@@ -24,3 +24,9 @@ the name "MyPass" in Google's passkey UI depends on the community registry.
       drafted for the submission are a hand-drawn re-creation of the key mark.
 - [ ] Google shows "MyPass" for newly created passkeys. Manual check; depends on Google
       ingesting the registry.
+
+## Entry history on save
+
+- [ ] Snapshot the stored entry into its history when an editor saves, honouring the vault's
+  `HistoryMaxItems` / `HistoryMaxSize`. Today edits made in the app replace the entry without a
+  history copy, so a removed attachment or overwritten field cannot be restored after Save.

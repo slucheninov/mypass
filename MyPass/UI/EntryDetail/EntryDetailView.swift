@@ -219,6 +219,8 @@ struct EntryDetailView: View {
                         }
                     }
 
+                    AttachmentsDetailSection(attachments: entry.attachments)
+
                     Button("View History") { showHistory = true }
                         .buttonStyle(.plain)
                         .foregroundStyle(Color.accentColor)

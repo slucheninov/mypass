@@ -88,4 +88,12 @@ final class AddressEntryTests: XCTestCase {
         XCTAssertEqual(restored.entryType, .address)
         XCTAssertTrue(restored.fields.filter { KdbxEntry.addressFieldKeys.contains($0.key) }.allSatisfy(\.isProtected))
     }
+
+    func testSavedEntryPreservesAttachments() {
+        let base = AddressEntryEditing.savedEntry(existing: nil, title: "A", address: ExtensionAddress(label: "Home", givenName: "", familyName: "", organization: "", addressLine1: "", addressLine2: "", city: "", region: "", postalCode: "", countryCode: "", countryName: "", phone: "", email: ""), favorite: false, notes: "")
+        var withFile = base
+        withFile.attachments = [KdbxAttachment(name: "f.bin", data: Data([7]), isProtected: false)]
+        let saved = AddressEntryEditing.savedEntry(existing: withFile, title: "B", address: ExtensionAddress(label: "Home", givenName: "", familyName: "", organization: "", addressLine1: "", addressLine2: "", city: "", region: "", postalCode: "", countryCode: "", countryName: "", phone: "", email: ""), favorite: false, notes: "")
+        XCTAssertEqual(saved.attachments, withFile.attachments)
+    }
 }

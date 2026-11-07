@@ -19,6 +19,8 @@ struct NotesEditView: View {
     @State private var preservedAdditionalFields: [KdbxField] = []
     @EnvironmentObject private var vaultSession: VaultSession
     @State private var drafts: NoteDraftEditorModel?
+    @State private var attachmentsModel: AttachmentsEditModel
+    @State private var isDropTargeted = false
 
     init(
         existingEntry: KdbxEntry?,
@@ -41,6 +43,7 @@ struct NotesEditView: View {
         _title = State(initialValue: existingEntry?.title ?? "")
         _notesBody = State(initialValue: existingEntry?.notesBody ?? "")
         _isFavorite = State(initialValue: existingEntry?.isFavorite ?? false)
+        _attachmentsModel = State(initialValue: AttachmentsEditModel(attachments: existingEntry?.attachments ?? []))
         _preservedAdditionalFields = State(initialValue: existingEntry?.additionalFields ?? [])
     }
 
@@ -70,6 +73,8 @@ struct NotesEditView: View {
             )
             .frame(maxHeight: .infinity)
 
+            AttachmentsEditSection(model: $attachmentsModel, isDropTargeted: isDropTargeted)
+
             if existingEntry != nil {
                 Button("Delete", role: .destructive, action: onDelete)
                     .buttonStyle(.plain)
@@ -81,9 +86,11 @@ struct NotesEditView: View {
         .padding(.top, 20)
         .padding(.bottom, 20)
         .background(UIShellMetrics.detailColumnBackground)
+        .attachmentDrop(model: $attachmentsModel, isTargeted: $isDropTargeted)
         .navigationTitle(existingEntry == nil ? "New Note" : "Edit Note")
         .safeAreaInset(edge: .top, spacing: 0) {
-            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save)
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save,
+                               canSave: !attachmentsModel.isLoadingDrops)
         }
         .onAppear(perform: openDrafts)
         .onDisappear { drafts?.cancel() }
@@ -111,6 +118,7 @@ struct NotesEditView: View {
     }
 
     private func save() {
+        guard !attachmentsModel.isLoadingDrops else { return }
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
             uuid: drafts?.entryID ?? entryID,
@@ -122,6 +130,7 @@ struct NotesEditView: View {
             locationChanged: now,
             history: []
         )
+        entry = attachmentsModel.applying(to: entry)
         entry.entryType = .notes
         entry.title = title
         entry.notesBody = notesBody
