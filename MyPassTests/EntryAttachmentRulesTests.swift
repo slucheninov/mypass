@@ -134,4 +134,51 @@ final class EntryAttachmentRulesTests: XCTestCase {
             XCTAssertEqual($0 as? AttachmentAddError, .unreadable(name: "nope"))
         }
     }
+
+    func testReadFileFollowsSymlinkToRegularFile() throws {
+        let target = tmp.appendingPathComponent("real.txt")
+        try Data([1, 2, 3]).write(to: target)
+        let link = tmp.appendingPathComponent("link.txt")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: target)
+        let result = try EntryAttachmentRules.readFile(at: link)
+        XCTAssertEqual(result.name, "link.txt")
+        XCTAssertEqual(result.data, Data([1, 2, 3]))
+    }
+
+    func testReadFileRejectsSymlinkToDirectory() throws {
+        let dir = tmp.appendingPathComponent("d")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: false)
+        let link = tmp.appendingPathComponent("dlink")
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: dir)
+        XCTAssertThrowsError(try EntryAttachmentRules.readFile(at: link)) {
+            XCTAssertEqual($0 as? AttachmentAddError, .notARegularFile(name: "dlink"))
+        }
+    }
+
+    func testBoundedReadStopsAfterLimitPlusOne() throws {
+        // Simulates a file that grew after the metadata check: the read must reject
+        // it, and must not have consumed more than limit + 1 bytes.
+        let file = tmp.appendingPathComponent("grown.bin")
+        try Data(count: EntryAttachmentRules.maxBytesPerFile + 10).write(to: file)
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        XCTAssertThrowsError(try EntryAttachmentRules.boundedRead(from: handle, name: "grown.bin")) {
+            XCTAssertEqual($0 as? AttachmentAddError, .fileTooLarge(name: "grown.bin"))
+        }
+        XCTAssertEqual(try handle.offset(), UInt64(EntryAttachmentRules.maxBytesPerFile + 1))
+    }
+
+    func testBoundedReadAcceptsExactlyTheLimit() throws {
+        let file = tmp.appendingPathComponent("max.bin")
+        try Data(count: EntryAttachmentRules.maxBytesPerFile).write(to: file)
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+        XCTAssertEqual(try EntryAttachmentRules.boundedRead(from: handle, name: "max.bin").count,
+                       EntryAttachmentRules.maxBytesPerFile)
+    }
+
+    func testSanitizedStripsControlCharacters() {
+        XCTAssertEqual(AttachmentFileName.sanitized("a\u{1}b\tc\nd\u{1F}e\u{7F}f.txt"), "abcdef.txt")
+        XCTAssertEqual(AttachmentFileName.sanitized("\u{7}\u{8}"), AttachmentFileName.fallback)
+    }
 }

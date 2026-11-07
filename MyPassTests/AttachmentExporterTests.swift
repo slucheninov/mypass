@@ -89,4 +89,12 @@ final class AttachmentExporterTests: XCTestCase {
         XCTAssertEqual(try Data(contentsOf: url), Data([1, 2, 3]))
         XCTAssertEqual(try listing(), ["out.bin"])
     }
+
+    func testVeryLongDestinationNameStillExports() throws {
+        // 200 bytes is under NAME_MAX (255) but a name-derived staging template
+        // (dot + name + suffix) would exceed it and fail with ENAMETOOLONG.
+        let url = dir.appendingPathComponent(String(repeating: "a", count: 240))
+        try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment())
+        XCTAssertEqual(try listing(), [url.lastPathComponent])
+    }
 }

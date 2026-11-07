@@ -23,7 +23,9 @@ struct AttachmentExportError: Error, Equatable {
 /// We also avoid `Data.write(options: .atomic)`: Apple documents only "an auxiliary
 /// file", and Foundation may place it in a `TemporaryItems` folder outside the
 /// destination directory. Instead we stage explicitly: `mkstemp` creates
-/// `<destination dir>/.<name>.mypass-XXXXXX` (mode 0600, same directory and volume),
+/// `<destination dir>/.mypass-export-XXXXXX` (mode 0600, same directory and volume;
+/// a fixed template, because one derived from the attachment name could exceed
+/// NAME_MAX and fail with ENAMETOOLONG),
 /// the bytes are written and `fsync`ed, and `rename(2)` swaps it over the destination.
 /// On any error the staging file is unlinked, so the destination directory ends up
 /// holding either the finished file or nothing new.
@@ -46,7 +48,7 @@ struct AttachmentExporter {
 
     private static func writeStagedInPlace(_ data: Data, to destination: URL) throws {
         let dir = destination.deletingLastPathComponent().path
-        var template = Array("\(dir)/.\(destination.lastPathComponent).mypass-XXXXXX".utf8CString)
+        var template = Array("\(dir)/.mypass-export-XXXXXX".utf8CString)
         let fd = mkstemp(&template)
         guard fd >= 0 else { throw AttachmentExportError(operation: "mkstemp", errnoValue: errno) }
         let stagingPath = String(cString: template)

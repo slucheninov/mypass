@@ -11,12 +11,17 @@ enum EntryAttachmentRules {
     static let maxBytesPerFile = 5 * 1024 * 1024
 
     /// Reads a file for attaching. The size is checked from metadata before any
-    /// bytes are read so a huge file is never loaded into memory.
+    /// bytes are read so a huge file is never loaded into memory, and the read itself
+    /// is bounded (see `boundedRead`) so a file that grows after that check is never
+    /// fully loaded either. Symlinks are resolved first: `isRegularFileKey` describes
+    /// the link itself, so without this a link to a regular file would be refused,
+    /// while a link to a directory still resolves to a directory and is refused.
     static func readFile(at url: URL) throws -> (name: String, data: Data) {
         let name = url.lastPathComponent
+        let resolved = url.resolvingSymlinksInPath()
         let values: URLResourceValues
         do {
-            values = try url.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .fileSizeKey])
+            values = try resolved.resourceValues(forKeys: [.isRegularFileKey, .isDirectoryKey, .fileSizeKey])
         } catch {
             throw AttachmentAddError.unreadable(name: name)
         }
@@ -26,16 +31,27 @@ enum EntryAttachmentRules {
         if let size = values.fileSize, size > maxBytesPerFile {
             throw AttachmentAddError.fileTooLarge(name: name)
         }
+        let handle: FileHandle
         do {
-            let data = try Data(contentsOf: url)
-            // The file may have grown between the metadata check and the read.
-            if data.count > maxBytesPerFile { throw AttachmentAddError.fileTooLarge(name: name) }
-            return (name, data)
-        } catch let error as AttachmentAddError {
-            throw error
+            handle = try FileHandle(forReadingFrom: resolved)
         } catch {
             throw AttachmentAddError.unreadable(name: name)
         }
+        defer { try? handle.close() }
+        return (name, try boundedRead(from: handle, name: name))
+    }
+
+    /// Reads at most `maxBytesPerFile + 1` bytes; one byte over the limit proves the
+    /// file is too large without loading the rest of it.
+    static func boundedRead(from handle: FileHandle, name: String) throws -> Data {
+        let data: Data
+        do {
+            data = try handle.read(upToCount: maxBytesPerFile + 1) ?? Data()
+        } catch {
+            throw AttachmentAddError.unreadable(name: name)
+        }
+        if data.count > maxBytesPerFile { throw AttachmentAddError.fileTooLarge(name: name) }
+        return data
     }
 }
 
@@ -63,12 +79,13 @@ enum AttachmentFileName {
     static let fallback = "attachment"
 
     /// Keeps only the last path component (so `../x/evil.txt` becomes `evil.txt`),
-    /// removes `:` and NUL, trims whitespace, and falls back for empty or dot-only names.
+    /// removes `:` and control characters (U+0000-U+001F, U+007F), trims whitespace, and falls back for empty or dot-only names.
     static func sanitized(_ raw: String) -> String {
         let lastComponent = raw.split(separator: "/", omittingEmptySubsequences: true).last.map(String.init) ?? ""
         let cleaned = lastComponent
             .replacingOccurrences(of: ":", with: "")
-            .replacingOccurrences(of: "\u{0}", with: "")
+            .unicodeScalars.filter { $0.value > 0x1F && $0.value != 0x7F }
+            .reduce(into: "") { $0.unicodeScalars.append($1) }
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if cleaned.isEmpty || cleaned == "." || cleaned == ".." { return fallback }
         return cleaned
