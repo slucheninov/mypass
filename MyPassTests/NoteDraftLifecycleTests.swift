@@ -178,17 +178,41 @@ final class NoteDraftLifecycleTests: XCTestCase {
         while !condition(), Date() < deadline { RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.02)) }
     }
 
-    /// An unlocked session holding one saved entry (`entry`) and a draft for it.
-    private func makeSessionWithEntryAndDraft() throws -> (VaultSession, ControllableVaultStore, NoteDraftStore) {
+    /// Counts saves that have fully reached the inner store (`ControllableVaultStore.saveCount`
+    /// goes up BEFORE the write, so it cannot say that a write is over).
+    private final class SaveCompletions {
+        private let lock = NSLock()
+        private var value = 0
+        var count: Int { lock.lock(); defer { lock.unlock() }; return value }
+        func increment() { lock.lock(); value += 1; lock.unlock() }
+    }
+
+    /// Lets the main-queue hop that follows a finished background write run.
+    private func drainMainQueue() {
+        let hop = expectation(description: "main queue drained")
+        DispatchQueue.main.async { hop.fulfill() }
+        wait(for: [hop], timeout: 5)
+        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.05))
+    }
+
+    /// An unlocked session holding one saved entry (`entry`) and a draft for it. Returns only
+    /// after the entry's own write completed, so a test that fails the next write fails the
+    /// delete, not the append.
+    private func makeSessionWithEntryAndDraft() throws
+        -> (VaultSession, ControllableVaultStore, NoteDraftStore, SaveCompletions) {
         let vaultStore = ControllableVaultStore(directory: dir.appendingPathComponent("vault"))
+        let completions = SaveCompletions()
+        vaultStore.onSaveCompleted { completions.increment() }
         let session = VaultSession(fileStore: vaultStore)
         let drafts = makeStore()
         session.noteDraftStore = drafts
         try session.unlock(password: "pw")
+        let baseline = completions.count
         session.mutate { $0.rootGroup.entries.append(self.makeEntry()) }
-        waitUntil { vaultStore.saveCount >= 1 }
+        waitUntil { completions.count > baseline }
+        XCTAssertGreaterThan(completions.count, baseline, "the entry write must complete")
         drafts.save(notes: "draft", vaultID: session.draftVaultID, entryID: entry)
-        return (session, vaultStore, drafts)
+        return (session, vaultStore, drafts, completions)
     }
 
     private func deleteEntry(_ session: VaultSession, id: UUID) -> Bool {
@@ -200,7 +224,7 @@ final class NoteDraftLifecycleTests: XCTestCase {
     }
 
     func testPermanentDeleteRemovesDraftsOnceTheSaveIsDurable() throws {
-        let (session, _, drafts) = try makeSessionWithEntryAndDraft()
+        let (session, _, drafts, _) = try makeSessionWithEntryAndDraft()
         XCTAssertTrue(deleteEntry(session, id: entry))
         waitUntil { drafts.versions(vaultID: session.draftVaultID, entryID: self.entry).isEmpty }
         XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry), [])
@@ -208,35 +232,37 @@ final class NoteDraftLifecycleTests: XCTestCase {
     }
 
     func testPermanentDeleteOfStaleIDKeepsDraftsAndPostsNothing() throws {
-        let (session, vaultStore, drafts) = try makeSessionWithEntryAndDraft()
+        let (session, vaultStore, drafts, completions) = try makeSessionWithEntryAndDraft()
         let stale = UUID()
         drafts.save(notes: "stale draft", vaultID: session.draftVaultID, entryID: stale)
         var discarded = false
         let token = NotificationCenter.default.addObserver(forName: .noteDraftsDiscarded, object: nil, queue: nil) { _ in discarded = true }
         defer { NotificationCenter.default.removeObserver(token) }
-        let savesBefore = vaultStore.saveCount
+        let savesBefore = completions.count
         XCTAssertTrue(deleteEntry(session, id: stale))
         // Force a later durable save so a wrongly queued deletion would have run by now.
         session.mutate { $0.rootGroup.entries[0].title = "later" }
-        waitUntil { vaultStore.saveCount > savesBefore }
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.3))
+        waitUntil { completions.count > savesBefore }
+        XCTAssertGreaterThan(completions.count, savesBefore)
+        drainMainQueue()
         XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: stale).map(\.notes), ["stale draft"])
         XCTAssertFalse(discarded)
         XCTAssertTrue(session.pendingDraftDeletionIDs.isEmpty)
     }
 
     func testFailedSaveKeepsDraftsPending() throws {
-        let (session, vaultStore, drafts) = try makeSessionWithEntryAndDraft()
+        let (session, vaultStore, drafts, completions) = try makeSessionWithEntryAndDraft()
         vaultStore.failWrites(with: CocoaError(.fileWriteNoPermission))
         XCTAssertTrue(deleteEntry(session, id: entry))
         waitUntil { session.lastSaveError != nil }
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.2))
+        XCTAssertNotNil(session.lastSaveError)
+        drainMainQueue()
         XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry).map(\.notes), ["draft"])
         XCTAssertEqual(session.pendingDraftDeletionIDs, [entry])
     }
 
     func testFailureFollowedByLaterSuccessDeletesTheDrafts() throws {
-        let (session, vaultStore, drafts) = try makeSessionWithEntryAndDraft()
+        let (session, vaultStore, drafts, completions) = try makeSessionWithEntryAndDraft()
         vaultStore.failWrites(with: CocoaError(.fileWriteNoPermission))
         XCTAssertTrue(deleteEntry(session, id: entry))
         waitUntil { session.lastSaveError != nil }
@@ -250,14 +276,17 @@ final class NoteDraftLifecycleTests: XCTestCase {
     }
 
     func testLockBeforeSuccessKeepsDraftsAndClearsPending() throws {
-        let (session, vaultStore, drafts) = try makeSessionWithEntryAndDraft()
+        let (session, vaultStore, drafts, completions) = try makeSessionWithEntryAndDraft()
+        let savesBefore = completions.count
         vaultStore.holdWrites()
         XCTAssertTrue(deleteEntry(session, id: entry))
         XCTAssertEqual(session.pendingDraftDeletionIDs, [entry])
         session.lock()
         XCTAssertTrue(session.pendingDraftDeletionIDs.isEmpty)
         vaultStore.releaseWrites()
-        RunLoop.current.run(until: Date(timeIntervalSinceNow: 0.5))
+        waitUntil { completions.count > savesBefore }
+        XCTAssertGreaterThan(completions.count, savesBefore, "the held write must finish")
+        drainMainQueue()
         drafts.unlock()
         XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry).map(\.notes), ["draft"])
     }
