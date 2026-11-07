@@ -17,18 +17,20 @@ struct AttachmentExportError: Error, Equatable {
 
 /// Saves one attachment to a location the user picked.
 ///
-/// Why this shape: attachment bytes must never exist as plaintext on disk
-/// anywhere except the destination the user explicitly chose. So there is no
-/// Quick Look preview, no `NSItemProvider` file promise and no `NSTemporaryDirectory` copy.
-/// We also avoid `Data.write(options: .atomic)`: Apple documents only "an auxiliary
-/// file", and Foundation may place it in a `TemporaryItems` folder outside the
-/// destination directory. Instead we stage explicitly: `mkstemp` creates
-/// `<destination dir>/.mypass-export-XXXXXX` (mode 0600, same directory and volume;
-/// a fixed template, because one derived from the attachment name could exceed
-/// NAME_MAX and fail with ENAMETOOLONG),
-/// the bytes are written and `fsync`ed, and `rename(2)` swaps it over the destination.
-/// On any error the staging file is unlinked, so the destination directory ends up
-/// holding either the finished file or nothing new.
+/// Why the write is direct: the app is sandboxed with `files.user-selected.read-write`,
+/// and `NSSavePanel` grants access to the chosen file only, not to its parent
+/// directory. A staging sibling (`mkstemp` next to the destination, then `rename`)
+/// would be denied there, so every save would fail in the shipped build.
+///
+/// Why there is no staging anywhere: attachment bytes must never exist as plaintext
+/// on disk except at the destination the user explicitly chose. No Quick Look, no
+/// `NSItemProvider` file promise, no `NSTemporaryDirectory` copy, and no
+/// `Data.write(options: .atomic)` either (Foundation may stage that in a
+/// `TemporaryItems` folder outside the destination). The file is opened with
+/// `O_TRUNC` and mode 0600, then `fchmod`ed to 0600 because an existing file keeps
+/// its old mode. On any error the partial destination is unlinked. Trade-off: a
+/// crash or power loss mid-write leaves at most a partial file at the user's chosen
+/// path; the save panel already confirmed any overwrite with the user.
 @MainActor
 struct AttachmentExporter {
     let panel: SavePanelPresenting
@@ -42,24 +44,22 @@ struct AttachmentExporter {
     func export(_ attachment: KdbxAttachment) throws -> URL? {
         let suggested = AttachmentFileName.sanitized(attachment.name)
         guard let destination = panel.chooseDestination(suggestedName: suggested) else { return nil }
-        try Self.writeStagedInPlace(attachment.data, to: destination)
+        try Self.writeDirectly(attachment.data, to: destination)
         return destination
     }
 
-    private static func writeStagedInPlace(_ data: Data, to destination: URL) throws {
-        let dir = destination.deletingLastPathComponent().path
-        var template = Array("\(dir)/.mypass-export-XXXXXX".utf8CString)
-        let fd = mkstemp(&template)
-        guard fd >= 0 else { throw AttachmentExportError(operation: "mkstemp", errnoValue: errno) }
-        let stagingPath = String(cString: template)
-        var closed = false
+    private static func writeDirectly(_ data: Data, to destination: URL) throws {
+        let path = destination.path
+        let fd = open(path, O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0o600)
+        guard fd >= 0 else { throw AttachmentExportError(operation: "open", errnoValue: errno) }
+        // Only a file this call just created or truncated is unlinked on failure.
         func fail(_ op: String) -> AttachmentExportError {
             let e = errno
-            if !closed { close(fd); closed = true }
-            unlink(stagingPath)
+            close(fd)
+            unlink(path)
             return AttachmentExportError(operation: op, errnoValue: e)
         }
-
+        if fchmod(fd, 0o600) != 0 { throw fail("fchmod") }
         var offset = 0
         while offset < data.count {
             let n = data.withUnsafeBytes { raw in
@@ -72,12 +72,10 @@ struct AttachmentExporter {
             offset += n
         }
         if fsync(fd) != 0 { throw fail("fsync") }
-        closed = true
-        if close(fd) != 0 { let e = errno; unlink(stagingPath); throw AttachmentExportError(operation: "close", errnoValue: e) }
-        if rename(stagingPath, destination.path) != 0 {
+        if close(fd) != 0 {
             let e = errno
-            unlink(stagingPath)
-            throw AttachmentExportError(operation: "rename", errnoValue: e)
+            unlink(path)
+            throw AttachmentExportError(operation: "close", errnoValue: e)
         }
     }
 }

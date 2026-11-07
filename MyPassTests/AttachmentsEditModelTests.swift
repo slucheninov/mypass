@@ -80,4 +80,14 @@ final class AttachmentsEditModelTests: XCTestCase {
         m.add(urls: [URL(fileURLWithPath: "/a/r.pdf"), URL(fileURLWithPath: "/b/r.pdf")], read: fakeRead)
         XCTAssertEqual(m.attachments.map(\.name), ["r.pdf", "r (2).pdf"])
     }
+
+    func testDeleteConfirmationOnlyForAlreadyStoredFiles() {
+        let stored = KdbxAttachment(name: "old.txt", data: Data([1]), isProtected: true)
+        var model = AttachmentsEditModel(attachments: [stored])
+        model.add(urls: [URL(fileURLWithPath: "/x/new.txt")], read: { _ in ("new.txt", Data([2])) })
+        XCTAssertEqual(model.attachments.map(\.name), ["old.txt", "new.txt"])
+        XCTAssertTrue(model.needsDeleteConfirmation(at: 0))
+        XCTAssertFalse(model.needsDeleteConfirmation(at: 1))
+        XCTAssertFalse(model.needsDeleteConfirmation(at: 5))
+    }
 }

@@ -1,4 +1,5 @@
 import MyPassKit
+import Darwin
 import XCTest
 @testable import MyPass
 
@@ -60,13 +61,14 @@ final class AttachmentExporterTests: XCTestCase {
         XCTAssertEqual(try listing(), [])
     }
 
-    func testRenameFailureCleansUpStagingFile() throws {
-        // Renaming a file over an existing directory fails after staging succeeded.
+    func testDirectoryDestinationFailsAndLeavesNothingNew() throws {
         let url = dir.appendingPathComponent("taken")
         try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
         XCTAssertThrowsError(try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment()))
+        var isDir: ObjCBool = false
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir))
+        XCTAssertTrue(isDir.boolValue)
         XCTAssertEqual(try listing(), ["taken"])
-        XCTAssertFalse(try listing().contains { $0.contains(".mypass-") })
     }
 
     func testSuccessLeavesOnlyTheDestinationInItsDirectory() throws {
@@ -85,9 +87,12 @@ final class AttachmentExporterTests: XCTestCase {
     func testOverwritesExistingDestination() throws {
         let url = dir.appendingPathComponent("out.bin")
         try Data([9, 9, 9, 9, 9]).write(to: url)
+        chmod(url.path, 0o644)
         try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment())
         XCTAssertEqual(try Data(contentsOf: url), Data([1, 2, 3]))
         XCTAssertEqual(try listing(), ["out.bin"])
+        let perms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(perms?.intValue, 0o600)
     }
 
     func testVeryLongDestinationNameStillExports() throws {

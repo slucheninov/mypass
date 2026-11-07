@@ -20,7 +20,7 @@ struct AttachmentsDetailSection: View {
                             Image(systemName: "doc")
                             Text(verbatim: attachment.name).lineLimit(1).truncationMode(.middle)
                             Spacer()
-                            Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .file))
+                            Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .binary))
                                 .foregroundStyle(.secondary)
                             Button("Save to disk…") { save(attachment) }
                         }
