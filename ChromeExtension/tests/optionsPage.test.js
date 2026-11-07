@@ -26,10 +26,11 @@ assert.ok(/<script[^>]+src="router\.js"/.test(html), 'router.js script tag');
 assert.ok(/<script[^>]+src="app\.js"/.test(html), 'app.js script tag');
 // Guard: every <script> must be external (has src) and carry no body.
 // Tag detection is case-insensitive and tolerant of attributes and of
-// whitespace before ">" in the closing tag (</script >).
+// any junk before ">" in the closing tag (</script >, </script\t\n bar>),
+// which browsers accept.
 function inlineScripts(source) {
   const bad = [];
-  const re = /<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi;
+  const re = /<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi;
   let m;
   while ((m = re.exec(source)) !== null) {
     const open = m[0].slice(0, m[0].indexOf('>') + 1);
@@ -41,6 +42,7 @@ assert.deepStrictEqual(inlineScripts(html), [], 'inline script forbidden by MV3 
 // Self-checks: the guard must fail on bad input.
 assert.strictEqual(inlineScripts('<SCRIPT>alert(1)</SCRIPT >').length, 1, 'upper-case inline script detected');
 assert.strictEqual(inlineScripts('<script>alert(1)</script\n>').length, 1, 'whitespace before > detected');
+assert.strictEqual(inlineScripts('<script>x</script\t\n bar>').length, 1, 'end tag with trailing junk detected');
 assert.strictEqual(inlineScripts('<script src="a.js">alert(1)</script>').length, 1, 'src with body detected');
 assert.strictEqual(inlineScripts('<ScRiPt src="a.js"></SCRIPT >').length, 0, 'external script accepted');
 assert.ok(html.includes('id="page-settings"'), 'settings pane container');
