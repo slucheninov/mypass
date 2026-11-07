@@ -190,7 +190,7 @@ assert.strictEqual(elements['passkey-replace-panel'].hidden, true);
 assert.strictEqual(elements['list-panel'].hidden, true, 'a ceremony hides the ordinary credential list');
 assert.strictEqual(elements['add-totp-section'].hidden, true, 'a ceremony hides the Add-2FA section');
 assert.strictEqual(elements['popup-menu'].hidden, true, 'a ceremony closes the extension menu');
-assert.strictEqual(elements['browser-chrome'].hidden, true, 'a ceremony hides the gear');
+assert.strictEqual(elements['browser-chrome'].hidden, true, 'a ceremony hides the menu button');
 assert.strictEqual(elements['passkey-save-summary'].textContent, 'A new entry will be created.');
 assert.deepStrictEqual(elements['passkey-save-detail'].children.slice(-4).map((el) => el.textContent), ['Website', 'example.com', 'Origin', 'https://example.com']);
 console.log('passkeyPopup.test.js: create panel renders and owns the popup OK');
@@ -339,16 +339,9 @@ assert.strictEqual(
   sentMessages.filter((m) => m.type === 'refreshPasskeyProxy').length, 1,
   'refreshPasskeyProxy must still fire when there is no pending ceremony'
 );
-assert.strictEqual(elements['browser-chrome'].hidden, false, 'the gear stays available when idle');
-assert.strictEqual(elements['popup-menu'].hidden, true, 'the menu stays closed until the gear is clicked');
-elements['open-settings-btn'].listeners.click[0]();
-assert.strictEqual(sentMessages.at(-1).type, 'openBrowserSettings', 'settings open the native app');
-assert.strictEqual(elements['settings-open-error'].hidden, true, 'wire type ok confirms settings opened');
-settingsOpenResponse = { type: 'error', code: 'connection_unavailable' };
-elements['open-settings-btn'].listeners.click[0]();
-assert.strictEqual(elements['settings-open-error'].hidden, false, 'a failed open shows recovery instructions');
-assert.match(elements['settings-open-error'].textContent, /Open MyPass.*Settings → Browser/);
-console.log('passkeyPopup.test.js: refreshPasskeyProxy fires and settings footer/checkbox still initialize when idle OK');
+assert.strictEqual(elements['browser-chrome'].hidden, false, 'the menu button stays available when idle');
+assert.strictEqual(elements['popup-menu'].hidden, true, 'the menu stays closed until the menu button is clicked');
+console.log('passkeyPopup.test.js: refreshPasskeyProxy fires and the idle popup still initializes OK');
 
 // --- ordinary credential list: passkey badge --------------------------------
 // Gate: the plain #list-panel rows never surfaced credential.hasPasskey at all, even

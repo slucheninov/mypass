@@ -55,7 +55,11 @@ enum DetailPresentation: Equatable, Hashable {
 
 final class NavigationState: ObservableObject {
     @Published var selectedGroupID: UUID?
-    @Published var selectedEntryID: UUID?
+    @Published var selectedEntryID: UUID? {
+        // Notes re-hide whenever the selection changes so a reveal never carries over to another entry.
+        didSet { if oldValue != selectedEntryID { notesReveal.hide() } }
+    }
+    @Published var notesReveal = NotesRevealState()
     @Published var searchText: String = ""
     @Published var selectedSmartCategory: SmartCategory = .all
     @Published var pendingSaveProposal: PendingSaveProposal?
@@ -66,6 +70,10 @@ final class NavigationState: ObservableObject {
     @Published var activeCategoryFilter: SmartCategory = .all
     /// When Security is selected from group scope, keep list on the current group instead of vault-wide All.
     @Published private(set) var securityUsesGroupScope: Bool = false
+
+    func hideNotes() {
+        notesReveal.hide()
+    }
 
     func selectSmartCategory(_ category: SmartCategory) {
         if !isCategoryMode || selectedSmartCategory != category {

@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MyPassKit
 
 struct ContentView: View {
@@ -18,6 +19,13 @@ struct ContentView: View {
         // columns manage their own toolbar inset — see `UpdateBannerAccessoryController`.
         vaultContent
             .updateBannerAccessory()
+            // A reopened window never shows a previously revealed note. Lock is handled
+            // app-wide by NotesAutoHide so it also works with no window open.
+            .onAppear { navigationState.hideNotes() }
+            // Minimize re-hides notes; focus loss deliberately does not (spec).
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
+                navigationState.hideNotes()
+            }
             .onChange(of: navigationState.pendingPairingCode) { _, code in
                 MainWindowActivator.setMainWindowFloating(code != nil)
             }
