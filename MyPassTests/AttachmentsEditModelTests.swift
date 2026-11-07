@@ -121,4 +121,28 @@ final class AttachmentsEditModelTests: XCTestCase {
         m.finishDropLoad(urls: [], read: fakeRead)
         XCTAssertEqual(m.pendingLoads, 0)
     }
+
+    func testErrorSurvivesLaterSuccessfulDrop() {
+        var m = AttachmentsEditModel()
+        m.beginDropLoad()
+        m.beginDropLoad()
+        m.finishDropLoad(urls: [nil], read: fakeRead)
+        m.finishDropLoad(urls: [URL(fileURLWithPath: "/x/ok.txt")], read: fakeRead)
+        XCTAssertEqual(m.attachments.map(\.name), ["ok.txt"])
+        XCTAssertEqual(m.errorMessage, AttachmentAddError.dropLoadFailed.errorDescription)
+    }
+
+    func testTwoFailuresBothAppear() {
+        var m = AttachmentsEditModel()
+        m.add(urls: [], extraErrors: ["first"], read: fakeRead)
+        m.add(urls: [], extraErrors: ["second"], read: fakeRead)
+        XCTAssertEqual(m.errorMessage, "first\nsecond")
+    }
+
+    func testDismissClearsError() {
+        var m = AttachmentsEditModel()
+        m.add(urls: [], extraErrors: ["boom"], read: fakeRead)
+        m.dismissError()
+        XCTAssertNil(m.errorMessage)
+    }
 }

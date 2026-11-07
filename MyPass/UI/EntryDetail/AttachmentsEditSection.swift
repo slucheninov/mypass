@@ -62,7 +62,11 @@ struct AttachmentsEditModel: Equatable {
             }
         }
         attachments = scratch.attachments
-        errorMessage = messages.isEmpty ? nil : messages.joined(separator: "\n")
+        // Errors are sticky: overlapping drops must not let a later success hide an
+        // earlier failure. New messages append; only `dismissError()` clears them.
+        if !messages.isEmpty {
+            errorMessage = ([errorMessage].compactMap { $0 } + messages).joined(separator: "\n")
+        }
     }
 
     mutating func beginDropLoad() { pendingLoads += 1 }
@@ -82,8 +86,10 @@ struct AttachmentsEditModel: Equatable {
     mutating func remove(at index: Int) {
         guard attachments.indices.contains(index) else { return }
         attachments.remove(at: index)
-        errorMessage = nil
     }
+
+    /// Explicit user acknowledgement of the pending error message.
+    mutating func dismissError() { errorMessage = nil }
 
     /// Existing attachments keep their `isProtected` flags because they are carried
     /// over as-is; only new ones come in as protected (see `addingAttachment`).
@@ -119,7 +125,11 @@ struct AttachmentsEditSection: View {
                 Text("Drop files to attach").foregroundStyle(.secondary)
             }
             if let message = model.errorMessage {
-                Text(verbatim: message).foregroundStyle(.red).font(.callout)
+                HStack(alignment: .firstTextBaseline) {
+                    Text(verbatim: message).foregroundStyle(.red).font(.callout)
+                    Spacer()
+                    Button("OK") { model.dismissError() }
+                }
             }
         }
         .padding(12)
