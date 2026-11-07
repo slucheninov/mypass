@@ -151,6 +151,31 @@ final class NoteDraftLifecycleTests: XCTestCase {
         XCTAssertEqual(store.versions(vaultID: session.draftVaultID, entryID: entry), [])
     }
 
+    func testPermanentDeleteKeepsDraftsWhenMutateIsRejected() {
+        let store = makeStore()
+        let session = VaultSession(fileStore: VaultFileStore(directory: dir.appendingPathComponent("vault")))
+        session.noteDraftStore = store
+        store.save(notes: "keep me", vaultID: session.draftVaultID, entryID: entry)
+        var discarded = false
+        let token = NotificationCenter.default.addObserver(forName: .noteDraftsDiscarded, object: nil, queue: nil) { _ in discarded = true }
+        defer { NotificationCenter.default.removeObserver(token) }
+        // Locked session: mutate returns false.
+        XCTAssertFalse(session.mutateDeletingNoteDrafts(entryIDs: [entry]) { _ in })
+        XCTAssertEqual(store.versions(vaultID: session.draftVaultID, entryID: entry).map(\.notes), ["keep me"])
+        XCTAssertFalse(discarded)
+    }
+
+    func testPermanentDeleteRemovesDraftsWhenMutateSucceeds() throws {
+        let store = makeStore()
+        let session = VaultSession(fileStore: VaultFileStore(directory: dir.appendingPathComponent("vault")))
+        session.noteDraftStore = store
+        try session.unlock(password: "pw")
+        store.unlock()
+        store.save(notes: "gone", vaultID: session.draftVaultID, entryID: entry)
+        XCTAssertTrue(session.mutateDeletingNoteDrafts(entryIDs: [entry]) { _ in })
+        XCTAssertEqual(store.versions(vaultID: session.draftVaultID, entryID: entry), [])
+    }
+
     func testDraftVaultIDIsStableHexAndDiffersPerPath() {
         let a = VaultSession.draftVaultID(forPath: "/a/vault.kdbx")
         XCTAssertEqual(a, VaultSession.draftVaultID(forPath: "/a/vault.kdbx"))

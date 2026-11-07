@@ -116,10 +116,11 @@ struct GroupSidebarView: View {
     }
 
     private func emptyRecycleBin() {
+        var entryIDs: [UUID] = []
         if let uuid = recycleBinGroupUUID, let bin = rootGroup.subgroups.first(where: { $0.uuid == uuid }) {
-            vaultSession.deleteNoteDrafts(entryIDs: EntrySearch.allEntries(in: bin).map(\.uuid))
+            entryIDs = EntrySearch.allEntries(in: bin).map(\.uuid)
         }
-        vaultSession.mutate { database in
+        vaultSession.mutateDeletingNoteDrafts(entryIDs: entryIDs) { database in
             GroupTreeOperations.emptyRecycleBin(
                 in: database.rootGroup,
                 deletedObjects: &database.deletedObjects,
