@@ -27,10 +27,14 @@ enum NoteDraftRecovery {
     /// the entry type, so a notes editor may be offered a login-note draft and vice versa;
     /// any orphan is acceptable (restoring only fills the notes text).
     static func newestOrphan(candidates: [(entryID: UUID, versions: [NoteDraftVersion])],
-                             databaseEntryIDs: Set<UUID>) -> Orphan? {
+                             databaseEntryIDs: Set<UUID>,
+                             excluding activeEntryIDs: Set<UUID> = []) -> Orphan? {
         var best: Orphan?
-        for candidate in candidates where !databaseEntryIDs.contains(candidate.entryID) {
-            guard let draft = candidate.versions.max(by: { $0.savedAt < $1.savedAt }) else { continue }
+        for candidate in candidates where !databaseEntryIDs.contains(candidate.entryID)
+            && !activeEntryIDs.contains(candidate.entryID) {
+            // Empty versions are not worth recovering: fall through to the newest non-empty one.
+            guard let draft = candidate.versions.filter({ !$0.notes.isEmpty })
+                .max(by: { $0.savedAt < $1.savedAt }) else { continue }
             if best == nil || draft.savedAt > best!.draft.savedAt {
                 best = Orphan(entryID: candidate.entryID, draft: draft)
             }

@@ -188,6 +188,40 @@ final class NoteDraftLifecycleTests: XCTestCase {
         XCTAssertNil(NoteDraftRecovery.newestOrphan(candidates: [(saved, [v("x", 1)])], databaseEntryIDs: [saved]))
     }
 
+    func testOrphanOwnedByLiveEditorIsExcluded() {
+        let live = UUID(), dead = UUID()
+        let o = NoteDraftRecovery.newestOrphan(
+            candidates: [(live, [v("live", 50)]), (dead, [v("dead", 1)])],
+            databaseEntryIDs: [], excluding: [live])
+        XCTAssertEqual(o?.entryID, dead)
+        XCTAssertNil(NoteDraftRecovery.newestOrphan(candidates: [(live, [v("live", 50)])],
+                                                    databaseEntryIDs: [], excluding: [live]))
+    }
+
+    func testOrphanWithOnlyEmptyVersionsIsSkippedAndOlderNonEmptyWins() {
+        let emptyOnly = UUID(), mixed = UUID()
+        let o = NoteDraftRecovery.newestOrphan(
+            candidates: [(emptyOnly, [v("", 90)]), (mixed, [v("", 80), v("text", 10)])], databaseEntryIDs: [])
+        XCTAssertEqual(o?.entryID, mixed)
+        XCTAssertEqual(o?.draft.notes, "text")
+        XCTAssertNil(NoteDraftRecovery.newestOrphan(candidates: [(emptyOnly, [v("", 90)])], databaseEntryIDs: []))
+    }
+
+    func testSecondCreateEditorDoesNotOfferFirstEditorsDraft() {
+        let store = makeStore()
+        let first = NoteDraftEditorModel(store: store, vaultID: vault, entryID: UUID(), savedNotes: "",
+                                         entryLastModified: nil, databaseEntryIDs: [])
+        first.controller.noteTextChanged("window A typing")
+        first.controller.flush()
+        let second = NoteDraftEditorModel(store: store, vaultID: vault, entryID: UUID(), savedNotes: "",
+                                          entryLastModified: nil, databaseEntryIDs: [])
+        XCTAssertNil(second.pendingDraft)
+        first.discardAfterSave()
+        let third = NoteDraftEditorModel(store: store, vaultID: vault, entryID: UUID(), savedNotes: "",
+                                         entryLastModified: nil, databaseEntryIDs: [])
+        XCTAssertNil(third.pendingDraft) // saved and deleted, nothing left
+    }
+
     func testDraftEntryIDsListsFilesOfThisVaultOnly() {
         let store = makeStore()
         let other = UUID()

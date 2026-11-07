@@ -24,6 +24,11 @@ final class NoteDraftController: ObservableObject {
     /// Set after Save: the draft was deleted and the disappearing editor must not recreate it.
     private var isFinished = false
     private var observers: ObserverBag?
+    private var isRegistered = false
+
+    /// Entry IDs owned by a live editor in any window. A second create editor must not
+    /// offer one of these as a recoverable orphan: adopting it would give two entries one UUID.
+    static var activeEntryIDs: Set<UUID> { ActiveEntryRegistry.shared.ids }
 
     init(store: NoteDraftStore,
          vaultID: String,
@@ -36,6 +41,12 @@ final class NoteDraftController: ObservableObject {
         self.now = now
         self.latestText = baselineNotes
         self.lastPersistedText = baselineNotes
+        ActiveEntryRegistry.shared.add(entryID)
+        isRegistered = true
+    }
+
+    deinit {
+        if isRegistered { ActiveEntryRegistry.shared.remove(entryID) }
     }
 
     /// False when the Keychain key is unavailable; the editor then works without drafts.
@@ -73,12 +84,18 @@ final class NoteDraftController: ObservableObject {
 
     /// Re-targets autosave at an orphaned draft's entry (create editor adopting a recovered draft).
     func adopt(entryID newID: UUID) {
+        if isRegistered { ActiveEntryRegistry.shared.remove(entryID) }
         entryID = newID
+        if isRegistered { ActiveEntryRegistry.shared.add(newID) }
     }
 
     /// Stops all writing for good (after Save has deleted the drafts).
     func finish() {
         isFinished = true
+        if isRegistered {
+            ActiveEntryRegistry.shared.remove(entryID)
+            isRegistered = false
+        }
     }
 
     func tick() {
@@ -107,4 +124,27 @@ private final class ObserverBag {
     var center: NotificationCenter?
     var tokens: [NSObjectProtocol] = []
     deinit { tokens.forEach { center?.removeObserver($0) } }
+}
+
+/// Reference-counted set of entry IDs with a live controller (thread-safe so `deinit` can use it).
+final class ActiveEntryRegistry {
+    static let shared = ActiveEntryRegistry()
+    private let lock = NSLock()
+    private var counts: [UUID: Int] = [:]
+
+    var ids: Set<UUID> {
+        lock.lock(); defer { lock.unlock() }
+        return Set(counts.keys)
+    }
+
+    func add(_ id: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        counts[id, default: 0] += 1
+    }
+
+    func remove(_ id: UUID) {
+        lock.lock(); defer { lock.unlock() }
+        guard let n = counts[id] else { return }
+        if n <= 1 { counts[id] = nil } else { counts[id] = n - 1 }
+    }
 }

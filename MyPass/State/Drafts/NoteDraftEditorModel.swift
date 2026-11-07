@@ -41,7 +41,8 @@ final class NoteDraftEditorModel: ObservableObject {
             let candidates = store.draftEntryIDs(vaultID: vaultID)
                 .filter { $0 != entryID }
                 .map { (entryID: $0, versions: store.versions(vaultID: vaultID, entryID: $0)) }
-            if let orphan = NoteDraftRecovery.newestOrphan(candidates: candidates, databaseEntryIDs: known) {
+            if let orphan = NoteDraftRecovery.newestOrphan(candidates: candidates, databaseEntryIDs: known,
+                excluding: NoteDraftController.activeEntryIDs) {
                 offeredEntryID = orphan.entryID
                 versions = candidates.first { $0.entryID == orphan.entryID }?.versions ?? []
                 pendingDraft = NoteDraftRecovery.pendingDraft(
