@@ -14,7 +14,7 @@ struct NotesEditView: View {
     @State private var title: String = ""
     @State private var notesBody: String = ""
     @State private var isFavorite: Bool
-    @State private var pendingMarkdownAction: MarkdownWrapAction?
+    @State private var entryID: UUID
     @State private var preservedAdditionalFields: [KdbxField] = []
 
     init(
@@ -34,6 +34,7 @@ struct NotesEditView: View {
         self.onSave = onSave
         self.onDelete = onDelete
         _selectedGroupID = State(initialValue: defaultGroupID)
+        _entryID = State(initialValue: existingEntry?.uuid ?? UUID())
         _title = State(initialValue: existingEntry?.title ?? "")
         _notesBody = State(initialValue: existingEntry?.notesBody ?? "")
         _isFavorite = State(initialValue: existingEntry?.isFavorite ?? false)
@@ -41,10 +42,10 @@ struct NotesEditView: View {
     }
 
     var body: some View {
-        VStack(spacing: 16) {
-            HStack {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(alignment: .firstTextBaseline) {
                 TextField("Title", text: $title)
-                    .font(.system(size: 17, weight: .semibold))
+                    .font(.system(size: 28, weight: .bold))
                     .textFieldStyle(.plain)
                 GroupPickerView(
                     rootGroup: rootGroup,
@@ -52,23 +53,26 @@ struct NotesEditView: View {
                     selectedGroupID: $selectedGroupID
                 )
             }
-            .padding(.horizontal, 24)
-            .padding(.top, 20)
 
-            markdownToolbar
-                .padding(.horizontal, 24)
-
-            MarkdownTextEditor(text: $notesBody, wrapAction: $pendingMarkdownAction)
-                .padding(.horizontal, 20)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            // Draft controller is nil until the store is wired in.
+            NotesEditorCard(
+                text: $notesBody,
+                entryID: entryID,
+                controller: nil,
+                showsMarkdownToolbar: true
+            )
+            .frame(maxHeight: .infinity)
 
             if existingEntry != nil {
                 Button("Delete", role: .destructive, action: onDelete)
                     .buttonStyle(.plain)
                     .foregroundStyle(.red)
-                    .padding(.bottom, 20)
+                    .frame(maxWidth: .infinity)
             }
         }
+        .padding(.horizontal, 24)
+        .padding(.top, 20)
+        .padding(.bottom, 20)
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Note" : "Edit Note")
         .safeAreaInset(edge: .top, spacing: 0) {
@@ -76,30 +80,10 @@ struct NotesEditView: View {
         }
     }
 
-    // Only B/I/inline-code are offered here: U, H1-H3, HR, and fenced code blocks all
-    // require block-level or raw-HTML rendering that NotesBodyRenderer's plain-Text
-    // display can't show (see NotesBodyRenderer's doc comment) — offering a formatting
-    // action with no visible effect would be worse than not offering it at all.
-    private var markdownToolbar: some View {
-        HStack(spacing: 8) {
-            toolbarButton("bold", "B") { pendingMarkdownAction = .wrap(prefix: "**", suffix: "**") }
-            toolbarButton("italic", "I") { pendingMarkdownAction = .wrap(prefix: "*", suffix: "*") }
-            Divider().frame(height: 16)
-            toolbarButton("code", "`code`") { pendingMarkdownAction = .wrap(prefix: "`", suffix: "`") }
-            Spacer(minLength: 0)
-        }
-    }
-
-    private func toolbarButton(_ id: String, _ label: String, action: @escaping () -> Void) -> some View {
-        Button(label, action: action)
-            .buttonStyle(.bordered)
-            .accessibilityIdentifier("markdownToolbar.\(id)")
-    }
-
     private func save() {
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
-            uuid: UUID(),
+            uuid: NotesEditSaveLogic.entryUUID(existing: existingEntry, generated: entryID),
             iconID: 0,
             fields: [],
             creationTime: now,

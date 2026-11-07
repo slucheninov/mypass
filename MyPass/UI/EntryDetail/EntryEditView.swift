@@ -17,6 +17,8 @@ struct EntryEditView: View {
     @State private var password: String = ""
     @State private var url: String = ""
     @State private var notes: String = ""
+    // Draft key for the notes card; a new entry keeps this UUID on save.
+    @State private var entryID: UUID
     @State private var otpauthInput: String = ""
     @State private var extraFields: [(key: String, value: String)] = []
     @State private var showPasswordGenerator = false
@@ -59,6 +61,7 @@ struct EntryEditView: View {
         _password = State(initialValue: existingEntry?.password ?? "")
         _url = State(initialValue: existingEntry?.url ?? "")
         _notes = State(initialValue: existingEntry?.notes ?? "")
+        _entryID = State(initialValue: existingEntry?.uuid ?? UUID())
         _extraFields = State(initialValue: (existingEntry?.additionalFields ?? [])
             .map { (key: $0.key, value: $0.value) })
         _isFavorite = State(initialValue: existingEntry?.isFavorite ?? false)
@@ -133,9 +136,9 @@ struct EntryEditView: View {
                         .foregroundStyle(.secondary)
                     Divider().overlay(Color.primary.opacity(0.08))
 
-                    TextField("Notes", text: $notes, axis: .vertical)
-                        .lineLimit(3...8)
-                        .frame(minHeight: 80)
+                    // Login notes are plain text, so the card omits the markdown toolbar.
+                    // Draft controller is nil until the store is wired in.
+                    NotesEditorCard(text: $notes, entryID: entryID, controller: nil)
                     Divider().overlay(Color.primary.opacity(0.08))
 
                     if showOTPField {
@@ -280,7 +283,7 @@ struct EntryEditView: View {
     private func performSave() {
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
-            uuid: UUID(),
+            uuid: NotesEditSaveLogic.entryUUID(existing: existingEntry, generated: entryID),
             iconID: 0,
             fields: [],
             creationTime: now,
