@@ -78,6 +78,20 @@ const POPUP_PAIRING_STORAGE_KEY = 'pairingSecret';
 // planned. It does not reliably close, so it polls the vault instead of stranding the
 // user on a stale locked panel with only Retry.
 const UNLOCK_POLL_INTERVAL_MS = 800;
+
+// Locked-panel auto refresh. One module-level handle so repeated showPanel('locked')
+// calls cannot stack intervals and leaving the locked state always clears it.
+const LOCKED_POLL_INTERVAL_MS = 2000;
+let lockedPollHandle = null;
+function startLockedPolling(reload) {
+  if (lockedPollHandle !== null) return;
+  lockedPollHandle = setInterval(reload, LOCKED_POLL_INTERVAL_MS);
+}
+function stopLockedPolling() {
+  if (lockedPollHandle === null) return;
+  clearInterval(lockedPollHandle);
+  lockedPollHandle = null;
+}
 const UNLOCK_POLL_MAX_ATTEMPTS = 75; // 800 ms x 75 = 60 s of real unlocking time
 const WAITING_FOR_UNLOCK_TEXT = 'Waiting for you to unlock MyPass\u2026';
 
@@ -534,7 +548,6 @@ if (typeof document !== 'undefined') {
   const lockedPanel = document.getElementById('locked-panel');
   const lockedTitleEl = document.getElementById('locked-title');
   const lockedHelperEl = document.getElementById('locked-helper');
-  const lockedRetryBtn = document.getElementById('locked-retry-btn');
   const lockedUnlockBtn = document.getElementById('locked-unlock-btn');
 
   const appUnavailablePanel = document.getElementById('app-unavailable-panel');
@@ -691,6 +704,15 @@ if (typeof document !== 'undefined') {
       section.hidden = true;
     }
     openMypassHelper.hidden = true;
+    // The locked view is only the key, the title, the subtitle and Unlock. With no
+    // Retry button the popup has to notice an unlock by itself, so the locked panel
+    // polls; every other panel stops that single timer.
+    if (name === 'locked') {
+      addTotpSection.hidden = true;
+      startLockedPolling(reloadCurrentContext);
+    } else {
+      stopLockedPolling();
+    }
     // Approval owns the popup; unrelated actions must not interrupt a ceremony.
     if (PASSKEY_PANELS.includes(name) || name === 'prompt') {
       addTotpSection.hidden = true;
@@ -1037,12 +1059,8 @@ if (typeof document !== 'undefined') {
 
   function presentLockedPanel() {
     showPanel('locked');
-    lockedRetryBtn.onclick = () => reloadCurrentContext();
     lockedUnlockBtn.textContent = UNLOCK_BUTTON_LABEL;
     lockedUnlockBtn.onclick = () => requestUnlock();
-    chrome.storage.local.get(POPUP_PAIRING_STORAGE_KEY, (stored) => {
-      lockedUnlockBtn.hidden = !shouldShowUnlockButton(stored[POPUP_PAIRING_STORAGE_KEY]);
-    });
   }
 
   function reloadCurrentContext() {
@@ -2165,6 +2183,8 @@ if (typeof document !== 'undefined') {
     });
   };
   initPasskeyPopupUI();
+  // Test harnesses run this block without a window.
+  if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('pagehide', stopLockedPolling);
 }
 
 if (typeof module !== 'undefined') {
@@ -2186,6 +2206,9 @@ if (typeof module !== 'undefined') {
     isSiteUrl,
     PAIRING_PANEL_TITLE_TEXT,
     shouldShowUnlockButton,
+    LOCKED_POLL_INTERVAL_MS,
+    startLockedPolling,
+    stopLockedPolling,
     classifyRequestUnlockResponse,
     UNLOCK_BUTTON_LABEL,
     POPUP_PAIRING_STORAGE_KEY,
