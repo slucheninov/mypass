@@ -8946,6 +8946,98 @@
           }
         }
       }
+    },
+    "An entry can have at most 8 files." : {
+      "comment" : "Attachment add error",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "An entry can have at most 8 files."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В записи может быть не более 8 файлов."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Запис може мати не більше 8 файлів."
+          }
+        }
+      }
+    },
+    "“%@” is larger than 5 MB." : {
+      "comment" : "Attachment add error; argument is the file name",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@” is larger than 5 MB."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%@» больше 5 МБ."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%@» більший за 5 МБ."
+          }
+        }
+      }
+    },
+    "“%@” could not be read." : {
+      "comment" : "Attachment add error; argument is the file name",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@” could not be read."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось прочитать «%@»."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося прочитати «%@»."
+          }
+        }
+      }
+    },
+    "“%@” is a folder, not a file." : {
+      "comment" : "Attachment add error; argument is the file name",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "“%@” is a folder, not a file."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%@» — это папка, а не файл."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "«%@» — це папка, а не файл."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
