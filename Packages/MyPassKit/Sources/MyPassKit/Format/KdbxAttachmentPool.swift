@@ -52,6 +52,8 @@ struct KdbxAttachmentPool: Equatable {
         return index
     }
 
+    // Only one level of history is collected: history entries are snapshots that
+    // never nest (see `KdbxEntry`), so a snapshot's own `history` is always empty.
     private mutating func collect(_ group: KdbxGroup) {
         for entry in group.entries {
             add(entry.attachments)
