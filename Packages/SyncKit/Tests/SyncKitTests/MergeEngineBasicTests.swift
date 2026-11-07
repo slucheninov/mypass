@@ -123,7 +123,8 @@ final class MergeEngineBasicTests: XCTestCase {
 
         let winner = merged.rootGroup.entries.first!
         XCTAssertEqual(winner.title, "LocalTie")
-        XCTAssertFalse(winner.history.contains { $0.title == "RemoteTie" }, "equal timestamps must not append history")
+        // A distinct remote version is kept in history rather than silently lost.
+        XCTAssertTrue(winner.history.contains { $0.title == "RemoteTie" }, "a distinct tied remote version must be preserved in history")
     }
 
     func testGroupMetadataMergeIndependentOfChildMerge() {

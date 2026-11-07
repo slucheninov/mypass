@@ -78,6 +78,51 @@ final class MergeEngineAttachmentTests: XCTestCase {
         XCTAssertTrue(entry.history.contains { $0.attachments == [att("x", 1)] })
     }
 
+    func testLosingEntrysOwnHistoryIsUnionedIntoTheWinnersHistory() {
+        let root = UUID(), id = UUID()
+        let winnerSnap = makeEntry(uuid: id, title: "w1", modified: 1_500, attachments: [att("w.txt", 1)])
+        let loserSnap = makeEntry(uuid: id, title: "l1", modified: 1_600, attachments: [att("l.txt", 2)])
+        let local = makeDatabase(rootUUID: root, entries: [makeEntry(uuid: id, title: "L", modified: 2_000, history: [loserSnap])])
+        let remote = makeDatabase(rootUUID: root, entries: [makeEntry(uuid: id, title: "R", modified: 3_000, history: [winnerSnap])])
+
+        let entry = MergeEngine.merge(local: local, remote: remote).rootGroup.entries[0]
+
+        XCTAssertEqual(entry.history.count, 3)
+        XCTAssertEqual(entry.history.map(\.lastModificationTime.timeIntervalSince1970), [1_500, 1_600, 2_000])
+        XCTAssertTrue(entry.history.contains { $0.attachments == [att("l.txt", 2)] })
+    }
+
+    func testSnapshotsPresentOnBothSidesAreNotDuplicated() {
+        let root = UUID(), id = UUID()
+        let shared = makeEntry(uuid: id, title: "s", modified: 1_500, attachments: [att("s.txt", 1)])
+        let local = makeDatabase(rootUUID: root, entries: [makeEntry(uuid: id, title: "L", modified: 2_000, history: [shared])])
+        let remote = makeDatabase(rootUUID: root, entries: [makeEntry(uuid: id, title: "R", modified: 3_000, history: [shared])])
+
+        let entry = MergeEngine.merge(local: local, remote: remote).rootGroup.entries[0]
+
+        XCTAssertEqual(entry.history.count, 2)
+    }
+
+    func testEqualTimestampsKeepDistinctRemoteVersionInHistory() {
+        let root = UUID(), id = UUID()
+        let local = makeDatabase(rootUUID: root, entries: [makeEntry(uuid: id, modified: 2_000, attachments: [att("local", 1)])])
+        let remote = makeDatabase(rootUUID: root, entries: [makeEntry(uuid: id, modified: 2_000, attachments: [att("remote", 2)])])
+
+        let entry = MergeEngine.merge(local: local, remote: remote).rootGroup.entries[0]
+
+        XCTAssertEqual(entry.attachments, [att("local", 1)])
+        XCTAssertEqual(entry.history.count, 1)
+        XCTAssertEqual(entry.history[0].attachments, [att("remote", 2)])
+    }
+
+    func testEqualTimestampsWithIdenticalContentAddNoHistory() {
+        let root = UUID(), id = UUID()
+        let e = makeEntry(uuid: id, modified: 2_000, attachments: [att("same", 1)])
+        let entry = MergeEngine.merge(local: makeDatabase(rootUUID: root, entries: [e]),
+                                      remote: makeDatabase(rootUUID: root, entries: [e])).rootGroup.entries[0]
+        XCTAssertTrue(entry.history.isEmpty)
+    }
+
     func testMergedDatabaseSurvivesSaveAndOpen() throws {
         let root = UUID(), id = UUID()
         let local = makeDatabase(rootUUID: root, entries: [makeEntry(uuid: id, title: "A", modified: 2_000, attachments: [att("old.txt", 1)])])
