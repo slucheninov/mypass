@@ -923,6 +923,13 @@ function isAddressPopup(sender) {
   return !!(sender && sender.id === chrome.runtime.id
     && sender.url === chrome.runtime.getURL('popup.html'));
 }
+// The options page opens in a tab (open_in_tab), so its sender carries sender.tab. Only this
+// exact page qualifies, not other extension pages such as browser-check.html; the query and
+// hash (the router's #/page/... route) are ignored when comparing the URL.
+function isOptionsPage(sender) {
+  return !!(sender && sender.id === chrome.runtime.id && typeof sender.url === 'string'
+    && sender.url.split(/[?#]/)[0] === chrome.runtime.getURL('app/app.html'));
+}
 function activeAddressTab() {
   return new Promise((resolve) => chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
     if (chrome.runtime.lastError) { resolve(null); return; }
@@ -1538,7 +1545,9 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     return true;
   }
 
-  if (sender && sender.tab && message && ["setPasskeyProxyEnabled", "passkeyCreateConfirm", "passkeyGetApprove", "passkeyCancelUI"].includes(message.type)) return false;
+  // Tab senders are refused for these, except the passkey switch from our own options page.
+  if (sender && sender.tab && message && ["setPasskeyProxyEnabled", "passkeyCreateConfirm", "passkeyGetApprove", "passkeyCancelUI"].includes(message.type)
+    && !(message.type === "setPasskeyProxyEnabled" && isOptionsPage(sender))) return false;
   if (message && message.type === "openBrowserSettings") {
     if (!isMyPassPage(sender)) return false;
     sendNativeMessageWithPairing({ type: "openBrowserSettings" }).then(sendResponse);
@@ -1555,9 +1564,9 @@ function handleRuntimeMessage(message, sender, sendResponse) {
     });
     return true;
   }
-  // Popup gesture only. A page must not be able to pull the vault window forward.
+  // Popup or options page gesture only. A website must not be able to pull the vault window forward.
   if (message && message.type === "openApp") {
-    if (!isAddressPopup(sender)) return false;
+    if (!isAddressPopup(sender) && !isOptionsPage(sender)) return false;
     sendNativeMessageWithPairing({ type: "openApp" }).then(sendResponse);
     return true;
   }

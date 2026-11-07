@@ -14,6 +14,7 @@ function shouldShowAppUnavailableActions(kind) {
 
 const LOCKED_TITLE_TEXT = 'MyPass is locked';
 const LOCKED_HELPER_TEXT = 'Open MyPass and unlock the vault';
+const UNLOCK_UNREACHABLE_TEXT = 'Could not reach MyPass. Open the app and try again.';
 const EMPTY_LIST_TITLE_TEXT = 'No saved logins for this site';
 const LIST_HEADER_TEXT = 'Select an entry to autofill:';
 const FAVORITES_HEADER_TEXT = 'Favorites';
@@ -76,8 +77,22 @@ const UNLOCK_BUTTON_LABEL = 'Unlock MyPass';
 const POPUP_PAIRING_STORAGE_KEY = 'pairingSecret';
 // The popup was expected to close when MyPass takes focus, so no waiting state was
 // planned. It does not reliably close, so it polls the vault instead of stranding the
-// user on a stale locked panel with only Retry.
+// user on a stale locked panel.
 const UNLOCK_POLL_INTERVAL_MS = 800;
+
+// Locked-panel auto refresh. One module-level handle so repeated showPanel('locked')
+// calls cannot stack intervals and leaving the locked state always clears it.
+const LOCKED_POLL_INTERVAL_MS = 2000;
+let lockedPollHandle = null;
+function startLockedPolling(reload) {
+  if (lockedPollHandle !== null) return;
+  lockedPollHandle = setInterval(reload, LOCKED_POLL_INTERVAL_MS);
+}
+function stopLockedPolling() {
+  if (lockedPollHandle === null) return;
+  clearInterval(lockedPollHandle);
+  lockedPollHandle = null;
+}
 const UNLOCK_POLL_MAX_ATTEMPTS = 75; // 800 ms x 75 = 60 s of real unlocking time
 const WAITING_FOR_UNLOCK_TEXT = 'Waiting for you to unlock MyPass\u2026';
 
@@ -146,18 +161,9 @@ const passkeySiteHints = typeof require === 'function'
 const pageIdentifier = typeof require === 'function'
   ? require('./shared/page-identifier.js')
   : window.mypassPageIdentifier;
-const securityWatch = typeof require === 'function'
-  ? require('./shared/security-watch.js')
-  : window.mypassSecurityWatch;
 const autofillSettings = typeof require === 'function'
   ? require('./shared/autofill-settings.js')
   : window.mypassAutofillSettings;
-const notificationSettings = typeof require === 'function'
-  ? require('./shared/notification-settings.js')
-  : window.mypassNotificationSettings;
-const appearanceSettings = typeof require === 'function'
-  ? require('./shared/appearance-settings.js')
-  : window.mypassAppearanceSettings;
 const promptCardApi = typeof require === 'function'
   ? require('./shared/prompt-card.js')
   : window.mypassPromptCard;
@@ -534,7 +540,6 @@ if (typeof document !== 'undefined') {
   const lockedPanel = document.getElementById('locked-panel');
   const lockedTitleEl = document.getElementById('locked-title');
   const lockedHelperEl = document.getElementById('locked-helper');
-  const lockedRetryBtn = document.getElementById('locked-retry-btn');
   const lockedUnlockBtn = document.getElementById('locked-unlock-btn');
 
   const appUnavailablePanel = document.getElementById('app-unavailable-panel');
@@ -581,30 +586,17 @@ if (typeof document !== 'undefined') {
   let pendingPasskeyRevision = 0;
   let ordinaryPopupInitialized = false;
   let passkeySettingsInitialized = false;
-  let securitySettingsInitialized = false;
-  let autofillSettingsInitialized = false;
-  let notificationSettingsInitialized = false;
-  let appearanceSettingsInitialized = false;
-  let autofillPasskeyRevision = 0;
   const passkeySavePanel = document.getElementById('passkey-save-panel');
   const passkeyReplacePanel = document.getElementById('passkey-replace-panel');
   const passkeyUsePanel = document.getElementById('passkey-use-panel');
   const passkeyPickerPanel = document.getElementById('passkey-picker-panel');
   const passkeyPickerListEl = document.getElementById('passkey-picker-list');
-  const openSettingsBtn = document.getElementById('open-settings-btn');
   const browserChrome = document.getElementById('browser-chrome');
   const popupMenu = document.getElementById('popup-menu');
   const popupMenuBtn = document.getElementById('popup-menu-btn');
   const popupMenuViews = {
     root: document.getElementById('popup-menu-root'),
-    settings: document.getElementById('popup-menu-settings'),
-    general: document.getElementById('popup-menu-general'),
-    security: document.getElementById('popup-menu-security'),
-    autofill: document.getElementById('popup-menu-autofill'),
-    help: document.getElementById('popup-menu-help'),
-    notifications: document.getElementById('popup-menu-notifications'),
-    appearance: document.getElementById('popup-menu-appearance'),
-    placeholder: document.getElementById('popup-menu-placeholder')
+    help: document.getElementById('popup-menu-help')
   };
   const vaultSearch = document.getElementById('vault-search');
   const categoryBtn = document.getElementById('category-btn');
@@ -691,6 +683,19 @@ if (typeof document !== 'undefined') {
       section.hidden = true;
     }
     openMypassHelper.hidden = true;
+    // The locked view is only the key, the title, the subtitle and Unlock. With no
+    // Retry button the popup has to notice an unlock by itself, so the locked panel
+    // polls; every other panel stops that single timer.
+    if (name === 'locked') {
+      addTotpSection.hidden = true;
+      // A tick must not run while the Unlock wait is polling: sendBrowse() cancels that
+      // wait and would leave the button disabled with the waiting text.
+      startLockedPolling(() => { if (unlockPollTimer === null) reloadCurrentContext(); });
+    } else {
+      stopLockedPolling();
+      // Leaving the locked panel drops any error text, so the next present starts from the default.
+      lockedHelperEl.textContent = LOCKED_HELPER_TEXT;
+    }
     // Approval owns the popup; unrelated actions must not interrupt a ceremony.
     if (PASSKEY_PANELS.includes(name) || name === 'prompt') {
       addTotpSection.hidden = true;
@@ -698,12 +703,13 @@ if (typeof document !== 'undefined') {
     }
     document.getElementById('passkey-diagnostics').hidden = PASSKEY_PANELS.includes(name) || name === 'prompt';
     document.getElementById('site-passkey-hint').hidden = true;
-    // Search, categories, and new-item stay on the browse panels. The gear also
-    // stays on lock, pairing, and "app not found", because Check this browser
-    // and MyPass settings used to sit under those panels.
+    // Search, categories, and new-item stay on the browse panels. The "More" menu (Help)
+    // also stays on pairing and "app not found". The locked panel shows no menu button at
+    // all: it is only the key, title, subtitle and Unlock, and the 2 s poll would close an
+    // open menu anyway.
     const browse = name === 'credential-list' || name === 'empty';
-    const gearOnly = name === 'locked' || name === 'app-unavailable' || name === 'pairing';
-    browserChrome.hidden = !browse && !gearOnly;
+    const menuOnly = name === 'app-unavailable' || name === 'pairing';
+    browserChrome.hidden = !browse && !menuOnly;
     vaultSearch.hidden = !browse;
     openGeneratorBtn.hidden = !browse;
     addEntryBtn.hidden = !browse;
@@ -1037,12 +1043,8 @@ if (typeof document !== 'undefined') {
 
   function presentLockedPanel() {
     showPanel('locked');
-    lockedRetryBtn.onclick = () => reloadCurrentContext();
     lockedUnlockBtn.textContent = UNLOCK_BUTTON_LABEL;
     lockedUnlockBtn.onclick = () => requestUnlock();
-    chrome.storage.local.get(POPUP_PAIRING_STORAGE_KEY, (stored) => {
-      lockedUnlockBtn.hidden = !shouldShowUnlockButton(stored[POPUP_PAIRING_STORAGE_KEY]);
-    });
   }
 
   function reloadCurrentContext() {
@@ -1165,7 +1167,12 @@ if (typeof document !== 'undefined') {
         reloadCurrentContext();
         return;
       }
-      if (kind !== 'presented') return;
+      if (kind !== 'presented') {
+        // Unreachable app or a failed request: say so instead of leaving the click silent.
+        // The next present of the locked panel restores LOCKED_HELPER_TEXT.
+        lockedHelperEl.textContent = UNLOCK_UNREACHABLE_TEXT;
+        return;
+      }
       // MyPass is now showing its unlock screen. Wait for it rather than leaving the
       // user on a stale panel whose only action is Retry.
       lockedHelperEl.textContent = WAITING_FOR_UNLOCK_TEXT;
@@ -1577,8 +1584,8 @@ if (typeof document !== 'undefined') {
     });
   };
 
-  // Settings live in the app. Browser permissions can only be requested from a
-  // deliberate gesture in an extension page, so that small check stays here.
+  // Only the passkey proxy status diagnostics stay in the popup; the settings that used to
+  // sit beside them moved to the options page (app/app.js).
   initPasskeySettingsToggle = function () {
     if (passkeySettingsInitialized) return;
     passkeySettingsInitialized = true;
@@ -1596,187 +1603,7 @@ if (typeof document !== 'undefined') {
       });
     };
     refreshStatus();
-    openSettingsBtn.addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: 'openBrowserSettings' }, (result) => {
-        void chrome.runtime.lastError;
-        const el = document.getElementById('settings-open-error');
-        // The app encodes ExtensionBridgeResponse.acknowledged as {"type":"ok"}.
-        el.hidden = !!(result && result.type === 'ok');
-        el.textContent = result && result.type === 'pairingRequired'
-          ? 'Connect this browser to MyPass first, then open settings.'
-          : 'Could not open settings. Open MyPass, then choose Settings → Browser.';
-      });
-    });
-    document.getElementById('check-browser-managers-btn').addEventListener('click', () => {
-      chrome.tabs.create({ url: chrome.runtime.getURL('browser-check.html') });
-    });
   };
-
-  function initSecuritySettings() {
-    if (securitySettingsInitialized) return;
-    securitySettingsInitialized = true;
-    const pasteToggle = document.getElementById('warn-unrecognized-paste');
-    const copyToggle = document.getElementById('warn-unrecognized-copy');
-    const key = securityWatch.SECURITY_SETTINGS_KEY;
-    function persist() {
-      chrome.storage.local.set({
-        [key]: { warnPaste: !!pasteToggle.checked, warnCopy: !!copyToggle.checked }
-      });
-    }
-    chrome.storage.local.get([key], (stored) => {
-      const settings = securityWatch.normalizeSecuritySettings(stored && stored[key]);
-      pasteToggle.checked = settings.warnPaste;
-      copyToggle.checked = settings.warnCopy;
-    });
-    pasteToggle.addEventListener('change', persist);
-    copyToggle.addEventListener('change', persist);
-    document.getElementById('open-mypass-app-btn').addEventListener('click', () => {
-      chrome.runtime.sendMessage({ type: 'openApp' }, (result) => {
-        void chrome.runtime.lastError;
-        const el = document.getElementById('open-mypass-app-error');
-        el.hidden = !!(result && result.type === 'ok');
-        el.textContent = result && result.type === 'pairingRequired'
-          ? 'Connect this browser to MyPass first.'
-          : 'Could not open MyPass. Open the app and try again.';
-      });
-    });
-  }
-
-  function refreshAutofillPasskeyToggle() {
-    const revision = ++autofillPasskeyRevision;
-    const toggle = document.getElementById('autofill-passkey-signin');
-    chrome.runtime.sendMessage({ type: 'getPasskeyProxyStatus' }, (status) => {
-      void chrome.runtime.lastError;
-      if (revision !== autofillPasskeyRevision) return;
-      if (status && status.type === 'passkeyProxyStatus' && typeof status.enabled === 'boolean') {
-        toggle.checked = status.enabled;
-      }
-    });
-  }
-
-  function initAutofillSettings() {
-    if (autofillSettingsInitialized) return;
-    autofillSettingsInitialized = true;
-    const offerSaveLogin = document.getElementById('offer-save-login');
-    const offerSaveTotp = document.getElementById('offer-save-totp');
-    const showFieldIcon = document.getElementById('show-field-icon');
-    const showLogins = document.getElementById('suggest-logins');
-    const showCards = document.getElementById('suggest-cards');
-    const showAddresses = document.getElementById('suggest-addresses');
-    const autoSubmit = document.getElementById('autofill-auto-submit');
-    const passkeyToggle = document.getElementById('autofill-passkey-signin');
-    const passkeyError = document.getElementById('autofill-passkey-error');
-    const key = autofillSettings.AUTOFILL_SETTINGS_KEY;
-    function persistAutofill() {
-      chrome.storage.local.set({
-        [key]: {
-          offerSaveLogin: !!offerSaveLogin.checked,
-          offerSaveTotp: !!offerSaveTotp.checked,
-          showFieldIcon: !!showFieldIcon.checked,
-          showLogins: !!showLogins.checked,
-          showCards: !!showCards.checked,
-          showAddresses: !!showAddresses.checked,
-          autoSubmit: !!autoSubmit.checked
-        }
-      });
-    }
-    chrome.storage.local.get([key], (stored) => {
-      const settings = autofillSettings.normalizeAutofillSettings(stored && stored[key]);
-      offerSaveLogin.checked = settings.offerSaveLogin;
-      offerSaveTotp.checked = settings.offerSaveTotp;
-      showFieldIcon.checked = settings.showFieldIcon;
-      showLogins.checked = settings.showLogins;
-      showCards.checked = settings.showCards;
-      showAddresses.checked = settings.showAddresses;
-      autoSubmit.checked = settings.autoSubmit;
-    });
-    [offerSaveLogin, offerSaveTotp, showFieldIcon, showLogins, showCards, showAddresses, autoSubmit].forEach((toggle) => {
-      toggle.addEventListener('change', persistAutofill);
-    });
-    passkeyToggle.addEventListener('change', () => {
-      const revision = ++autofillPasskeyRevision;
-      const next = !!passkeyToggle.checked;
-      chrome.runtime.sendMessage({ type: 'setPasskeyProxyEnabled', enabled: next }, (result) => {
-        void chrome.runtime.lastError;
-        if (revision !== autofillPasskeyRevision) return;
-        if (result && result.type === 'passkeyProxyEnabled' && typeof result.enabled === 'boolean') {
-          passkeyToggle.checked = result.enabled;
-          passkeyError.hidden = true;
-          return;
-        }
-        passkeyToggle.checked = !next;
-        passkeyError.hidden = false;
-        passkeyError.textContent = result && result.type === 'locked'
-          ? 'Unlock MyPass, then change passkeys.'
-          : result && result.type === 'pairingRequired'
-            ? 'Connect this browser to MyPass first.'
-            : 'Could not change passkeys. Open MyPass and try again.';
-      });
-    });
-    refreshAutofillPasskeyToggle();
-  }
-
-  function initNotificationSettings() {
-    if (notificationSettingsInitialized) return;
-    notificationSettingsInitialized = true;
-    const passkeyToggle = document.getElementById('notify-passkey-confirmation');
-    const unlockToggle = document.getElementById('notify-vault-unlocked');
-    const key = notificationSettings.NOTIFICATION_SETTINGS_KEY;
-    function persist() {
-      chrome.storage.local.set({
-        [key]: {
-          passkeyConfirmation: !!passkeyToggle.checked,
-          vaultUnlocked: !!unlockToggle.checked
-        }
-      });
-    }
-    chrome.storage.local.get([key], (stored) => {
-      const settings = notificationSettings.normalizeNotificationSettings(stored && stored[key]);
-      passkeyToggle.checked = settings.passkeyConfirmation;
-      unlockToggle.checked = settings.vaultUnlocked;
-    });
-    passkeyToggle.addEventListener('change', persist);
-    unlockToggle.addEventListener('change', persist);
-  }
-
-  function paintShortcutLabels(commands) {
-    document.getElementById('shortcut-open').textContent = appearanceSettings.commandShortcut(commands, '_execute_action');
-    document.getElementById('shortcut-lock').textContent = appearanceSettings.commandShortcut(commands, 'lock-vault');
-  }
-
-  function refreshShortcutLabels() {
-    if (!chrome.commands || typeof chrome.commands.getAll !== 'function') {
-      paintShortcutLabels([]);
-      return;
-    }
-    chrome.commands.getAll((commands) => {
-      void chrome.runtime.lastError;
-      paintShortcutLabels(commands);
-    });
-  }
-
-  function initAppearanceSettings() {
-    if (appearanceSettingsInitialized) return;
-    appearanceSettingsInitialized = true;
-    const themeSelect = document.getElementById('appearance-theme');
-    const key = appearanceSettings.APPEARANCE_SETTINGS_KEY;
-    function persistTheme() {
-      const theme = appearanceSettings.normalizeAppearanceSettings({ theme: themeSelect.value }).theme;
-      themeSelect.value = theme;
-      appearanceTheme.applyAppearanceTheme(theme);
-      chrome.storage.local.set({ [key]: { theme: theme } });
-    }
-    chrome.storage.local.get([key], (stored) => {
-      const settings = appearanceSettings.normalizeAppearanceSettings(stored && stored[key]);
-      themeSelect.value = settings.theme;
-      appearanceTheme.applyAppearanceTheme(settings.theme);
-    });
-    themeSelect.addEventListener('change', persistTheme);
-    document.getElementById('open-shortcut-settings').addEventListener('click', () => {
-      chrome.tabs.create({ url: 'chrome://extensions/shortcuts' });
-    });
-    refreshShortcutLabels();
-  }
 
   // Fire-and-forget: lets the background service worker resync its cache and
   // attach/detach against the app's current status on every popup open, rather than
@@ -1973,35 +1800,8 @@ if (typeof document !== 'undefined') {
     popupMenu.hidden = false;
     popupMenuBtn.setAttribute('aria-expanded', 'true');
   });
-  document.getElementById('popup-menu-settings-btn').addEventListener('click', () => showMenuView('settings'));
-  document.getElementById('popup-menu-settings-back').addEventListener('click', () => showMenuView('root'));
-  document.getElementById('popup-menu-open-general').addEventListener('click', () => showMenuView('general'));
-  document.getElementById('popup-menu-general-back').addEventListener('click', () => showMenuView('settings'));
   document.getElementById('popup-menu-help-btn').addEventListener('click', () => showMenuView('help'));
   document.getElementById('popup-menu-help-back').addEventListener('click', () => showMenuView('root'));
-  document.getElementById('popup-menu-open-security').addEventListener('click', () => showMenuView('security'));
-  document.getElementById('popup-menu-security-back').addEventListener('click', () => showMenuView('settings'));
-  document.getElementById('popup-menu-open-autofill').addEventListener('click', () => {
-    showMenuView('autofill');
-    refreshAutofillPasskeyToggle();
-  });
-  document.getElementById('popup-menu-autofill-back').addEventListener('click', () => showMenuView('settings'));
-  document.getElementById('popup-menu-open-notifications').addEventListener('click', () => showMenuView('notifications'));
-  document.getElementById('popup-menu-notifications-back').addEventListener('click', () => showMenuView('settings'));
-  document.getElementById('popup-menu-open-appearance').addEventListener('click', () => {
-    showMenuView('appearance');
-    refreshShortcutLabels();
-  });
-  document.getElementById('popup-menu-appearance-back').addEventListener('click', () => showMenuView('settings'));
-  document.getElementById('popup-menu-placeholder-back').addEventListener('click', () => showMenuView('settings'));
-  [
-    ['popup-menu-open-about', 'About']
-  ].forEach(([id, title]) => {
-    document.getElementById(id).addEventListener('click', () => {
-      document.getElementById('popup-menu-placeholder-back').textContent = '‹ ' + title;
-      showMenuView('placeholder');
-    });
-  });
   document.getElementById('lock-vault-btn').addEventListener('click', () => {
     const button = document.getElementById('lock-vault-btn');
     const el = document.getElementById('lock-vault-error');
@@ -2111,10 +1911,6 @@ if (typeof document !== 'undefined') {
     emptyTitleEl.textContent = 'Loading…';
     showPanel('empty');
     initPasskeySettingsToggle();
-    initSecuritySettings();
-    initAutofillSettings();
-    initNotificationSettings();
-    initAppearanceSettings();
     if (ordinaryPopupInitialized) {
       reloadCurrentContext();
       requestPendingPrompt(false);
@@ -2165,6 +1961,8 @@ if (typeof document !== 'undefined') {
     });
   };
   initPasskeyPopupUI();
+  // Test harnesses run this block without a window.
+  if (typeof window !== 'undefined' && window.addEventListener) window.addEventListener('pagehide', stopLockedPolling);
 }
 
 if (typeof module !== 'undefined') {
@@ -2186,6 +1984,9 @@ if (typeof module !== 'undefined') {
     isSiteUrl,
     PAIRING_PANEL_TITLE_TEXT,
     shouldShowUnlockButton,
+    LOCKED_POLL_INTERVAL_MS,
+    startLockedPolling,
+    stopLockedPolling,
     classifyRequestUnlockResponse,
     UNLOCK_BUTTON_LABEL,
     POPUP_PAIRING_STORAGE_KEY,

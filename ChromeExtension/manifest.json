@@ -11,6 +11,7 @@
     "128": "icons/icon128.png"
   },
   "permissions": ["nativeMessaging", "activeTab", "storage", "webAuthenticationProxy", "alarms", "notifications"],
+  "options_ui": { "page": "app/app.html", "open_in_tab": true },
   "optional_permissions": ["privacy", "management"],
   "minimum_chrome_version": "127",
   "background": {

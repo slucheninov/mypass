@@ -101,7 +101,7 @@ assert.ok(contentSource.includes('pageAutofillSettings.offerSaveTotp'));
 assert.ok(contentSource.includes('pageAutofillSettings.showFieldIcon'));
 assert.ok(contentSource.includes('pageAutofillSettings.showAddresses'));
 assert.ok(contentSource.includes('maybeSubmitFilledLogin'));
-const popupSource = fs.readFileSync(path.join(__dirname, '..', 'popup.js'), 'utf8');
+const popupSource = fs.readFileSync(path.join(__dirname, '..', 'app', 'app.js'), 'utf8');
 assert.ok(popupSource.includes("type: 'setPasskeyProxyEnabled'"));
 assert.ok(popupSource.includes('mypassAutofillSettings'));
 assert.ok(!popupSource.includes('passkeyCredentialId'));

@@ -28,7 +28,6 @@ function makeEl(id) {
   'locked-panel',
   'locked-title',
   'locked-helper',
-  'locked-retry-btn',
   'app-unavailable-panel',
   'app-unavailable-status',
   'app-unavailable-actions',

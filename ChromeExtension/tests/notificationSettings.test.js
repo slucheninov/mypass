@@ -45,7 +45,7 @@ assert.deepStrictEqual(notifications.noteVaultUnlock(false, 'yes'), { previous: 
 
 const root = path.join(__dirname, '..');
 const background = fs.readFileSync(path.join(root, 'background.js'), 'utf8');
-const popup = fs.readFileSync(path.join(root, 'popup.js'), 'utf8');
+const popup = fs.readFileSync(path.join(root, 'app', 'app.js'), 'utf8');
 const loader = fs.readFileSync(path.join(root, 'background-loader.js'), 'utf8');
 const manifest = fs.readFileSync(path.join(root, 'manifest.json'), 'utf8');
 
