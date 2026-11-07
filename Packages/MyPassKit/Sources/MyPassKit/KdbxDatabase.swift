@@ -71,6 +71,17 @@ public struct KdbxDatabase: Equatable {
     /// Mirrors KDBX4's `Meta/RecycleBinUUID`: a UUID reference to whichever
     /// group is currently the recycle bin, independent of that group's name.
     public var recycleBinGroupUUID: UUID?
+    /// Number of entry attachment records `open` skipped because their binary
+    /// reference was missing or invalid. Those records carry no bytes, so they
+    /// cannot be kept, and the next save will omit them; callers can use this to
+    /// warn first. Diagnostic only: excluded from `==`, and 0 for databases not
+    /// produced by `open`.
+    public var droppedAttachmentReferences: Int = 0
+
+    public static func == (lhs: KdbxDatabase, rhs: KdbxDatabase) -> Bool {
+        lhs.rootGroup == rhs.rootGroup && lhs.deletedObjects == rhs.deletedObjects &&
+            lhs.recycleBinGroupUUID == rhs.recycleBinGroupUUID
+    }
 
     public init(rootGroup: KdbxGroup, deletedObjects: [KdbxDeletedObject], recycleBinGroupUUID: UUID? = nil) {
         self.rootGroup = rootGroup
@@ -173,7 +184,9 @@ public struct KdbxDatabase: Equatable {
             throw KdbxDatabaseError.corruptFile("xml payload: \(error)")
         }
 
-        return KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects, recycleBinGroupUUID: payload.recycleBinGroupUUID)
+        var database = KdbxDatabase(rootGroup: payload.rootGroup, deletedObjects: payload.deletedObjects, recycleBinGroupUUID: payload.recycleBinGroupUUID)
+        database.droppedAttachmentReferences = payload.droppedAttachmentReferences
+        return database
     }
 
     public func save(password: String, cipher: KdbxCipher, compression: KdbxCompression) throws -> Data {

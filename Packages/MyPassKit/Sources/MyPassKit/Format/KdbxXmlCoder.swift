@@ -11,6 +11,15 @@ struct KdbxXmlPayload: Equatable {
     /// `nil` means no recycle bin has been designated yet (e.g. a fresh
     /// database, or one from a foreign/older writer that never set this).
     var recycleBinGroupUUID: UUID? = nil
+    /// How many entry `<Binary>` records were skipped on decode because their
+    /// `Ref` was missing, non-numeric or out of range. Always 0 on encode.
+    var droppedAttachmentReferences: Int = 0
+}
+
+/// Reference-typed tally threaded through the recursive parse so that nested
+/// groups and history entries all report into one counter.
+private final class DecodeTally {
+    var droppedAttachmentReferences = 0
 }
 
 enum KdbxXmlCoderError: Error, Equatable {
@@ -229,7 +238,8 @@ enum KdbxXmlCoder {
         guard let groupElement = rootElement.elements(forName: "Group").first else {
             throw KdbxXmlCoderError.missingRequiredElement("Group")
         }
-        let rootGroup = try parseGroup(groupElement, binaries: binaries, deobfuscate: deobfuscate)
+        let tally = DecodeTally()
+        let rootGroup = try parseGroup(groupElement, binaries: binaries, tally: tally, deobfuscate: deobfuscate)
 
         var deletedObjects: [KdbxDeletedObject] = []
         if let deletedObjectsElement = rootElement.elements(forName: "DeletedObjects").first {
@@ -249,7 +259,9 @@ enum KdbxXmlCoder {
             recycleBinGroupUUID = uuid(fromBase64: recycleBinUuidString)
         }
 
-        return KdbxXmlPayload(rootGroup: rootGroup, deletedObjects: deletedObjects, recycleBinGroupUUID: recycleBinGroupUUID)
+        return KdbxXmlPayload(
+            rootGroup: rootGroup, deletedObjects: deletedObjects, recycleBinGroupUUID: recycleBinGroupUUID,
+            droppedAttachmentReferences: tally.droppedAttachmentReferences)
     }
 
     // MARK: - Group / Entry / String
@@ -371,7 +383,7 @@ enum KdbxXmlCoder {
 
     // MARK: - Parsing
 
-    private static func parseGroup(_ element: XMLElement, binaries: [KdbxInnerBinary], deobfuscate: (Data) -> Data) throws -> KdbxGroup {
+    private static func parseGroup(_ element: XMLElement, binaries: [KdbxInnerBinary], tally: DecodeTally, deobfuscate: (Data) -> Data) throws -> KdbxGroup {
         guard let uuidString = element.elements(forName: "UUID").first?.stringValue,
               let uuid = uuid(fromBase64: uuidString) else {
             throw KdbxXmlCoderError.malformedXml
@@ -386,7 +398,7 @@ enum KdbxXmlCoder {
 
         var entries: [KdbxEntry] = []
         for entryEl in element.elements(forName: "Entry") {
-            entries.append(try parseEntry(entryEl, binaries: binaries, deobfuscate: deobfuscate))
+            entries.append(try parseEntry(entryEl, binaries: binaries, tally: tally, deobfuscate: deobfuscate))
         }
         var customData: [String: String] = [:]
         if let customDataElement = element.elements(forName: "CustomData").first {
@@ -403,7 +415,7 @@ enum KdbxXmlCoder {
 
         var subgroups: [KdbxGroup] = []
         for groupEl in element.elements(forName: "Group") {
-            subgroups.append(try parseGroup(groupEl, binaries: binaries, deobfuscate: deobfuscate))
+            subgroups.append(try parseGroup(groupEl, binaries: binaries, tally: tally, deobfuscate: deobfuscate))
         }
         return KdbxGroup(
             uuid: uuid, name: name, iconID: iconID,
@@ -413,7 +425,7 @@ enum KdbxXmlCoder {
         )
     }
 
-    private static func parseEntry(_ element: XMLElement, binaries: [KdbxInnerBinary], deobfuscate: (Data) -> Data) throws -> KdbxEntry {
+    private static func parseEntry(_ element: XMLElement, binaries: [KdbxInnerBinary], tally: DecodeTally, deobfuscate: (Data) -> Data) throws -> KdbxEntry {
         guard let uuidString = element.elements(forName: "UUID").first?.stringValue,
               let uuid = uuid(fromBase64: uuidString) else {
             throw KdbxXmlCoderError.malformedXml
@@ -458,6 +470,9 @@ enum KdbxXmlCoder {
                 // A non-numeric or out-of-range Ref has no bytes to preserve, and
                 // throwing here would lock the user out of their whole vault over
                 // one broken attachment, so it is skipped instead of failing decode.
+                // The loss is counted so the caller can surface it before a save
+                // rewrites the vault without the record.
+                tally.droppedAttachmentReferences += 1
                 continue
             }
             attachments.append(KdbxAttachment(
@@ -477,7 +492,7 @@ enum KdbxXmlCoder {
         var history: [KdbxEntry] = []
         if let historyElement = element.elements(forName: "History").first {
             for historicalEl in historyElement.elements(forName: "Entry") {
-                history.append(try parseEntry(historicalEl, binaries: binaries, deobfuscate: deobfuscate))
+                history.append(try parseEntry(historicalEl, binaries: binaries, tally: tally, deobfuscate: deobfuscate))
             }
         }
 
