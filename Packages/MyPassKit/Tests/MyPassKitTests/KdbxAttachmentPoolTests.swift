@@ -60,6 +60,19 @@ final class KdbxAttachmentPoolTests: XCTestCase {
         XCTAssertEqual([own, hist, second, sub].map { pool.index(of: $0) }, [0, 1, 2, 3])
     }
 
+    func testNestedHistoryAttachmentIsIncludedInEncoderOrder() {
+        // History -> Entry -> History -> Entry -> Binary: the XML coder recurses, so
+        // the pool must too, or `index(of:)` traps on save.
+        let deep = att("deep", [7])
+        let mid = att("mid", [6])
+        let inner = entry([deep])
+        let snapshot = entry([mid], history: [inner])
+        let own = att("own", [5])
+        let pool = KdbxAttachmentPool(collecting: group(entries: [entry([own], history: [snapshot])]))
+        XCTAssertEqual(pool.binaries.map(\.content), [Data([5]), Data([6]), Data([7])])
+        XCTAssertEqual([own, mid, deep].map { pool.index(of: $0) }, [0, 1, 2])
+    }
+
     func testNoAttachmentsYieldsEmptyPool() {
         let pool = KdbxAttachmentPool(collecting: group(entries: [entry([])]))
         XCTAssertEqual(pool.binaries, [])

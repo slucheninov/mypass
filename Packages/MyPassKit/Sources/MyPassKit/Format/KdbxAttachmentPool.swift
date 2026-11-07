@@ -52,17 +52,24 @@ struct KdbxAttachmentPool: Equatable {
         return index
     }
 
-    // Only one level of history is collected: history entries are snapshots that
-    // never nest (see `KdbxEntry`), so a snapshot's own `history` is always empty.
+    // History is collected at any depth, in the same order the XML encoder walks it
+    // (an entry's own attachments, then each snapshot depth-first). The coder reads
+    // and writes `<History>` recursively, so a file from another client may nest
+    // snapshots; collecting only one level would leave a deeper attachment out of
+    // the pool and `index(of:)` would trap on every save of that vault.
     private mutating func collect(_ group: KdbxGroup) {
         for entry in group.entries {
-            add(entry.attachments)
-            for snapshot in entry.history {
-                add(snapshot.attachments)
-            }
+            collect(entry)
         }
         for subgroup in group.subgroups {
             collect(subgroup)
+        }
+    }
+
+    private mutating func collect(_ entry: KdbxEntry) {
+        add(entry.attachments)
+        for snapshot in entry.history {
+            collect(snapshot)
         }
     }
 
