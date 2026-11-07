@@ -1969,6 +1969,22 @@
         }
       }
     },
+    "Copy Notes" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопировать заметки"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Скопіювати нотатки"
+          }
+        }
+      }
+    },
     "Copy Password" : {
       "localizations" : {
         "ru" : {
