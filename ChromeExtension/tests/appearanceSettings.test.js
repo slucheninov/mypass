@@ -33,7 +33,7 @@ assert.ok(!background.includes('"lock-vault"') || background.includes('command =
 const knownTypes = background.slice(background.indexOf('const knownTypes'), background.indexOf('];'));
 assert.ok(!knownTypes.includes('lock-vault'), 'the shortcut is not a page message');
 
-const popup = fs.readFileSync(path.join(root, 'popup.js'), 'utf8');
+const popup = fs.readFileSync(path.join(root, 'app', 'app.js'), 'utf8');
 assert.ok(popup.includes('mypassAppearanceSettings'));
 assert.ok(popup.includes('chrome://extensions/shortcuts'));
 assert.ok(!popup.includes('favicon'));

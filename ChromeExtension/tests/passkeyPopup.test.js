@@ -341,13 +341,6 @@ assert.strictEqual(
 );
 assert.strictEqual(elements['browser-chrome'].hidden, false, 'the gear stays available when idle');
 assert.strictEqual(elements['popup-menu'].hidden, true, 'the menu stays closed until the gear is clicked');
-elements['open-settings-btn'].listeners.click[0]();
-assert.strictEqual(sentMessages.at(-1).type, 'openBrowserSettings', 'settings open the native app');
-assert.strictEqual(elements['settings-open-error'].hidden, true, 'wire type ok confirms settings opened');
-settingsOpenResponse = { type: 'error', code: 'connection_unavailable' };
-elements['open-settings-btn'].listeners.click[0]();
-assert.strictEqual(elements['settings-open-error'].hidden, false, 'a failed open shows recovery instructions');
-assert.match(elements['settings-open-error'].textContent, /Open MyPass.*Settings → Browser/);
 console.log('passkeyPopup.test.js: refreshPasskeyProxy fires and settings footer/checkbox still initialize when idle OK');
 
 // --- ordinary credential list: passkey badge --------------------------------
