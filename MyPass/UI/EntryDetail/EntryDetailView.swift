@@ -202,7 +202,22 @@ struct EntryDetailView: View {
 
                         if !entry.notes.isEmpty {
                             DetailFieldDivider()
-                            DetailFieldRow(label: "Notes", value: entry.notes)
+                            // Same layout as DetailFieldRow, but the value goes through
+                            // ProtectedNotesBlock so the text stays out of the view tree
+                            // until the user clicks to reveal it.
+                            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                Text("Notes")
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 100, alignment: .leading)
+                                ProtectedNotesBlock(entryID: entry.uuid, notes: entry.notes) {
+                                    Text(verbatim: entry.notes)
+                                        .multilineTextAlignment(.trailing)
+                                        .frame(maxWidth: .infinity, alignment: .trailing)
+                                }
+                            }
+                            .font(.body)
+                            .padding(.horizontal, 16)
+                            .padding(.vertical, 10)
                         }
 
                         ForEach(entry.additionalFields, id: \.key) { field in

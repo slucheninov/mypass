@@ -19,6 +19,10 @@ struct NotesDetailView: View {
         NotesBodyRenderer.render(entry.notesBody)
     }
 
+    private var isBlurred: Bool {
+        NotesProtection.isBlurred(notes: entry.notesBody, state: navigationState.notesReveal, entryID: entry.uuid)
+    }
+
     var body: some View {
         ScrollView {
             VStack(spacing: 20) {
@@ -36,14 +40,20 @@ struct NotesDetailView: View {
                 .padding(.top, 24)
 
                 DetailFieldsCard {
-                    Text(renderedBody)
-                        .textSelection(.enabled)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding(16)
+                    ProtectedNotesBlock(entryID: entry.uuid, notes: entry.notesBody) {
+                        Text(renderedBody)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .padding(16)
                 }
                 .contextMenu {
+                    // Disabled (not hidden) while blurred so the menu does not change
+                    // shape on reveal and neither action can leak the real text.
                     Button("Copy Note") { copy(entry.notesBody) }
+                        .disabled(isBlurred)
                     Button("Show Large Type") { showLargeType = true }
+                        .disabled(isBlurred)
                 }
                 .popover(isPresented: $showLargeType) {
                     LargeTypePopover(text: entry.notesBody, isMonospaced: false)
@@ -54,6 +64,10 @@ struct NotesDetailView: View {
         }
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle("Note")
+        .onChange(of: isBlurred) { _, blurred in
+            // Re-hide (minimize, lock) must also take down an open large-type popover.
+            if blurred { showLargeType = false }
+        }
         .onChange(of: navigationState.selectedEntryID) { _, newID in
             showLargeType = false
             if let newID {

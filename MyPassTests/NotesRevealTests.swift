@@ -61,4 +61,15 @@ final class NotesRevealTests: XCTestCase {
         nav.hideNotes()
         XCTAssertFalse(nav.notesReveal.isRevealed(entryID: a))
     }
+
+    func testLockHidesRevealedNotes() {
+        // Only hideNotes() is unit-tested; the ContentView lock/minimize wiring is
+        // SwiftUI notification plumbing, covered by the manual walk.
+        let a = UUID()
+        let nav = NavigationState()
+        nav.selectedEntryID = a
+        nav.notesReveal.reveal(entryID: a)
+        nav.hideNotes()
+        XCTAssertTrue(NotesProtection.isBlurred(notes: "secret", state: nav.notesReveal, entryID: a))
+    }
 }

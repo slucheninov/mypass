@@ -87,6 +87,13 @@ final class EntryActionMenuModelTests: XCTestCase {
         XCTAssertEqual(revealed.sections[1], [.copy(.note, isEnabled: true)])
     }
 
+    func testCopyNoteDisabledForWhitespaceOnlyNotes() {
+        var entry = makeEntry(.notes)
+        entry.notesBody = "  \n\t "
+        let model = EntryActionMenuModel(entry: entry, isInRecycleBin: false, notesRevealed: true)
+        XCTAssertEqual(model.sections[1], [.copy(.note, isEnabled: false)])
+    }
+
     func testAddressHasNoCopyGroupAndNoEmptySection() {
         let s = sections(makeEntry(.address))
         XCTAssertEqual(s.count, 3)

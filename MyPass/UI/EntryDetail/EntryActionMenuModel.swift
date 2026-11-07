@@ -51,7 +51,7 @@ struct EntryActionMenuModel: Equatable {
             copyGroup.append(.copy(.cardNumber, isEnabled: !entry.cardNumber.isEmpty))
             copyGroup.append(.copy(.cvv, isEnabled: !entry.cvv.isEmpty))
         case .notes:
-            copyGroup.append(.copy(.note, isEnabled: !entry.notesBody.isEmpty && notesRevealed))
+            copyGroup.append(.copy(.note, isEnabled: !entry.notesBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && notesRevealed))
         case .address:
             break
         }

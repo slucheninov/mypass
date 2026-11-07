@@ -1,4 +1,5 @@
 import SwiftUI
+import AppKit
 import MyPassKit
 
 struct ContentView: View {
@@ -18,11 +19,17 @@ struct ContentView: View {
         // columns manage their own toolbar inset — see `UpdateBannerAccessoryController`.
         vaultContent
             .updateBannerAccessory()
+            // Minimize re-hides notes; focus loss deliberately does not (spec).
+            .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
+                navigationState.hideNotes()
+            }
             .onChange(of: navigationState.pendingPairingCode) { _, code in
                 MainWindowActivator.setMainWindowFloating(code != nil)
             }
             .onChange(of: isVaultLocked) { _, locked in
                 guard locked else { return }
+                // Notes re-hide on lock so an unlock never lands on revealed text.
+                navigationState.hideNotes()
                 // A pairing challenge must not outlive the vault it authorises: pairing
                 // itself is gated on an unlocked vault, so a code left on screen after a
                 // lock is both useless and misleading.
