@@ -261,7 +261,10 @@ final class VaultSession: ObservableObject, VaultFlushing {
     func deleteNoteDrafts(entryIDs: [UUID]) {
         guard let store = noteDraftStore else { return }
         let vaultID = draftVaultID
-        for id in entryIDs { store.deleteAll(vaultID: vaultID, entryID: id) }
+        for id in entryIDs {
+            store.deleteAll(vaultID: vaultID, entryID: id)
+            NotificationCenter.default.post(name: .noteDraftsDiscarded, object: nil, userInfo: ["entryID": id])
+        }
     }
 
     var currentDatabase: KdbxDatabase? {

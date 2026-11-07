@@ -15,7 +15,7 @@ struct NoteDraftVersionsSheet: View {
                     ForEach(versions.prefix(10)) { version in
                         HStack(alignment: .top, spacing: 12) {
                             VStack(alignment: .leading, spacing: 2) {
-                                Text(version.savedAt.formatted(date: .abbreviated, time: .shortened))
+                                Text(verbatim: NoteDraftBanner.formatted(version.savedAt))
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                                 if version.notes.isEmpty {

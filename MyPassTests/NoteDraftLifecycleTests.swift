@@ -158,4 +158,105 @@ final class NoteDraftLifecycleTests: XCTestCase {
         XCTAssertEqual(a.count, 64)
         XCTAssertEqual(VaultSession.draftVaultID(forPath: nil), VaultSession.draftVaultID(forPath: "default"))
     }
+
+    // MARK: - Orphan recovery (never-saved new entries)
+
+    private func v(_ s: String, _ offset: TimeInterval) -> NoteDraftVersion {
+        NoteDraftVersion(id: UUID(), savedAt: Date(timeIntervalSince1970: 1_800_000_000 + offset), notes: s)
+    }
+
+    func testNoOrphansGivesNil() {
+        XCTAssertNil(NoteDraftRecovery.newestOrphan(candidates: [], databaseEntryIDs: []))
+    }
+
+    func testSingleOrphanIsOffered() {
+        let id = UUID()
+        let o = NoteDraftRecovery.newestOrphan(candidates: [(id, [v("a", 1), v("b", 2)])], databaseEntryIDs: [])
+        XCTAssertEqual(o?.entryID, id)
+        XCTAssertEqual(o?.draft.notes, "b")
+    }
+
+    func testNewestOrphanWins() {
+        let old = UUID(), new = UUID()
+        let o = NoteDraftRecovery.newestOrphan(
+            candidates: [(old, [v("old", 1)]), (new, [v("new", 50)])], databaseEntryIDs: [])
+        XCTAssertEqual(o?.entryID, new)
+    }
+
+    func testEntryPresentInDatabaseIsNotAnOrphan() {
+        let saved = UUID()
+        XCTAssertNil(NoteDraftRecovery.newestOrphan(candidates: [(saved, [v("x", 1)])], databaseEntryIDs: [saved]))
+    }
+
+    func testDraftEntryIDsListsFilesOfThisVaultOnly() {
+        let store = makeStore()
+        let other = UUID()
+        store.save(notes: "a", vaultID: vault, entryID: entry)
+        store.save(notes: "b", vaultID: "vault-b", entryID: other)
+        XCTAssertEqual(store.draftEntryIDs(vaultID: vault), [entry])
+    }
+
+    func testCreateEditorAdoptsOrphanAndSaveDeletesItsDrafts() {
+        let store = makeStore()
+        let orphan = UUID()
+        store.save(notes: "lost note", vaultID: vault, entryID: orphan)
+        let fresh = UUID()
+        let model = NoteDraftEditorModel(store: store, vaultID: vault, entryID: fresh, savedNotes: "",
+                                         entryLastModified: nil, databaseEntryIDs: [])
+        XCTAssertEqual(model.pendingDraft?.notes, "lost note")
+        model.restore(model.pendingDraft!)
+        XCTAssertEqual(model.entryID, orphan)
+        model.controller.noteTextChanged("lost note, edited")
+        model.controller.flush()
+        XCTAssertEqual(notes(store, orphan), ["lost note, edited", "lost note"])
+        XCTAssertEqual(notes(store, fresh), [])
+        model.discardAfterSave()
+        XCTAssertEqual(notes(store, orphan), [])
+    }
+
+    func testCreateEditorDiscardingOrphanDeletesItsDrafts() {
+        let store = makeStore()
+        let orphan = UUID()
+        store.save(notes: "lost note", vaultID: vault, entryID: orphan)
+        let model = NoteDraftEditorModel(store: store, vaultID: vault, entryID: UUID(), savedNotes: "",
+                                         entryLastModified: nil, databaseEntryIDs: [])
+        model.deleteDrafts()
+        XCTAssertEqual(notes(store, orphan), [])
+        XCTAssertNil(model.pendingDraft)
+    }
+
+    func testEditModeDoesNotLookForOrphans() {
+        let store = makeStore()
+        store.save(notes: "lost note", vaultID: vault, entryID: UUID())
+        let model = NoteDraftEditorModel(store: store, vaultID: vault, entryID: entry, savedNotes: "s",
+                                         entryLastModified: Date(), databaseEntryIDs: nil)
+        XCTAssertNil(model.pendingDraft)
+    }
+
+    // MARK: - Quit and sibling windows
+
+    func testWillTerminateFlushesPendingDraft() {
+        let store = makeStore()
+        let center = NotificationCenter()
+        let c = NoteDraftController(store: store, vaultID: vault, entryID: entry, baselineNotes: "base")
+        c.attachLifecycleObservers(center: center)
+        c.noteTextChanged("typed")
+        center.post(name: NSApplication.willTerminateNotification, object: nil)
+        XCTAssertEqual(notes(store), ["typed"])
+    }
+
+    func testDiscardNotificationStopsSiblingControllerForThatEntryOnly() {
+        let store = makeStore()
+        let center = NotificationCenter()
+        let sibling = NoteDraftController(store: store, vaultID: vault, entryID: entry, baselineNotes: "base")
+        sibling.attachLifecycleObservers(center: center)
+        center.post(name: .noteDraftsDiscarded, object: nil, userInfo: ["entryID": UUID()])
+        sibling.noteTextChanged("still live")
+        sibling.flush()
+        XCTAssertEqual(notes(store), ["still live"])
+        center.post(name: .noteDraftsDiscarded, object: nil, userInfo: ["entryID": entry])
+        sibling.noteTextChanged("late")
+        sibling.flush()
+        XCTAssertEqual(notes(store), ["still live"])
+    }
 }

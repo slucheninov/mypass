@@ -15,4 +15,26 @@ enum NoteDraftRecovery {
     static func version(id: UUID, in versions: [NoteDraftVersion]) -> NoteDraftVersion? {
         versions.first { $0.id == id }
     }
+
+    /// A draft whose entry is not in the open database: the note was never saved (crash, lock
+    /// or Cancel before the first Save).
+    struct Orphan: Equatable {
+        let entryID: UUID
+        let draft: NoteDraftVersion
+    }
+
+    /// Newest draft among entries absent from the database. The draft file does not record
+    /// the entry type, so a notes editor may be offered a login-note draft and vice versa;
+    /// any orphan is acceptable (restoring only fills the notes text).
+    static func newestOrphan(candidates: [(entryID: UUID, versions: [NoteDraftVersion])],
+                             databaseEntryIDs: Set<UUID>) -> Orphan? {
+        var best: Orphan?
+        for candidate in candidates where !databaseEntryIDs.contains(candidate.entryID) {
+            guard let draft = candidate.versions.max(by: { $0.savedAt < $1.savedAt }) else { continue }
+            if best == nil || draft.savedAt > best!.draft.savedAt {
+                best = Orphan(entryID: candidate.entryID, draft: draft)
+            }
+        }
+        return best
+    }
 }

@@ -7,8 +7,13 @@ struct NoteDraftBanner: View {
     let onShowAll: () -> Void
     let onDelete: () -> Void
 
+    /// Shared with the versions sheet so both show timestamps the same way.
+    static func formatted(_ date: Date, locale: Locale = .current) -> String {
+        date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: locale))
+    }
+
     static func message(for date: Date, locale: Locale = .current) -> String {
-        let when = date.formatted(Date.FormatStyle(date: .abbreviated, time: .shortened, locale: locale))
+        let when = formatted(date, locale: locale)
         return String(format: String(localized: "Unsaved draft found from %@", locale: locale), locale: locale, when)
     }
 

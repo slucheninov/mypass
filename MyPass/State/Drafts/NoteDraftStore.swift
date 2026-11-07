@@ -78,6 +78,15 @@ final class NoteDraftStore {
         return readLocked(vaultID: vaultID, entryID: entryID, key: key).reversed()
     }
 
+    /// Entry IDs that have a draft file for this vault (the file names; no key needed).
+    func draftEntryIDs(vaultID: String) -> [UUID] {
+        mutex.lock(); defer { mutex.unlock() }
+        let files = (try? FileManager.default.contentsOfDirectory(
+            at: vaultDirectory(vaultID: vaultID), includingPropertiesForKeys: nil)) ?? []
+        return files.filter { $0.pathExtension == "draft" }
+            .compactMap { UUID(uuidString: $0.deletingPathExtension().lastPathComponent) }
+    }
+
     func deleteAll(vaultID: String, entryID: UUID) {
         mutex.lock(); defer { mutex.unlock() }
         try? FileManager.default.removeItem(at: fileURL(vaultID: vaultID, entryID: entryID))

@@ -299,7 +299,13 @@ struct EntryEditView: View {
         store.unlock()
         drafts = NoteDraftEditorModel(
             store: store, vaultID: vaultSession.draftVaultID, entryID: entryID,
-            savedNotes: existingEntry?.notes ?? "", entryLastModified: existingEntry?.lastModificationTime)
+            savedNotes: existingEntry?.notes ?? "", entryLastModified: existingEntry?.lastModificationTime,
+            databaseEntryIDs: existingEntry == nil ? knownEntryIDs : nil)
+    }
+
+    private var knownEntryIDs: Set<UUID> {
+        guard let root = vaultSession.currentDatabase?.rootGroup else { return [] }
+        return Set(EntrySearch.allEntries(in: root).map(\.uuid))
     }
 
     private func cancel() {
@@ -310,7 +316,7 @@ struct EntryEditView: View {
     private func performSave() {
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
-            uuid: entryID,
+            uuid: drafts?.entryID ?? entryID,
             iconID: 0,
             fields: [],
             creationTime: now,

@@ -17,7 +17,7 @@ final class NoteDraftController: ObservableObject {
 
     private let store: NoteDraftStore
     private let vaultID: String
-    private let entryID: UUID
+    private var entryID: UUID
     private let now: () -> Date
     private var latestText: String
     private var lastPersistedText: String
@@ -53,12 +53,27 @@ final class NoteDraftController: ObservableObject {
         // queue nil: the block runs synchronously on the posting thread, which is what
         // `VaultSession.lock()` needs (the flush must finish before the store is locked).
         // Both notifications are posted on the main thread.
-        for name in [Notification.Name.vaultWillLock, NSApplication.didResignActiveNotification] {
+        // willTerminate: Cmd-Q does not reliably run onDisappear or post resign-active first.
+        for name in [Notification.Name.vaultWillLock, NSApplication.didResignActiveNotification,
+                     NSApplication.willTerminateNotification] {
             bag.tokens.append(center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
                 MainActor.assumeIsolated { self?.flush() }
             })
         }
+        // Another window saved or permanently deleted this entry: its drafts are gone and this
+        // editor must not write them back.
+        bag.tokens.append(center.addObserver(forName: .noteDraftsDiscarded, object: nil, queue: nil) { [weak self] note in
+            MainActor.assumeIsolated {
+                guard let self, note.userInfo?["entryID"] as? UUID == self.entryID else { return }
+                self.finish()
+            }
+        })
         observers = bag
+    }
+
+    /// Re-targets autosave at an orphaned draft's entry (create editor adopting a recovered draft).
+    func adopt(entryID newID: UUID) {
+        entryID = newID
     }
 
     /// Stops all writing for good (after Save has deleted the drafts).
@@ -80,6 +95,11 @@ final class NoteDraftController: ObservableObject {
         lastPersistedText = latestText
         lastSavedAt = now()
     }
+}
+
+extension Notification.Name {
+    /// Drafts of `userInfo["entryID"]` were deleted for good (Save, permanent delete).
+    static let noteDraftsDiscarded = Notification.Name("com.mypass.noteDraftsDiscarded")
 }
 
 /// Removes the notification observers when the controller goes away.
