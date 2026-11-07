@@ -37,6 +37,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     /// The session whose queued writes must reach disk before the process exits.
     static var vaultSession: VaultSession?
+    /// Retains the app-level lock observer that re-hides revealed notes (see NotesAutoHide).
+    static var notesAutoHide: NotesAutoHide?
 
     private lazy var quitFlushCoordinator = QuitFlushCoordinator(
         session: Self.vaultSession,

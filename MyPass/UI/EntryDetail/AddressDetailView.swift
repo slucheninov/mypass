@@ -39,7 +39,7 @@ struct AddressDetailView: View {
                             .contextMenu { Button("Copy \(row.label)") { copy(row.value) } }
                         DetailFieldDivider()
                     }
-                    if !entry.notes.isEmpty {
+                    if NotesProtection.hasContent(entry.notes) {
                         DetailFieldContentRow(label: "Notes") {
                             ProtectedNotesBlock(entryID: entry.uuid, notes: entry.notes) {
                                 Text(verbatim: entry.notes)

@@ -200,7 +200,7 @@ struct EntryDetailView: View {
                             value: entry.lastModificationTime.formatted(date: .abbreviated, time: .shortened)
                         )
 
-                        if !entry.notes.isEmpty {
+                        if NotesProtection.hasContent(entry.notes) {
                             DetailFieldDivider()
                             // The value goes through ProtectedNotesBlock so the text stays out
                             // of the view tree until the user clicks to reveal it.

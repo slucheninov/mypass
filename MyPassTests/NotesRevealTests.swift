@@ -1,3 +1,4 @@
+import Combine
 import XCTest
 @testable import MyPass
 
@@ -62,14 +63,31 @@ final class NotesRevealTests: XCTestCase {
         XCTAssertFalse(nav.notesReveal.isRevealed(entryID: a))
     }
 
-    func testLockHidesRevealedNotes() {
-        // Only hideNotes() is unit-tested; the ContentView lock/minimize wiring is
-        // SwiftUI notification plumbing, covered by the manual walk.
+    func testSameSelectionKeepsReveal() {
         let a = UUID()
         let nav = NavigationState()
         nav.selectedEntryID = a
         nav.notesReveal.reveal(entryID: a)
-        nav.hideNotes()
-        XCTAssertTrue(NotesProtection.isBlurred(notes: "secret", state: nav.notesReveal, entryID: a))
+        nav.selectedEntryID = a
+        XCTAssertTrue(nav.notesReveal.isRevealed(entryID: a))
+    }
+
+    func testHasContentTreatsWhitespaceAsEmpty() {
+        XCTAssertFalse(NotesProtection.hasContent(" \n\t"))
+        XCTAssertTrue(NotesProtection.hasContent("x"))
+    }
+
+    func testAutoHideHidesOnLockOnly() {
+        let a = UUID()
+        let nav = NavigationState()
+        let locked = PassthroughSubject<Bool, Never>()
+        let hider = NotesAutoHide(locked: locked, navigationState: nav)
+        nav.selectedEntryID = a
+        nav.notesReveal.reveal(entryID: a)
+        locked.send(false)
+        XCTAssertTrue(nav.notesReveal.isRevealed(entryID: a))
+        locked.send(true)
+        XCTAssertFalse(nav.notesReveal.isRevealed(entryID: a))
+        withExtendedLifetime(hider) {}
     }
 }

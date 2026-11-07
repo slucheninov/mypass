@@ -19,6 +19,9 @@ struct ContentView: View {
         // columns manage their own toolbar inset — see `UpdateBannerAccessoryController`.
         vaultContent
             .updateBannerAccessory()
+            // A reopened window never shows a previously revealed note. Lock is handled
+            // app-wide by NotesAutoHide so it also works with no window open.
+            .onAppear { navigationState.hideNotes() }
             // Minimize re-hides notes; focus loss deliberately does not (spec).
             .onReceive(NotificationCenter.default.publisher(for: NSWindow.didMiniaturizeNotification)) { _ in
                 navigationState.hideNotes()
@@ -28,8 +31,6 @@ struct ContentView: View {
             }
             .onChange(of: isVaultLocked) { _, locked in
                 guard locked else { return }
-                // Notes re-hide on lock so an unlock never lands on revealed text.
-                navigationState.hideNotes()
                 // A pairing challenge must not outlive the vault it authorises: pairing
                 // itself is gated on an unlocked vault, so a code left on screen after a
                 // lock is both useless and misleading.

@@ -227,6 +227,14 @@ struct MyPassApp: App {
 
         let navigationState = NavigationState()
         _navigationState = StateObject(wrappedValue: navigationState)
+        // App-level so a lock re-hides notes even when no window is open.
+        AppDelegate.notesAutoHide = NotesAutoHide(
+            locked: session.$state.map { state -> Bool in
+                if case .locked = state { return true }
+                return false
+            },
+            navigationState: navigationState
+        )
 
         pairingManager.onCodeGenerated = { [weak navigationState] code in
             DispatchQueue.main.async {

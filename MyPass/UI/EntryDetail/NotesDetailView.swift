@@ -51,7 +51,7 @@ struct NotesDetailView: View {
                     // Disabled (not hidden) while blurred so the menu does not change
                     // shape on reveal and neither action can leak the real text.
                     Button("Copy Note") { copy(entry.notesBody) }
-                        .disabled(isBlurred)
+                        .disabled(isBlurred || !NotesProtection.hasContent(entry.notesBody))
                     Button("Show Large Type") { showLargeType = true }
                         .disabled(isBlurred)
                 }
