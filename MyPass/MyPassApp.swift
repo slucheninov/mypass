@@ -160,6 +160,15 @@ struct MyPassApp: App {
             iCloudPrimaryFallbackActive: resolution.iCloudFallbackToLocal,
             localFileFallbackActive: resolution.localFileFallbackActive
         )
+        // Encrypted note drafts: one app-wide Keychain key, files under <app dir>/Drafts.
+        // The key is only loaded when an editor opens (`NoteDraftStore.unlock()`), and the
+        // session locks the store with the vault. Expired drafts are reaped now; that needs
+        // no key.
+        let draftStore = NoteDraftStore(
+            directory: applicationSupportDirectory.appendingPathComponent("Drafts", isDirectory: true),
+            keyProvider: KeychainDraftKeyProvider())
+        draftStore.purgeExpired()
+        session.noteDraftStore = draftStore
         _vaultSession = StateObject(wrappedValue: session)
         AppDelegate.vaultSession = session
         // Shared across `UnlockView`, `MenuBarUnlockPanelView`, and the extension's

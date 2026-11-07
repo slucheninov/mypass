@@ -19,6 +19,8 @@ struct EntryEditView: View {
     @State private var notes: String = ""
     // Draft key for the notes card; a new entry keeps this UUID on save.
     @State private var entryID: UUID
+    @EnvironmentObject private var vaultSession: VaultSession
+    @State private var drafts: NoteDraftEditorModel?
     @State private var otpauthInput: String = ""
     @State private var extraFields: [(key: String, value: String)] = []
     @State private var showPasswordGenerator = false
@@ -137,8 +139,15 @@ struct EntryEditView: View {
                     Divider().overlay(Color.primary.opacity(0.08))
 
                     // Login notes are plain text, so the card omits the markdown toolbar.
-                    // Draft controller is nil until the store is wired in.
-                    NotesEditorCard(text: $notes, entryID: entryID, controller: nil)
+                    if let drafts {
+                        NoteDraftRecoverySection(model: drafts)
+                    }
+                    NotesEditorCard(
+                        text: $notes,
+                        restoreRequest: Binding(get: { drafts?.restoreRequest }, set: { drafts?.restoreRequest = $0 }),
+                        entryID: entryID,
+                        controller: drafts?.controller
+                    )
                     Divider().overlay(Color.primary.opacity(0.08))
 
                     if showOTPField {
@@ -215,8 +224,10 @@ struct EntryEditView: View {
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Entry" : "Edit Entry")
         .safeAreaInset(edge: .top, spacing: 0) {
-            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: save)
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save)
         }
+        .onAppear(perform: openDrafts)
+        .onDisappear { drafts?.cancel() }
         .sheet(isPresented: $showPasswordGenerator) {
             // The FULL host, not a registrable domain: PasswordRulesCatalog
             // walks upward from the host to the registrable-domain ceiling
@@ -280,10 +291,25 @@ struct EntryEditView: View {
         performSave()
     }
 
+    /// Editors exist only while the vault is unlocked, so the store's Keychain key is
+    /// loaded here (a plain read, never an auth prompt).
+    private func openDrafts() {
+        guard drafts == nil, let store = vaultSession.noteDraftStore else { return }
+        store.unlock()
+        drafts = NoteDraftEditorModel(
+            store: store, vaultID: vaultSession.draftVaultID, entryID: entryID,
+            savedNotes: existingEntry?.notes ?? "", entryLastModified: existingEntry?.lastModificationTime)
+    }
+
+    private func cancel() {
+        drafts?.cancel()
+        onCancel()
+    }
+
     private func performSave() {
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
-            uuid: NotesEditSaveLogic.entryUUID(existing: existingEntry, generated: entryID),
+            uuid: entryID,
             iconID: 0,
             fields: [],
             creationTime: now,
@@ -318,6 +344,7 @@ struct EntryEditView: View {
         }
 
         onSave(entry, selectedGroupID)
+        drafts?.discardAfterSave()
     }
 }
 

@@ -12,13 +12,4 @@ final class NotesEditorCardTests: XCTestCase {
         // Newer ICU puts U+202F (narrow no-break space) before "PM"; normalise it.
         XCTAssertEqual(text?.replacingOccurrences(of: "\u{202F}", with: " "), "Draft saved 1:05 PM")
     }
-
-    func testNewNoteKeepsGeneratedUUIDOnSave() {
-        let generated = UUID()
-        XCTAssertEqual(NotesEditSaveLogic.entryUUID(existing: nil, generated: generated), generated)
-        let now = Date()
-        let existing = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now,
-                                 lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: [])
-        XCTAssertEqual(NotesEditSaveLogic.entryUUID(existing: existing, generated: generated), existing.uuid)
-    }
 }

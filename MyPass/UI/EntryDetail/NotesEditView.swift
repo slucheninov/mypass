@@ -16,6 +16,8 @@ struct NotesEditView: View {
     @State private var isFavorite: Bool
     @State private var entryID: UUID
     @State private var preservedAdditionalFields: [KdbxField] = []
+    @EnvironmentObject private var vaultSession: VaultSession
+    @State private var drafts: NoteDraftEditorModel?
 
     init(
         existingEntry: KdbxEntry?,
@@ -54,11 +56,15 @@ struct NotesEditView: View {
                 )
             }
 
-            // Draft controller is nil until the store is wired in.
+            if let drafts {
+                NoteDraftRecoverySection(model: drafts)
+            }
+
             NotesEditorCard(
                 text: $notesBody,
+                restoreRequest: restoreRequestBinding,
                 entryID: entryID,
-                controller: nil,
+                controller: drafts?.controller,
                 showsMarkdownToolbar: true
             )
             .frame(maxHeight: .infinity)
@@ -76,14 +82,35 @@ struct NotesEditView: View {
         .background(UIShellMetrics.detailColumnBackground)
         .navigationTitle(existingEntry == nil ? "New Note" : "Edit Note")
         .safeAreaInset(edge: .top, spacing: 0) {
-            EntryEditActionRow(isFavorite: $isFavorite, onCancel: onCancel, onSave: save)
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save)
         }
+        .onAppear(perform: openDrafts)
+        .onDisappear { drafts?.cancel() }
+    }
+
+    private var restoreRequestBinding: Binding<String?> {
+        Binding(get: { drafts?.restoreRequest }, set: { drafts?.restoreRequest = $0 })
+    }
+
+    /// Editors exist only while the vault is unlocked, so the store's Keychain key is
+    /// loaded here (a plain read, never an auth prompt).
+    private func openDrafts() {
+        guard drafts == nil, let store = vaultSession.noteDraftStore else { return }
+        store.unlock()
+        drafts = NoteDraftEditorModel(
+            store: store, vaultID: vaultSession.draftVaultID, entryID: entryID,
+            savedNotes: existingEntry?.notesBody ?? "", entryLastModified: existingEntry?.lastModificationTime)
+    }
+
+    private func cancel() {
+        drafts?.cancel()
+        onCancel()
     }
 
     private func save() {
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
-            uuid: NotesEditSaveLogic.entryUUID(existing: existingEntry, generated: entryID),
+            uuid: entryID,
             iconID: 0,
             fields: [],
             creationTime: now,
@@ -105,5 +132,6 @@ struct NotesEditView: View {
         }
 
         onSave(entry, selectedGroupID)
+        drafts?.discardAfterSave()
     }
 }

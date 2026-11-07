@@ -1,5 +1,6 @@
 import CryptoKit
 import Foundation
+import LocalAuthentication
 import Security
 
 /// Supplies the symmetric key that encrypts note drafts at rest.
@@ -63,11 +64,17 @@ final class KeychainDraftKeyProvider: DraftKeyProviding {
     }
 
     private func read() throws -> Data? {
+        // The item has no access control, so this never prompts; interactionNotAllowed makes
+        // that a guarantee (a failure instead of a dialog) if the item were ever re-created
+        // with a protected ACL.
+        let context = LAContext()
+        context.interactionNotAllowed = true
         let query: [String: Any] = [
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: account,
             kSecAttrAccessGroup as String: accessGroup,
+            kSecUseAuthenticationContext as String: context,
             kSecReturnData as String: true
         ]
         var result: AnyObject?

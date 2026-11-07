@@ -87,6 +87,10 @@ final class NoteDraftControllerTests: XCTestCase {
         XCTAssertEqual(notes(store), ["x"])
     }
 
+    func testEnabledWhenStoreUnlocked() {
+        XCTAssertTrue(makeController(makeStore()).isEnabled)
+    }
+
     func testDisabledWhenStoreUnavailable() {
         let store = makeStore(unlocked: false)
         let c = makeController(store)
@@ -120,6 +124,11 @@ final class NoteDraftRecoveryTests: XCTestCase {
     func testDraftOlderThanLastSaveIsIgnored() {
         let r = NoteDraftRecovery.pendingDraft(versions: [v("x", 10)], savedNotes: "saved", entryLastModified: t0.addingTimeInterval(50))
         XCTAssertNil(r)
+    }
+
+    func testDraftSavedExactlyAtLastModificationIsIgnored() {
+        XCTAssertNil(NoteDraftRecovery.pendingDraft(versions: [v("x", 0)], savedNotes: "saved", entryLastModified: t0))
+        XCTAssertNotNil(NoteDraftRecovery.pendingDraft(versions: [v("x", 0.001)], savedNotes: "saved", entryLastModified: t0))
     }
 
     func testEmptyVersionsGivesNil() {

@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 import MyPassKit
 import SyncKit
@@ -34,6 +35,12 @@ protocol VaultFlushing: AnyObject {
     func flushPendingWrites(timeout: TimeInterval, completion: @escaping (VaultFlushOutcome) -> Void)
     /// Ends the quit-time freeze that `flushPendingWrites` started, after the quit was cancelled.
     func resumeAfterCancelledQuit()
+}
+
+extension Notification.Name {
+    /// Posted by `VaultSession.lock()` BEFORE the unlocked state is dropped, so open editors
+    /// can flush work that exists only in memory (note drafts) while it can still be written.
+    static let vaultWillLock = Notification.Name("com.mypass.vaultWillLock")
 }
 
 final class VaultSession: ObservableObject, VaultFlushing {
@@ -238,6 +245,25 @@ final class VaultSession: ObservableObject, VaultFlushing {
         wireRemoteChangeHandler(on: fileStore)
     }
 
+    /// Encrypted note drafts. Wired in `MyPassApp.init()`; locked in `lock()`, unlocked by the
+    /// edit views when they appear (editors exist only while the vault is unlocked).
+    var noteDraftStore: NoteDraftStore?
+
+    /// Stable per-vault namespace for drafts: SHA-256 hex of the primary vault file path.
+    var draftVaultID: String { Self.draftVaultID(forPath: fileStore.primaryVaultFileURL?.path) }
+
+    static func draftVaultID(forPath path: String?) -> String {
+        SHA256.hash(data: Data((path ?? "default").utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    /// Drops the drafts of entries that were permanently deleted (soft deletes keep them;
+    /// the 7-day purge reaps the rest).
+    func deleteNoteDrafts(entryIDs: [UUID]) {
+        guard let store = noteDraftStore else { return }
+        let vaultID = draftVaultID
+        for id in entryIDs { store.deleteAll(vaultID: vaultID, entryID: id) }
+    }
+
     var currentDatabase: KdbxDatabase? {
         guard case .unlocked(let db) = state else { return nil }
         return db
@@ -285,6 +311,10 @@ final class VaultSession: ObservableObject, VaultFlushing {
     }
 
     func lock() {
+        // Order matters: observers (note draft controllers) flush synchronously while the
+        // draft store still holds its key; only then is the store locked and the state dropped.
+        NotificationCenter.default.post(name: .vaultWillLock, object: nil)
+        noteDraftStore?.lock()
         touchAccessPersistWorkItem?.cancel()
         touchAccessPersistWorkItem = nil
         state = .locked

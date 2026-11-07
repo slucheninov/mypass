@@ -11,4 +11,8 @@ enum NoteDraftRecovery {
                              entryLastModified: Date) -> NoteDraftVersion? {
         versions.first { $0.notes != savedNotes && $0.savedAt > entryLastModified }
     }
+
+    static func version(id: UUID, in versions: [NoteDraftVersion]) -> NoteDraftVersion? {
+        versions.first { $0.id == id }
+    }
 }

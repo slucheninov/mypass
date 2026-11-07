@@ -150,10 +150,19 @@ final class NoteDraftStore {
             var out = Self.magic
             out.append(box.combined)
             let dir = vaultDirectory(vaultID: vaultID)
+            // Create the Drafts root itself owner-only: createDirectory applies the
+            // attributes to the leaf only, so intermediates would otherwise get the umask.
+            try FileManager.default.createDirectory(
+                at: directory, withIntermediateDirectories: true,
+                attributes: [.posixPermissions: 0o700])
             try FileManager.default.createDirectory(
                 at: dir, withIntermediateDirectories: true,
                 attributes: [.posixPermissions: 0o700])
-            try out.write(to: fileURL(vaultID: vaultID, entryID: entryID), options: .atomic)
+            let url = fileURL(vaultID: vaultID, entryID: entryID)
+            try out.write(to: url, options: .atomic)
+            // The atomic write creates the file with the umask default (0644); drafts are
+            // ciphertext, but owner-only is cheap defence in depth.
+            try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
             return true
         } catch {
             return false

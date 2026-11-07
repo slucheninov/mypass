@@ -20,19 +20,28 @@ struct MarkdownTextEditor: NSViewRepresentable {
     @Binding var command: MarkdownEditorCommand?
     @Binding var canUndo: Bool
     @Binding var canRedo: Bool
+    /// Notes entries keep the monospaced face; login notes use the proportional body font.
+    var usesMonospacedFont: Bool
+    /// When true Tab / Shift-Tab move keyboard focus to the next / previous field instead of
+    /// inserting a tab (login notes, which have no markdown toolbar).
+    var tabMovesFocus: Bool
 
     init(
         text: Binding<String>,
         wrapAction: Binding<MarkdownWrapAction?>,
         command: Binding<MarkdownEditorCommand?> = .constant(nil),
         canUndo: Binding<Bool> = .constant(false),
-        canRedo: Binding<Bool> = .constant(false)
+        canRedo: Binding<Bool> = .constant(false),
+        usesMonospacedFont: Bool = true,
+        tabMovesFocus: Bool = false
     ) {
         _text = text
         _wrapAction = wrapAction
         _command = command
         _canUndo = canUndo
         _canRedo = canRedo
+        self.usesMonospacedFont = usesMonospacedFont
+        self.tabMovesFocus = tabMovesFocus
     }
 
     func makeNSView(context: Context) -> NSScrollView {
@@ -40,7 +49,9 @@ struct MarkdownTextEditor: NSViewRepresentable {
         textView.delegate = context.coordinator
         textView.isRichText = false
         textView.allowsUndo = true
-        textView.font = .monospacedSystemFont(ofSize: 13, weight: .regular)
+        textView.font = usesMonospacedFont
+            ? .monospacedSystemFont(ofSize: 13, weight: .regular)
+            : .preferredFont(forTextStyle: .body)
         textView.string = text
         textView.isAutomaticQuoteSubstitutionEnabled = false
         textView.isAutomaticDashSubstitutionEnabled = false
@@ -89,7 +100,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, canUndo: $canUndo, canRedo: $canRedo)
+        Coordinator(text: $text, canUndo: $canUndo, canRedo: $canRedo, tabMovesFocus: tabMovesFocus)
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
@@ -105,12 +116,15 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         var canUndo: Binding<Bool>
         var canRedo: Binding<Bool>
+        let tabMovesFocus: Bool
 
         init(
             text: Binding<String>,
             canUndo: Binding<Bool> = .constant(false),
-            canRedo: Binding<Bool> = .constant(false)
+            canRedo: Binding<Bool> = .constant(false),
+            tabMovesFocus: Bool = false
         ) {
+            self.tabMovesFocus = tabMovesFocus
             self.text = text
             self.canUndo = canUndo
             self.canRedo = canRedo
@@ -161,6 +175,21 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
             manager.endUndoGrouping()
             textView.breakUndoCoalescing()
+        }
+
+        /// Plain-text fields hand Tab / Shift-Tab to the key-view loop; NSTextView would
+        /// otherwise insert a tab character and trap keyboard navigation inside the notes.
+        func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            guard tabMovesFocus else { return false }
+            if commandSelector == #selector(NSResponder.insertTab(_:)) {
+                textView.window?.selectNextKeyView(nil)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.insertBacktab(_:)) {
+                textView.window?.selectPreviousKeyView(nil)
+                return true
+            }
+            return false
         }
 
         func textDidChange(_ notification: Notification) {

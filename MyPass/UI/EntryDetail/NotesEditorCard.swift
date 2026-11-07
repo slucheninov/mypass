@@ -2,20 +2,13 @@ import SwiftUI
 import Combine
 import MyPassKit
 
-/// Pure helper so "which UUID does a saved note get" is testable without a view.
-/// An existing entry always keeps its own UUID; a new note uses the UUID generated
-/// when the editor opened, so the draft key and the saved entry's identity match.
-enum NotesEditSaveLogic {
-    static func entryUUID(existing: KdbxEntry?, generated: UUID) -> UUID {
-        existing?.uuid ?? generated
-    }
-}
-
 /// Bordered card hosting the notes editor: label, toolbar row (undo, redo, draft
 /// status, optional markdown buttons) and the text view itself. Colours are system
 /// semantic ones so the card reads correctly in light and dark mode.
 struct NotesEditorCard: View {
     @Binding var text: String
+    /// Text to load through the undoable `.replaceAll` command (draft restore); cleared once taken.
+    @Binding var restoreRequest: String?
     let entryID: UUID
     @ObservedObject private var controller: DraftControllerBox
     let placeholder: LocalizedStringKey
@@ -25,15 +18,20 @@ struct NotesEditorCard: View {
     @State private var command: MarkdownEditorCommand?
     @State private var canUndo = false
     @State private var canRedo = false
+    /// A @State-held publisher keeps one 10 s cadence across the re-inits that every
+    /// keystroke causes; a stored `let` would restart the timer on each edit.
+    @State private var ticker = Timer.publish(every: 10, on: .main, in: .common).autoconnect()
 
     init(
         text: Binding<String>,
+        restoreRequest: Binding<String?> = .constant(nil),
         entryID: UUID,
         controller: NoteDraftController?,
         placeholder: LocalizedStringKey = "Add notes",
         showsMarkdownToolbar: Bool = false
     ) {
         _text = text
+        _restoreRequest = restoreRequest
         self.entryID = entryID
         self.controller = DraftControllerBox(controller)
         self.placeholder = placeholder
@@ -70,7 +68,9 @@ struct NotesEditorCard: View {
                         wrapAction: $wrapAction,
                         command: $command,
                         canUndo: $canUndo,
-                        canRedo: $canRedo
+                        canRedo: $canRedo,
+                        usesMonospacedFont: showsMarkdownToolbar,
+                        tabMovesFocus: !showsMarkdownToolbar
                     )
                     .id(entryID)
                     .padding(.horizontal, 6)
@@ -93,6 +93,14 @@ struct NotesEditorCard: View {
         }
         .onChange(of: text) { _, newValue in
             controller.controller?.noteTextChanged(newValue)
+        }
+        .onChange(of: restoreRequest) { _, newValue in
+            guard let newValue else { return }
+            command = .replaceAll(newValue)
+            restoreRequest = nil
+        }
+        .onReceive(ticker) { _ in
+            controller.controller?.tick()
         }
     }
 

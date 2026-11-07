@@ -1,3 +1,4 @@
+import AppKit
 import Combine
 import Foundation
 
@@ -20,6 +21,9 @@ final class NoteDraftController: ObservableObject {
     private let now: () -> Date
     private var latestText: String
     private var lastPersistedText: String
+    /// Set after Save: the draft was deleted and the disappearing editor must not recreate it.
+    private var isFinished = false
+    private var observers: ObserverBag?
 
     init(store: NoteDraftStore,
          vaultID: String,
@@ -41,6 +45,27 @@ final class NoteDraftController: ObservableObject {
         latestText = text
     }
 
+    /// Flushes on the will-lock notification and on app resign-active. `center` is injectable so
+    /// tests use a private one. Calling it again replaces the previous registration.
+    func attachLifecycleObservers(center: NotificationCenter = .default) {
+        let bag = ObserverBag()
+        bag.center = center
+        // queue nil: the block runs synchronously on the posting thread, which is what
+        // `VaultSession.lock()` needs (the flush must finish before the store is locked).
+        // Both notifications are posted on the main thread.
+        for name in [Notification.Name.vaultWillLock, NSApplication.didResignActiveNotification] {
+            bag.tokens.append(center.addObserver(forName: name, object: nil, queue: nil) { [weak self] _ in
+                MainActor.assumeIsolated { self?.flush() }
+            })
+        }
+        observers = bag
+    }
+
+    /// Stops all writing for good (after Save has deleted the drafts).
+    func finish() {
+        isFinished = true
+    }
+
     func tick() {
         writeIfChanged()
     }
@@ -50,9 +75,16 @@ final class NoteDraftController: ObservableObject {
     }
 
     private func writeIfChanged() {
-        guard latestText != lastPersistedText else { return }
+        guard !isFinished, latestText != lastPersistedText else { return }
         guard store.save(notes: latestText, vaultID: vaultID, entryID: entryID) else { return }
         lastPersistedText = latestText
         lastSavedAt = now()
     }
+}
+
+/// Removes the notification observers when the controller goes away.
+private final class ObserverBag {
+    var center: NotificationCenter?
+    var tokens: [NSObjectProtocol] = []
+    deinit { tokens.forEach { center?.removeObserver($0) } }
 }

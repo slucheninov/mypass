@@ -156,6 +156,15 @@ final class NoteDraftStoreTests: XCTestCase {
         XCTAssertEqual(perms, 0o700)
     }
 
+    func testDraftFileAndRootDirectoryAreOwnerOnly() throws {
+        let store = makeStore()
+        store.save(notes: "a", vaultID: vault, entryID: entry)
+        let filePerms = try FileManager.default.attributesOfItem(atPath: draftFiles()[0].path)[.posixPermissions] as? Int
+        XCTAssertEqual(filePerms, 0o600)
+        let rootPerms = try FileManager.default.attributesOfItem(atPath: dir.path)[.posixPermissions] as? Int
+        XCTAssertEqual(rootPerms, 0o700)
+    }
+
     private func requireKeychainTestsEnabled() throws {
         try XCTSkipUnless(
             ProcessInfo.processInfo.environment["MYPASS_KEYCHAIN_TESTS"] == "1",
