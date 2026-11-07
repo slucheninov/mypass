@@ -693,6 +693,8 @@ if (typeof document !== 'undefined') {
       startLockedPolling(() => { if (unlockPollTimer === null) reloadCurrentContext(); });
     } else {
       stopLockedPolling();
+      // Leaving the locked panel drops any error text, so the next present starts from the default.
+      lockedHelperEl.textContent = LOCKED_HELPER_TEXT;
     }
     // Approval owns the popup; unrelated actions must not interrupt a ceremony.
     if (PASSKEY_PANELS.includes(name) || name === 'prompt') {

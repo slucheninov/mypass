@@ -117,9 +117,13 @@ stopLockedPolling();
   assert.strictEqual(browseCalls(), before, 'a locked poll tick does not reload while the unlock wait runs');
   assert.strictEqual(elements['locked-unlock-btn'].disabled, true, 'the wait is not cancelled by the tick');
   if (waiting !== null) assert.strictEqual(elements['locked-helper'].textContent, waiting, 'waiting text kept');
+  // End the wait (the unlock "succeeds") so later sections start clean.
+  nextResponse = { type: 'credentialList', credentials: [{ id: '1', title: 'Example', username: 'a' }] };
+  timers[timers.length - 1].fn();
   global.setTimeout = realSetTimeout;
-  // End the wait so later sections start clean.
-  timers.length = 0;
+  nextResponse = { type: 'locked' };
+  tick();
+  assert.strictEqual(elements['locked-panel'].hidden, false, 'locked again after the wait ended');
 }
 
 // --- Failed unlock request shows a short error; the default helper returns on next present. ---
@@ -130,6 +134,8 @@ stopLockedPolling();
   elements['locked-unlock-btn'].onclick();
   assert.strictEqual(elements['locked-helper'].textContent, 'Could not reach MyPass. Open the app and try again.');
   assert.strictEqual(elements['locked-unlock-btn'].disabled, false, 'button stays usable after a failure');
+  nextResponse = { type: 'credentialList', credentials: [{ id: '1', title: 'Example', username: 'a' }] };
+  tick();
   nextResponse = { type: 'locked' };
   tick();
   assert.strictEqual(elements['locked-helper'].textContent, LOCKED_HELPER_TEXT, 'default helper restored on next present');
