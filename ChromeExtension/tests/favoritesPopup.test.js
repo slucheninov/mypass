@@ -259,12 +259,15 @@ assert.ok(html.includes('>Help</button>'));
 const searchAt = html.indexOf('id="vault-search"');
 const gearAt = html.indexOf('id="popup-menu-btn"');
 const generatorAt = html.indexOf('id="open-generator-btn"');
-assert.ok(gearAt !== -1 && gearAt < searchAt && searchAt < generatorAt, 'the gear sits to the left of search');
+assert.ok(gearAt !== -1 && gearAt < searchAt && searchAt < generatorAt, 'the menu button sits to the left of search');
 assert.ok(html.includes('id="vault-search"'));
 assert.ok(html.includes('id="open-generator-btn"'));
 assert.ok(html.includes('id="add-entry-btn"'));
 assert.ok(html.includes('aria-label="Password generator"'));
-assert.ok(html.includes('aria-label="MyPass menu"'));
+assert.ok(html.includes('aria-label="More"') && html.includes('title="More"'), 'the menu button is a neutral More button');
+assert.ok(!html.includes('aria-label="MyPass menu"'), 'the old gear label is gone');
+const moreBtn = html.slice(gearAt, html.indexOf('</button>', gearAt));
+assert.ok(moreBtn.includes('<circle') && !moreBtn.includes('M19.14 12.94'), 'More icon is dots, not the gear path');
 
 elements['popup-menu-btn'].listeners.click[0]();
 assert.strictEqual(elements['popup-menu'].hidden, false);

@@ -46,6 +46,8 @@ global.setInterval = (fn, delay) => { const h = { fn, delay }; intervals.push(h)
 global.clearInterval = (h) => { cleared.push(h); };
 
 let nextResponse = { type: 'locked' };
+let nextUnlockReply = null;
+const sent = [];
 global.chrome = {
   storage: {
     local: { get: (_k, cb) => cb({}), set: (_i, cb) => cb && cb(), remove: (_k, cb) => cb && cb() },
@@ -53,7 +55,9 @@ global.chrome = {
   },
   runtime: {
     sendMessage: (msg, cb) => {
+      sent.push(msg);
       if (msg && msg.type === 'getCredentials') { cb(nextResponse); return; }
+      if (msg && msg.type === 'requestUnlock') { cb(nextUnlockReply); return; }
       if (cb) cb({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: false });
     }
   },
@@ -74,6 +78,7 @@ assert.strictEqual(LOCKED_POLL_INTERVAL_MS, 2000);
 // The popup init already presented the locked panel (getCredentials -> locked).
 assert.strictEqual(elements['locked-panel'].hidden, false, 'locked panel shown');
 assert.strictEqual(elements['add-totp-section'].hidden, true, 'add-totp hidden when locked');
+assert.strictEqual(elements['browser-chrome'].hidden, true, 'locked view shows no menu button at all');
 const afterInit = intervals.length;
 assert.strictEqual(afterInit, 1, 'showing the locked panel registers one poll');
 assert.strictEqual(intervals[0].delay, 2000);
@@ -94,6 +99,41 @@ assert.strictEqual(intervals.length, afterInit + 1, 'start after stop registers 
 intervals[intervals.length - 1].fn();
 assert.strictEqual(calls, 1, 'tick invokes reload');
 stopLockedPolling();
+
+// --- A poll tick must not run while the Unlock wait is polling (sendBrowse would cancel it). ---
+{
+  const browseCalls = () => sent.filter((m) => m.type === 'getCredentials').length;
+  const timers = [];
+  const realSetTimeout = global.setTimeout;
+  global.setTimeout = (fn, d) => { timers.push({ fn, d }); return timers.length; };
+  const tick = intervals[0].fn;
+  nextUnlockReply = { type: 'unlockPresented' };
+  elements['locked-unlock-btn'].onclick();
+  assert.strictEqual(elements['locked-unlock-btn'].disabled, true, 'unlock wait is running');
+  const waiting = elements['locked-helper'] ? elements['locked-helper'].textContent : null;
+  nextResponse = { type: 'locked' };
+  const before = browseCalls();
+  tick();
+  assert.strictEqual(browseCalls(), before, 'a locked poll tick does not reload while the unlock wait runs');
+  assert.strictEqual(elements['locked-unlock-btn'].disabled, true, 'the wait is not cancelled by the tick');
+  if (waiting !== null) assert.strictEqual(elements['locked-helper'].textContent, waiting, 'waiting text kept');
+  global.setTimeout = realSetTimeout;
+  // End the wait so later sections start clean.
+  timers.length = 0;
+}
+
+// --- Failed unlock request shows a short error; the default helper returns on next present. ---
+{
+  const tick = intervals[0].fn;
+  elements['locked-unlock-btn'].disabled = false; // the previous block's wait is abandoned
+  nextUnlockReply = null;
+  elements['locked-unlock-btn'].onclick();
+  assert.strictEqual(elements['locked-helper'].textContent, 'Could not reach MyPass. Open the app and try again.');
+  assert.strictEqual(elements['locked-unlock-btn'].disabled, false, 'button stays usable after a failure');
+  nextResponse = { type: 'locked' };
+  tick();
+  assert.strictEqual(elements['locked-helper'].textContent, LOCKED_HELPER_TEXT, 'default helper restored on next present');
+}
 
 // --- Leaving the locked state stops the poll (real popup tick, not a stub). ---
 const popupTick = intervals[0].fn;

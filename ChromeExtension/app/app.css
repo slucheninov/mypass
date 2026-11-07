@@ -32,6 +32,7 @@ p.panel-helper {
   border: 1px solid var(--mp-line);
 }
 
+/* Author display rules (flex/grid) would otherwise beat the UA [hidden] rule and leave hidden panels visible. */
 [hidden] {
   display: none !important;
 }
@@ -184,7 +185,7 @@ p.panel-helper {
   border: 0;
   padding: 0;
   background: transparent;
-  color: #007aff;
+  color: var(--mp-blue);
   font: inherit;
   font-size: 13px;
   cursor: pointer;

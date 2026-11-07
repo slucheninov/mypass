@@ -14,6 +14,7 @@ function shouldShowAppUnavailableActions(kind) {
 
 const LOCKED_TITLE_TEXT = 'MyPass is locked';
 const LOCKED_HELPER_TEXT = 'Open MyPass and unlock the vault';
+const UNLOCK_UNREACHABLE_TEXT = 'Could not reach MyPass. Open the app and try again.';
 const EMPTY_LIST_TITLE_TEXT = 'No saved logins for this site';
 const LIST_HEADER_TEXT = 'Select an entry to autofill:';
 const FAVORITES_HEADER_TEXT = 'Favorites';
@@ -700,12 +701,13 @@ if (typeof document !== 'undefined') {
     }
     document.getElementById('passkey-diagnostics').hidden = PASSKEY_PANELS.includes(name) || name === 'prompt';
     document.getElementById('site-passkey-hint').hidden = true;
-    // Search, categories, and new-item stay on the browse panels. The gear also
-    // stays on lock, pairing, and "app not found", because Check this browser
-    // and MyPass settings used to sit under those panels.
+    // Search, categories, and new-item stay on the browse panels. The "More" menu (Help)
+    // also stays on pairing and "app not found". The locked panel shows no menu button at
+    // all: it is only the key, title, subtitle and Unlock, and the 2 s poll would close an
+    // open menu anyway.
     const browse = name === 'credential-list' || name === 'empty';
-    const gearOnly = name === 'locked' || name === 'app-unavailable' || name === 'pairing';
-    browserChrome.hidden = !browse && !gearOnly;
+    const menuOnly = name === 'app-unavailable' || name === 'pairing';
+    browserChrome.hidden = !browse && !menuOnly;
     vaultSearch.hidden = !browse;
     openGeneratorBtn.hidden = !browse;
     addEntryBtn.hidden = !browse;
@@ -1163,7 +1165,12 @@ if (typeof document !== 'undefined') {
         reloadCurrentContext();
         return;
       }
-      if (kind !== 'presented') return;
+      if (kind !== 'presented') {
+        // Unreachable app or a failed request: say so instead of leaving the click silent.
+        // The next present of the locked panel restores LOCKED_HELPER_TEXT.
+        lockedHelperEl.textContent = UNLOCK_UNREACHABLE_TEXT;
+        return;
+      }
       // MyPass is now showing its unlock screen. Wait for it rather than leaving the
       // user on a stale panel whose only action is Retry.
       lockedHelperEl.textContent = WAITING_FOR_UNLOCK_TEXT;
