@@ -2,6 +2,7 @@ import MyPassKit
 import XCTest
 @testable import MyPass
 
+@MainActor
 final class AttachmentExporterTests: XCTestCase {
     private final class FakePanel: SavePanelPresenting {
         var destination: URL?
@@ -49,19 +50,43 @@ final class AttachmentExporterTests: XCTestCase {
         XCTAssertEqual(panel.suggestedNames, ["b.txt"])
     }
 
-    func testWriteFailureIsThrown() {
-        let url = dir.appendingPathComponent("missing/out.txt")
-        XCTAssertThrowsError(try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment()))
+    private func listing() throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: dir.path).sorted()
     }
 
-    func testExportCreatesNoOtherFilesInTemporaryDirectory() throws {
-        let tmp = FileManager.default.temporaryDirectory
-        let before = Set(try FileManager.default.contentsOfDirectory(atPath: tmp.path))
-        // The destination lives in `dir` (itself inside tmp); only that subtree may change.
+    func testWriteFailureIsThrownAndLeavesNoStrayFiles() throws {
+        let url = dir.appendingPathComponent("missing/out.txt")
+        XCTAssertThrowsError(try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment()))
+        XCTAssertEqual(try listing(), [])
+    }
+
+    func testRenameFailureCleansUpStagingFile() throws {
+        // Renaming a file over an existing directory fails after staging succeeded.
+        let url = dir.appendingPathComponent("taken")
+        try FileManager.default.createDirectory(at: url, withIntermediateDirectories: false)
+        XCTAssertThrowsError(try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment()))
+        XCTAssertEqual(try listing(), ["taken"])
+        XCTAssertFalse(try listing().contains { $0.contains(".mypass-") })
+    }
+
+    func testSuccessLeavesOnlyTheDestinationInItsDirectory() throws {
         let url = dir.appendingPathComponent("out.bin")
         try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment())
-        let after = Set(try FileManager.default.contentsOfDirectory(atPath: tmp.path))
-        XCTAssertEqual(after, before)
-        XCTAssertEqual(try FileManager.default.contentsOfDirectory(atPath: dir.path), ["out.bin"])
+        XCTAssertEqual(try listing(), ["out.bin"])
+    }
+
+    func testExportedFileModeIs0600() throws {
+        let url = dir.appendingPathComponent("out.bin")
+        try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment())
+        let perms = try FileManager.default.attributesOfItem(atPath: url.path)[.posixPermissions] as? NSNumber
+        XCTAssertEqual(perms?.intValue, 0o600)
+    }
+
+    func testOverwritesExistingDestination() throws {
+        let url = dir.appendingPathComponent("out.bin")
+        try Data([9, 9, 9, 9, 9]).write(to: url)
+        try AttachmentExporter(panel: FakePanel(destination: url)).export(attachment())
+        XCTAssertEqual(try Data(contentsOf: url), Data([1, 2, 3]))
+        XCTAssertEqual(try listing(), ["out.bin"])
     }
 }
