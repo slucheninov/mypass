@@ -12,6 +12,10 @@ struct AttachmentsEditModel: Equatable {
     /// What the saved entry held when the editor opened; used to tell files that are
     /// already stored (deleting them is irreversible after Save) from new ones.
     private let originals: [KdbxAttachment]
+    /// Drops whose file URLs are still loading asynchronously. Save stays disabled
+    /// while this is above zero; otherwise the saved list would miss the dropped files.
+    private(set) var pendingLoads = 0
+    var isLoadingDrops: Bool { pendingLoads > 0 }
 
     init(attachments: [KdbxAttachment] = []) {
         self.attachments = attachments
@@ -33,12 +37,13 @@ struct AttachmentsEditModel: Equatable {
     /// reader is `EntryAttachmentRules.readFile` (5 MiB at most, synchronous).
     mutating func add(
         urls: [URL],
+        extraErrors: [String] = [],
         read: (URL) throws -> (name: String, data: Data) = EntryAttachmentRules.readFile(at:)
     ) {
         var scratch = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], attachments: attachments,
                                 creationTime: Date(), lastModificationTime: Date(),
                                 lastAccessTime: Date(), locationChanged: Date(), history: [])
-        var messages: [String] = []
+        var messages: [String] = extraErrors
         var reportedCap = false
         for url in urls {
             do {
@@ -58,6 +63,20 @@ struct AttachmentsEditModel: Equatable {
         }
         attachments = scratch.attachments
         errorMessage = messages.isEmpty ? nil : messages.joined(separator: "\n")
+    }
+
+    mutating func beginDropLoad() { pendingLoads += 1 }
+
+    /// Ends one drop load. A `nil` entry is an item provider that failed; it is
+    /// reported with the other rejections. The counter always drops, so Save is
+    /// never left blocked by a failed load.
+    mutating func finishDropLoad(
+        urls: [URL?],
+        read: (URL) throws -> (name: String, data: Data) = EntryAttachmentRules.readFile(at:)
+    ) {
+        pendingLoads = max(0, pendingLoads - 1)
+        let failures = urls.filter { $0 == nil }.map { _ in AttachmentAddError.dropLoadFailed.localizedDescription }
+        add(urls: urls.compactMap { $0 }, extraErrors: failures, read: read)
     }
 
     mutating func remove(at index: Int) {
@@ -87,23 +106,14 @@ struct AttachmentsEditSection: View {
                 Spacer()
                 Button("Add File…", systemImage: "paperclip", action: chooseFiles)
             }
-            ForEach(Array(model.attachments.enumerated()), id: \.offset) { index, attachment in
-                HStack {
-                    Image(systemName: "doc")
-                    Text(verbatim: attachment.name).lineLimit(1).truncationMode(.middle)
-                    Spacer()
-                    Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .binary))
-                        .foregroundStyle(.secondary)
-                    // Stored files ask first (irreversible after Save); files added in this session do not.
-                    Button("Delete", systemImage: "trash", role: .destructive) {
-                        if model.needsDeleteConfirmation(at: index) { pendingDeleteIndex = index }
-                        else { model.remove(at: index) }
-                    }
-                        .labelStyle(.iconOnly)
-                        .buttonStyle(.plain)
-                        .foregroundStyle(.red)
-                        .accessibilityLabel(Text("Delete \(attachment.name)"))
-                }
+            if model.attachments.count > Self.visibleRows {
+                // Imported vaults can hold many files; scroll instead of pushing the form away.
+                ScrollView { rows }.frame(height: CGFloat(Self.visibleRows) * Self.rowHeight)
+            } else {
+                rows
+            }
+            if model.isLoadingDrops {
+                ProgressView().controlSize(.small)
             }
             if isDropTargeted {
                 Text("Drop files to attach").foregroundStyle(.secondary)
@@ -131,6 +141,32 @@ struct AttachmentsEditSection: View {
         }
     }
 
+    private static let visibleRows = 6
+    private static let rowHeight: CGFloat = 28
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: 8) {
+                ForEach(Array(model.attachments.enumerated()), id: \.offset) { index, attachment in
+                    HStack {
+                        Image(systemName: "doc")
+                        Text(verbatim: attachment.name).lineLimit(1).truncationMode(.middle)
+                        Spacer()
+                        Text(ByteCountFormatter.string(fromByteCount: Int64(attachment.data.count), countStyle: .binary))
+                            .foregroundStyle(.secondary)
+                        // Stored files ask first (irreversible after Save); files added in this session do not.
+                        Button("Delete", systemImage: "trash", role: .destructive) {
+                            if model.needsDeleteConfirmation(at: index) { pendingDeleteIndex = index }
+                            else { model.remove(at: index) }
+                        }
+                            .labelStyle(.iconOnly)
+                            .buttonStyle(.plain)
+                            .foregroundStyle(.red)
+                            .accessibilityLabel(Text("Delete \(attachment.name)"))
+                    }
+                }
+        }
+    }
+
     private var pendingName: String {
         guard let i = pendingDeleteIndex, model.attachments.indices.contains(i) else { return "" }
         return model.attachments[i].name
@@ -150,6 +186,7 @@ extension View {
     /// added in drop order on the main actor in one batch.
     func attachmentDrop(model: Binding<AttachmentsEditModel>, isTargeted: Binding<Bool>) -> some View {
         onDrop(of: [.fileURL], isTargeted: isTargeted) { providers in
+            model.wrappedValue.beginDropLoad()
             let group = DispatchGroup()
             var urls = [URL?](repeating: nil, count: providers.count)
             for (i, provider) in providers.enumerated() {
@@ -161,7 +198,7 @@ extension View {
                     DispatchQueue.main.async { urls[i] = url; group.leave() }
                 }
             }
-            group.notify(queue: .main) { model.wrappedValue.add(urls: urls.compactMap { $0 }) }
+            group.notify(queue: .main) { model.wrappedValue.finishDropLoad(urls: urls) }
             return !providers.isEmpty
         }
     }

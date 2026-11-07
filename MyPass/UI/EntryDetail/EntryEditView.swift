@@ -231,7 +231,8 @@ struct EntryEditView: View {
         .attachmentDrop(model: $attachmentsModel, isTargeted: $isDropTargeted)
         .navigationTitle(existingEntry == nil ? "New Entry" : "Edit Entry")
         .safeAreaInset(edge: .top, spacing: 0) {
-            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save)
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save,
+                               canSave: !attachmentsModel.isLoadingDrops)
         }
         .onAppear(perform: openDrafts)
         .onDisappear { drafts?.cancel() }
@@ -291,6 +292,7 @@ struct EntryEditView: View {
     }
 
     private func save() {
+        guard !attachmentsModel.isLoadingDrops else { return }
         if isReplacingTotp {
             showReplaceTotpAlert = true
             return

@@ -90,4 +90,35 @@ final class AttachmentsEditModelTests: XCTestCase {
         XCTAssertFalse(model.needsDeleteConfirmation(at: 1))
         XCTAssertFalse(model.needsDeleteConfirmation(at: 5))
     }
+
+    func testPendingDropLoadBlocksUntilFinishedOnSuccess() {
+        var m = AttachmentsEditModel()
+        XCTAssertFalse(m.isLoadingDrops)
+        m.beginDropLoad()
+        m.beginDropLoad()
+        XCTAssertTrue(m.isLoadingDrops)
+        m.finishDropLoad(urls: [URL(fileURLWithPath: "/x/a.txt")], read: fakeRead)
+        XCTAssertEqual(m.pendingLoads, 1)
+        XCTAssertTrue(m.isLoadingDrops)
+        m.finishDropLoad(urls: [URL(fileURLWithPath: "/x/b.txt")], read: fakeRead)
+        XCTAssertEqual(m.pendingLoads, 0)
+        XCTAssertFalse(m.isLoadingDrops)
+        XCTAssertEqual(m.attachments.map(\.name), ["a.txt", "b.txt"])
+    }
+
+    func testFailedProviderLoadStillClearsPendingAndReportsError() {
+        var m = AttachmentsEditModel()
+        m.beginDropLoad()
+        m.finishDropLoad(urls: [nil, URL(fileURLWithPath: "/x/ok.txt")], read: fakeRead)
+        XCTAssertEqual(m.pendingLoads, 0)
+        XCTAssertFalse(m.isLoadingDrops)
+        XCTAssertEqual(m.attachments.map(\.name), ["ok.txt"])
+        XCTAssertEqual(m.errorMessage, AttachmentAddError.dropLoadFailed.errorDescription)
+    }
+
+    func testFinishWithoutBeginNeverGoesNegative() {
+        var m = AttachmentsEditModel()
+        m.finishDropLoad(urls: [], read: fakeRead)
+        XCTAssertEqual(m.pendingLoads, 0)
+    }
 }

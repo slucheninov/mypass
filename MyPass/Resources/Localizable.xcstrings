@@ -8995,6 +8995,29 @@
         }
       }
     },
+    "A dropped item could not be loaded." : {
+      "comment" : "Attachment add error",
+      "localizations" : {
+        "en" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "A dropped item could not be loaded."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось загрузить перетащенный элемент."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося завантажити перетягнутий елемент."
+          }
+        }
+      }
+    },
     "An entry can have at most 8 files." : {
       "comment" : "Attachment add error",
       "localizations" : {

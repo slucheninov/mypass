@@ -60,6 +60,7 @@ enum AttachmentAddError: LocalizedError, Equatable {
     case fileTooLarge(name: String)
     case unreadable(name: String)
     case notARegularFile(name: String)
+    case dropLoadFailed
 
     var errorDescription: String? {
         switch self {
@@ -69,6 +70,8 @@ enum AttachmentAddError: LocalizedError, Equatable {
             return String(format: String(localized: "“%@” is larger than 5 MB.", comment: "Attachment add error; argument is the file name"), name)
         case .unreadable(let name):
             return String(format: String(localized: "“%@” could not be read.", comment: "Attachment add error; argument is the file name"), name)
+        case .dropLoadFailed:
+            return String(localized: "A dropped item could not be loaded.", comment: "Attachment add error")
         case .notARegularFile(let name):
             return String(format: String(localized: "“%@” is a folder, not a file.", comment: "Attachment add error; argument is the file name"), name)
         }

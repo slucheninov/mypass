@@ -213,6 +213,9 @@ struct EntryEditActionRow: View {
     @Binding var isFavorite: Bool
     let onCancel: () -> Void
     let onSave: () -> Void
+    /// False while dropped attachments are still loading. A disabled button also
+    /// disables its keyboard shortcut, so Cmd-Return is blocked too.
+    var canSave: Bool = true
 
     var body: some View {
         EntryActionRowChrome {
@@ -226,6 +229,7 @@ struct EntryEditActionRow: View {
             Button("Cancel", action: onCancel)
             Button("Save", action: onSave)
                 .keyboardShortcut(.return, modifiers: .command)
+                .disabled(!canSave)
         }
     }
 }

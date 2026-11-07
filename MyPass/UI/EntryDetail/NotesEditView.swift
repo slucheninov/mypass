@@ -89,7 +89,8 @@ struct NotesEditView: View {
         .attachmentDrop(model: $attachmentsModel, isTargeted: $isDropTargeted)
         .navigationTitle(existingEntry == nil ? "New Note" : "Edit Note")
         .safeAreaInset(edge: .top, spacing: 0) {
-            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save)
+            EntryEditActionRow(isFavorite: $isFavorite, onCancel: cancel, onSave: save,
+                               canSave: !attachmentsModel.isLoadingDrops)
         }
         .onAppear(perform: openDrafts)
         .onDisappear { drafts?.cancel() }
@@ -117,6 +118,7 @@ struct NotesEditView: View {
     }
 
     private func save() {
+        guard !attachmentsModel.isLoadingDrops else { return }
         let now = Date()
         var entry = existingEntry ?? KdbxEntry(
             uuid: drafts?.entryID ?? entryID,
