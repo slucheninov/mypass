@@ -314,14 +314,21 @@ final class VaultSession: ObservableObject, VaultFlushing {
         let due = pendingDraftDeletions.filter { $0.generation <= generation }
         pendingDraftDeletions.removeAll { $0.generation <= generation }
         writeStateLock.unlock()
-        guard !due.isEmpty else { return }
         let ids = due.flatMap(\.ids)
         DispatchQueue.main.async { [weak self] in
-            guard let self, let store = self.noteDraftStore else { return }
-            let vaultID = self.draftVaultID
-            for id in ids { store.deleteAll(vaultID: vaultID, entryID: id) }
+            guard let self else { return }
+            if let store = self.noteDraftStore {
+                let vaultID = self.draftVaultID
+                for id in ids { store.deleteAll(vaultID: vaultID, entryID: id) }
+            }
+            self.draftDeletionPassObserver?()
         }
     }
+
+    /// Test seam, main thread: called after every durable write once its parked draft
+    /// deletions (possibly none) have been applied, so a test can wait for the session itself
+    /// instead of guessing from store callbacks that fire earlier.
+    var draftDeletionPassObserver: (() -> Void)?
 
     var currentDatabase: KdbxDatabase? {
         guard case .unlocked(let db) = state else { return nil }

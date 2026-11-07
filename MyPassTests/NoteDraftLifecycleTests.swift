@@ -208,9 +208,14 @@ final class NoteDraftLifecycleTests: XCTestCase {
         session.noteDraftStore = drafts
         try session.unlock(password: "pw")
         let baseline = completions.count
+        var setupPasses = 0
+        session.draftDeletionPassObserver = { setupPasses += 1 }
         session.mutate { $0.rootGroup.entries.append(self.makeEntry()) }
-        waitUntil { completions.count > baseline }
+        // Fully processed by the session, so no late hop from this write reaches a test's counter.
+        waitUntil { completions.count > baseline && setupPasses >= 1 }
         XCTAssertGreaterThan(completions.count, baseline, "the entry write must complete")
+        XCTAssertGreaterThanOrEqual(setupPasses, 1)
+        session.draftDeletionPassObserver = nil
         drafts.save(notes: "draft", vaultID: session.draftVaultID, entryID: entry)
         return (session, vaultStore, drafts, completions)
     }
@@ -238,13 +243,14 @@ final class NoteDraftLifecycleTests: XCTestCase {
         var discarded = false
         let token = NotificationCenter.default.addObserver(forName: .noteDraftsDiscarded, object: nil, queue: nil) { _ in discarded = true }
         defer { NotificationCenter.default.removeObserver(token) }
-        let savesBefore = completions.count
+        var passes = 0
+        session.draftDeletionPassObserver = { passes += 1 }
         XCTAssertTrue(deleteEntry(session, id: stale))
         // Force a later durable save so a wrongly queued deletion would have run by now.
         session.mutate { $0.rootGroup.entries[0].title = "later" }
-        waitUntil { completions.count > savesBefore }
-        XCTAssertGreaterThan(completions.count, savesBefore)
-        drainMainQueue()
+        // One deletion pass per durable write, after the session applied its parked deletions.
+        waitUntil { passes >= 2 }
+        XCTAssertGreaterThanOrEqual(passes, 2, "both writes must be processed by the session")
         XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: stale).map(\.notes), ["stale draft"])
         XCTAssertFalse(discarded)
         XCTAssertTrue(session.pendingDraftDeletionIDs.isEmpty)
@@ -277,16 +283,16 @@ final class NoteDraftLifecycleTests: XCTestCase {
 
     func testLockBeforeSuccessKeepsDraftsAndClearsPending() throws {
         let (session, vaultStore, drafts, completions) = try makeSessionWithEntryAndDraft()
-        let savesBefore = completions.count
+        var passes = 0
+        session.draftDeletionPassObserver = { passes += 1 }
         vaultStore.holdWrites()
         XCTAssertTrue(deleteEntry(session, id: entry))
         XCTAssertEqual(session.pendingDraftDeletionIDs, [entry])
         session.lock()
         XCTAssertTrue(session.pendingDraftDeletionIDs.isEmpty)
         vaultStore.releaseWrites()
-        waitUntil { completions.count > savesBefore }
-        XCTAssertGreaterThan(completions.count, savesBefore, "the held write must finish")
-        drainMainQueue()
+        waitUntil { passes >= 1 }
+        XCTAssertGreaterThanOrEqual(passes, 1, "the session must process the held write")
         drafts.unlock()
         XCTAssertEqual(drafts.versions(vaultID: session.draftVaultID, entryID: entry).map(\.notes), ["draft"])
     }
