@@ -35,7 +35,8 @@ global.document = {
   getElementById: (id) => elements[id] || makeEl(id),
   createElement: (tag) => makeEl(tag)
 };
-global.addEventListener = () => {};
+const windowListeners = {};
+global.addEventListener = (name, fn) => { windowListeners[name] = fn; };
 global.window = global;
 
 // Fake timers: record registrations so leaks are observable.
@@ -44,6 +45,7 @@ const cleared = [];
 global.setInterval = (fn, delay) => { const h = { fn, delay }; intervals.push(h); return h; };
 global.clearInterval = (h) => { cleared.push(h); };
 
+let nextResponse = { type: 'locked' };
 global.chrome = {
   storage: {
     local: { get: (_k, cb) => cb({}), set: (_i, cb) => cb && cb(), remove: (_k, cb) => cb && cb() },
@@ -51,7 +53,7 @@ global.chrome = {
   },
   runtime: {
     sendMessage: (msg, cb) => {
-      if (msg && msg.type === 'getCredentials') { cb({ type: 'locked' }); return; }
+      if (msg && msg.type === 'getCredentials') { cb(nextResponse); return; }
       if (cb) cb({ type: 'passkeyProxyStatus', unlocked: true, paired: true, attachAllowed: false });
     }
   },
@@ -92,5 +94,35 @@ assert.strictEqual(intervals.length, afterInit + 1, 'start after stop registers 
 intervals[intervals.length - 1].fn();
 assert.strictEqual(calls, 1, 'tick invokes reload');
 stopLockedPolling();
+
+// --- Leaving the locked state stops the poll (real popup tick, not a stub). ---
+const popupTick = intervals[0].fn;
+function lockAgain() {
+  nextResponse = { type: 'locked' };
+  popupTick(); // reload -> locked -> showPanel('locked') starts polling again
+}
+lockAgain();
+let before = cleared.length;
+nextResponse = { type: 'credentialList', credentials: [{ id: '1', title: 'Example', username: 'a' }] };
+popupTick();
+assert.strictEqual(elements['list-panel'].hidden, false, 'credential list shown after unlock');
+assert.strictEqual(cleared.length, before + 1, 'credential list stops the poll');
+
+lockAgain();
+before = cleared.length;
+nextResponse = { type: 'credentialList', credentials: [] };
+popupTick();
+assert.strictEqual(elements['empty-panel'].hidden, false, 'empty panel shown');
+assert.strictEqual(cleared.length, before + 1, 'empty panel stops the poll');
+
+lockAgain();
+const registered = intervals.length;
+lockAgain(); // a tick while locked must not stack timers
+assert.strictEqual(intervals.length, registered, 'repeated locked panels keep one timer');
+
+before = cleared.length;
+assert.strictEqual(typeof windowListeners.pagehide, 'function', 'pagehide listener registered');
+windowListeners.pagehide();
+assert.strictEqual(cleared.length, before + 1, 'pagehide stops the poll');
 
 console.log('lockedPopup.test.js passed');

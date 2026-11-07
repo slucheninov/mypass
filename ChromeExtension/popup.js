@@ -76,7 +76,7 @@ const UNLOCK_BUTTON_LABEL = 'Unlock MyPass';
 const POPUP_PAIRING_STORAGE_KEY = 'pairingSecret';
 // The popup was expected to close when MyPass takes focus, so no waiting state was
 // planned. It does not reliably close, so it polls the vault instead of stranding the
-// user on a stale locked panel with only Retry.
+// user on a stale locked panel.
 const UNLOCK_POLL_INTERVAL_MS = 800;
 
 // Locked-panel auto refresh. One module-level handle so repeated showPanel('locked')
@@ -709,7 +709,9 @@ if (typeof document !== 'undefined') {
     // polls; every other panel stops that single timer.
     if (name === 'locked') {
       addTotpSection.hidden = true;
-      startLockedPolling(reloadCurrentContext);
+      // A tick must not run while the Unlock wait is polling: sendBrowse() cancels that
+      // wait and would leave the button disabled with the waiting text.
+      startLockedPolling(() => { if (unlockPollTimer === null) reloadCurrentContext(); });
     } else {
       stopLockedPolling();
     }
