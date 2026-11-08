@@ -538,6 +538,22 @@
         }
       }
     },
+    "A save is still in progress. Try again in a moment." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збереження ще триває. Спробуйте за мить."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранение ещё выполняется. Повторите через мгновение."
+          }
+        }
+      }
+    },
     "About" : {
       "localizations" : {
         "ru" : {
@@ -950,6 +966,22 @@
         }
       }
     },
+    "At most every 10 minutes" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не частіше ніж раз на 10 хвилин"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не чаще чем раз в 10 минут"
+          }
+        }
+      }
+    },
     "Auto-lock" : {
       "localizations" : {
         "ru" : {
@@ -978,6 +1010,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Автозаповнення з розширення MyPass: «Адреси» → виберіть цю адресу. Заповнюється лише вибрана адреса."
+          }
+        }
+      }
+    },
+    "Available backups" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступні резервні копії"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступные резервные копии"
           }
         }
       }
@@ -1696,7 +1744,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Після натискання на піктограму"
+            "value" : "Натискання піктограми"
           }
         }
       }
@@ -2151,7 +2199,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не вдалося перейти на цей файл сховища."
+            "value" : "Не вдалося перемкнутися на цей файл сховища."
           }
         }
       }
@@ -2168,7 +2216,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не вдалося оновити налаштування розблокування пристроєм."
+            "value" : "Не вдалося оновити параметри розблокування пристроєм."
           }
         }
       }
@@ -2266,6 +2314,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Власний"
+          }
+        }
+      }
+    },
+    "Daily" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щодня"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ежедневно"
           }
         }
       }
@@ -2878,6 +2942,22 @@
         }
       }
     },
+    "Every save" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кожне збереження"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждое сохранение"
+          }
+        }
+      }
+    },
     "Exact address" : {
       "comment" : "Entry editor: URL match mode name",
       "localizations" : {
@@ -3237,6 +3317,22 @@
         }
       }
     },
+    "Frequency" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Частота"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Частота"
+          }
+        }
+      }
+    },
     "Full Name" : {
       "localizations" : {
         "ru" : {
@@ -3557,7 +3653,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Дім"
+            "value" : "Домашня"
           }
         }
       }
@@ -3574,6 +3670,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Хост"
+          }
+        }
+      }
+    },
+    "Hourly" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щогодини"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ежечасно"
           }
         }
       }
@@ -3834,7 +3946,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Зберігати додаткову копію сховища в папці або на SFTP-сервері на додачу до основного розташування (задається в розділі «Розташування» вище). Після зміни перезапустіть MyPass."
+            "value" : "Зберігати додаткову копію сховища в папці або на SFTP-сервері окрім основного розташування (задається в розділі «Розташування» вище). Після зміни перезапустіть MyPass."
           }
         }
       }
@@ -4002,6 +4114,22 @@
         }
       }
     },
+    "Last backup failed: %@ (%@)" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося створити резервну копію: %@ (%@)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось создать резервную копию: %@ (%@)"
+          }
+        }
+      }
+    },
     "Last checked" : {
       "localizations" : {
         "ru" : {
@@ -4062,6 +4190,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Пізніше"
+          }
+        }
+      }
+    },
+    "Latest backup" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остання резервна копія"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя резервная копия"
           }
         }
       }
@@ -4254,7 +4398,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Вхід"
+            "value" : "Логін"
           }
         }
       }
@@ -4807,7 +4951,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MyPass не зміг перейти на нове розташування. Нічого не змінено. Знову виберіть папку й повторіть спробу."
+            "value" : "MyPass не зміг перейти до нового розташування. Нічого не змінено. Знову виберіть папку й повторіть спробу."
           }
         }
       }
@@ -5202,7 +5346,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Немає з’єднаних браузерів. Відкрийте розширення MyPass у браузері, щоб підключитися."
+            "value" : "Немає підключених браузерів. Відкрийте розширення MyPass у браузері, щоб підключитися."
           }
         }
       }
@@ -5286,6 +5430,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Немає"
+          }
+        }
+      }
+    },
+    "None yet" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поки немає"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет"
           }
         }
       }
@@ -5608,7 +5768,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "З’єднано %@"
+            "value" : "Підключено %@"
           }
         }
       }
@@ -5624,7 +5784,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "З’єднані браузери"
+            "value" : "Підключені браузери"
           }
         }
       }
@@ -6176,7 +6336,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Знову відкрийте розширення MyPass і виберіть «Check this browser». Дозвольте перевірку лише для читання, коли Chrome запитає. Поверніться в «Налаштування» → «Браузер» у MyPass, щоб побачити звіт і час його отримання."
+            "value" : "Знову відкрийте розширення MyPass і виберіть «Check this browser». Дозвольте перевірку лише для читання, коли Chrome запитає. Поверніться в «Параметри» → «Браузер» у MyPass, щоб побачити звіт і час його отримання."
           }
         }
       }
@@ -6328,6 +6488,54 @@
         }
       }
     },
+    "Restore Failed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося відновити"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось восстановить"
+          }
+        }
+      }
+    },
+    "Restore this backup?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відновити цю резервну копію?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить эту резервную копию?"
+          }
+        }
+      }
+    },
+    "Restore…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відновити…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить…"
+          }
+        }
+      }
+    },
     "Revoke" : {
       "localizations" : {
         "ru" : {
@@ -6340,6 +6548,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Відкликати"
+          }
+        }
+      }
+    },
+    "Rotate local backup copies of the vault file so you can recover from a corrupted save. The first save after unlocking always makes a backup." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ротація локальних резервних копій файлу сховища, щоб можна було відновитися після пошкодженого збереження. Перше збереження після розблокування завжди створює резервну копію."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ротация локальных резервных копий файла хранилища, чтобы можно было восстановиться после повреждённого сохранения. Первое сохранение после разблокировки всегда создаёт резервную копию."
           }
         }
       }
@@ -6520,7 +6744,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Налаштування…"
+            "value" : "Параметри…"
           }
         }
       }
@@ -6589,6 +6813,22 @@
         }
       }
     },
+    "Show in Finder" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показати у Finder"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать в Finder"
+          }
+        }
+      }
+    },
     "Show Large Type" : {
       "localizations" : {
         "ru" : {
@@ -6632,7 +6872,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Показувати швидкий доступ"
+            "value" : "Показати швидкий доступ"
           }
         }
       }
@@ -6831,6 +7071,22 @@
         }
       }
     },
+    "Sync is on: the next sync merges the restored vault with the sync destination, so entries that exist only there can come back. If this backup uses an older master password, sync stops until both use the same password." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Синхронізацію ввімкнено: наступна синхронізація зіллє відновлене сховище з місцем синхронізації, тож записи, які є лише там, можуть повернутися. Якщо ця резервна копія використовує старіший головний пароль, синхронізація зупиниться, доки обидва не матимуть однакового пароля."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Синхронизация включена: следующая синхронизация сольёт восстановленное хранилище с местом синхронизации, поэтому записи, которые есть только там, могут вернуться. Если эта резервная копия использует более старый мастер-пароль, синхронизация остановится, пока у обоих не будет одинакового пароля."
+          }
+        }
+      }
+    },
     "Sync Now" : {
       "localizations" : {
         "ru" : {
@@ -6966,6 +7222,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "У цьому розташуванні ще немає сховища. MyPass перемістить туди сховище з поточного розташування."
+          }
+        }
+      }
+    },
+    "The backup could not be restored: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося відновити резервну копію: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось восстановить резервную копию: %@"
           }
         }
       }
@@ -7138,6 +7410,22 @@
         }
       }
     },
+    "The selected file is not a valid vault." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вибраний файл не є дійсним сховищем."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбранный файл не является допустимым хранилищем."
+          }
+        }
+      }
+    },
     "The vault at that location is still downloading from iCloud. Wait until it finishes, then try again." : {
       "comment" : "Vault location change sheet: message",
       "localizations" : {
@@ -7302,7 +7590,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Сховище переключено, але стару копію в %@ не вдалося видалити."
+            "value" : "Сховище перемкнено, але стару копію в %@ не вдалося видалити."
           }
         }
       }
@@ -7319,7 +7607,23 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Сховище переключено, але стару копію не вдалося видалити."
+            "value" : "Сховище перемкнено, але стару копію не вдалося видалити."
+          }
+        }
+      }
+    },
+    "The vault will be replaced with the backup from %@ and locked. The current vault is saved as a new backup first, so you can undo this. Unlock with the master password the backup was created with, which may be an older one." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сховище буде замінено резервною копією від %@ і заблоковано. Поточне сховище спершу зберігається як нова резервна копія, тож це можна скасувати. Розблокуйте головним паролем, з яким створено копію, — це може бути старіший пароль."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Хранилище будет заменено резервной копией от %@ и заблокировано. Текущее хранилище сначала сохраняется как новая резервная копия, так что это можно отменить. Разблокируйте мастер-паролем, с которым создана копия, — это может быть более старый пароль."
           }
         }
       }
@@ -7529,7 +7833,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Назва (наприклад, «Дім»)"
+            "value" : "Назва (наприклад, «Домашня»)"
           }
         }
       }
@@ -7546,6 +7850,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Щоб користуватися в цьому профілі лише MyPass, відкрийте сторінку розширень Chrome і вимкніть 1Password."
+          }
+        }
+      }
+    },
+    "Total size" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загальний розмір"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общий размер"
           }
         }
       }
@@ -7982,7 +8302,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Використовувати системну"
+            "value" : "Системна мова"
           }
         }
       }
@@ -8241,7 +8561,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Робота"
+            "value" : "Робоча"
           }
         }
       }
@@ -9292,322 +9612,210 @@
         }
       }
     },
-    "A save is still in progress. Try again in a moment." : {
+    "Modified %@" : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Збереження ще триває. Спробуйте за мить."
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Сохранение ещё выполняется. Повторите через мгновение."
+            "value" : "Изменено: %@"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Змінено: %@"
           }
         }
       }
     },
-    "At most every 10 minutes" : {
+    "Find .kdbx Files…" : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не частіше ніж раз на 10 хвилин"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не чаще чем раз в 10 минут"
+            "value" : "Найти файлы .kdbx…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Знайти файли .kdbx…"
           }
         }
       }
     },
-    "Available backups" : {
+    "Find .kdbx Files" : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Доступні резервні копії"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Доступные резервные копии"
+            "value" : "Поиск файлов .kdbx"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пошук файлів .kdbx"
           }
         }
       }
     },
-    "Daily" : {
+    "Create New Vault" : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Щодня"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ежедневно"
+            "value" : "Создать новое хранилище"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Створити нове сховище"
           }
         }
       }
     },
-    "Every save" : {
+    "Searching…" : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Кожне збереження"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Каждое сохранение"
+            "value" : "Поиск…"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пошук…"
           }
         }
       }
     },
-    "Frequency" : {
+    "No .kdbx files found in %@." : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Частота"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Частота"
+            "value" : "В %@ не найдено файлов .kdbx."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У %@ не знайдено файлів .kdbx."
           }
         }
       }
     },
-    "Hourly" : {
+    "Current" : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Щогодини"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ежечасно"
+            "value" : "Текущий"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поточний"
           }
         }
       }
     },
-    "Last backup failed: %@ (%@)" : {
+    "In iCloud, not downloaded yet" : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не вдалося створити резервну копію: %@ (%@)"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не удалось создать резервную копию: %@ (%@)"
+            "value" : "В iCloud, ещё не загружено"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В iCloud, ще не завантажено"
           }
         }
       }
     },
-    "Latest backup" : {
+    "No vault file selected. Choose an existing .kdbx file or create a new one." : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Остання резервна копія"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Последняя резервная копия"
+            "value" : "Файл хранилища не выбран. Выберите существующий файл .kdbx или создайте новое хранилище."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл сховища не вибрано. Виберіть наявний файл .kdbx або створіть нове сховище."
           }
         }
       }
     },
-    "None yet" : {
+    "The vault file at %@ can't be found. Choose it again or create a new vault." : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Поки немає"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Пока нет"
+            "value" : "Файл хранилища в %@ не найден. Выберите его снова или создайте новое хранилище."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл сховища в %@ не знайдено. Виберіть його знову або створіть нове сховище."
           }
         }
       }
     },
-    "Restore Failed" : {
+    "Your vault file can't be found. Choose it again or create a new vault." : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не вдалося відновити"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не удалось восстановить"
+            "value" : "Файл хранилища не найден. Выберите его снова или создайте новое хранилище."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл сховища не знайдено. Виберіть його знову або створіть нове сховище."
           }
         }
       }
     },
-    "Restore this backup?" : {
+    "MyPass will look for .kdbx files in the folder you choose. Choose your home folder to search everywhere." : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Відновити цю резервну копію?"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Восстановить эту резервную копию?"
+            "value" : "MyPass будет искать файлы .kdbx в выбранной папке. Выберите домашнюю папку, чтобы искать везде."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyPass шукатиме файли .kdbx у вибраній папці. Виберіть домашню папку, щоб шукати всюди."
           }
         }
       }
     },
-    "Restore…" : {
+    "Your chosen vault file can't be found. MyPass is using the copy on this Mac. Choose the file again to switch back." : {
       "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Відновити…"
-          }
-        },
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Восстановить…"
+            "value" : "Выбранный файл хранилища не найден. MyPass использует копию на этом Mac. Выберите файл снова, чтобы вернуться к нему."
           }
-        }
-      }
-    },
-    "Rotate local backup copies of the vault file so you can recover from a corrupted save. The first save after unlocking always makes a backup." : {
-      "localizations" : {
+        },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Ротація локальних резервних копій файлу сховища, щоб можна було відновитися після пошкодженого збереження. Перше збереження після розблокування завжди створює резервну копію."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Ротация локальных резервных копий файла хранилища, чтобы можно было восстановиться после повреждённого сохранения. Первое сохранение после разблокировки всегда создаёт резервную копию."
-          }
-        }
-      }
-    },
-    "Show in Finder" : {
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показати у Finder"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показать в Finder"
-          }
-        }
-      }
-    },
-    "The backup could not be restored: %@" : {
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не вдалося відновити резервну копію: %@"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Не удалось восстановить резервную копию: %@"
-          }
-        }
-      }
-    },
-    "The selected file is not a valid vault." : {
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Вибраний файл не є дійсним сховищем."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Выбранный файл не является допустимым хранилищем."
-          }
-        }
-      }
-    },
-    "The vault will be replaced with the backup from %@ and locked. The current vault is saved as a new backup first, so you can undo this. Unlock with the master password the backup was created with, which may be an older one." : {
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Сховище буде замінено резервною копією від %@ і заблоковано. Поточне сховище спершу зберігається як нова резервна копія, тож це можна скасувати. Розблокуйте головним паролем, з яким створено копію, — це може бути старіший пароль."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Хранилище будет заменено резервной копией от %@ и заблокировано. Текущее хранилище сначала сохраняется как новая резервная копия, так что это можно отменить. Разблокируйте мастер-паролем, с которым создана копия, — это может быть более старый пароль."
-          }
-        }
-      }
-    },
-    "Total size" : {
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Загальний розмір"
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Общий размер"
-          }
-        }
-      }
-    },
-    "Sync is on: the next sync merges the restored vault with the sync destination, so entries that exist only there can come back. If this backup uses an older master password, sync stops until both use the same password." : {
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Синхронізацію ввімкнено: наступна синхронізація зіллє відновлене сховище з місцем синхронізації, тож записи, які є лише там, можуть повернутися. Якщо ця резервна копія використовує старіший головний пароль, синхронізація зупиниться, доки обидва не матимуть однакового пароля."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Синхронизация включена: следующая синхронизация сольёт восстановленное хранилище с местом синхронизации, поэтому записи, которые есть только там, могут вернуться. Если эта резервная копия использует более старый мастер-пароль, синхронизация остановится, пока у обоих не будет одинакового пароля."
+            "value" : "Вибраний файл сховища не знайдено. MyPass використовує копію на цьому Mac. Виберіть файл знову, щоб повернутися до нього."
           }
         }
       }

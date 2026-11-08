@@ -353,6 +353,15 @@ final class VaultSession: ObservableObject, VaultFlushing {
         fileStore.primaryVaultFileURL?.path ?? String(localized: "Path unavailable", comment: "Vault settings: shown instead of the vault file path when there is none")
     }
 
+    /// What the unlock screen and Settings report about the vault file (see `VaultFileStatus`).
+    var vaultFileStatus: VaultFileStatus {
+        VaultFileStatus.resolve(
+            primaryURL: fileStore.primaryVaultFileURL,
+            isDefaultLocation: fileStore is VaultFileStore,
+            fallbackActive: localFileFallbackActive || iCloudPrimaryFallbackActive
+        )
+    }
+
     func loadVaultData() throws -> Data? {
         try fileStore.load()
     }

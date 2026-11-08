@@ -54,16 +54,16 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
         type("hello")
         type(" world")
         XCTAssertEqual(box.text, "hello world")
-        coordinator.perform(.undo, on: textView)
+        coordinator.undo()
         XCTAssertEqual(textView.string, "hello")
         XCTAssertEqual(box.text, "hello")
     }
 
     func testRedoReappliesUndoneChange() {
         type("hello")
-        coordinator.perform(.undo, on: textView)
+        coordinator.undo()
         XCTAssertEqual(box.text, "")
-        coordinator.perform(.redo, on: textView)
+        coordinator.redo()
         XCTAssertEqual(textView.string, "hello")
         XCTAssertEqual(box.text, "hello")
     }
@@ -75,7 +75,7 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
         type("a")
         XCTAssertTrue(box.canUndo)
         XCTAssertFalse(box.canRedo)
-        coordinator.perform(.undo, on: textView)
+        coordinator.undo()
         XCTAssertFalse(box.canUndo)
         XCTAssertTrue(box.canRedo)
     }
@@ -85,23 +85,23 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
         textView.setSelectedRange(NSRange(location: 0, length: 4))
         let um = coordinator.undoManager
         um.beginUndoGrouping()
-        coordinator.apply(.wrap(prefix: "**", suffix: "**"), to: textView)
+        coordinator.apply(.wrap(prefix: "**", suffix: "**"))
         um.endUndoGrouping()
         XCTAssertEqual(textView.string, "**word**")
-        coordinator.perform(.undo, on: textView)
+        coordinator.undo()
         XCTAssertEqual(textView.string, "word")
         XCTAssertEqual(box.text, "word")
     }
 
     func testProgrammaticReplacementIsOneUndoStep() {
         type("original")
-        coordinator.perform(.replaceAll("restored from draft"), on: textView)
+        coordinator.replaceAll(with: "restored from draft")
         XCTAssertEqual(textView.string, "restored from draft")
         XCTAssertEqual(box.text, "restored from draft")
-        coordinator.perform(.undo, on: textView)
+        coordinator.undo()
         XCTAssertEqual(textView.string, "original")
         XCTAssertTrue(box.canUndo)
-        coordinator.perform(.redo, on: textView)
+        coordinator.redo()
         XCTAssertEqual(textView.string, "restored from draft")
     }
 
@@ -115,8 +115,8 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
         coordinator.refreshUndoState(of: textView)
         XCTAssertFalse(box.canUndo)
         type("abc")
-        coordinator.perform(.undo, on: textView)
-        coordinator.perform(.undo, on: textView)
+        coordinator.undo()
+        coordinator.undo()
         XCTAssertFalse(target.fired)
         XCTAssertTrue(windowManager.canUndo)
         XCTAssertEqual(textView.string, "")
@@ -127,6 +127,11 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
         XCTAssertTrue(box.canUndo)
         coordinator.setExternalText("other entry", in: textView)
         XCTAssertEqual(textView.string, "other entry")
+        // The flag refresh is deferred out of the update pass. The main queue is FIFO, so a
+        // sentinel block enqueued now runs after it; no wall-clock wait needed.
+        let drained = expectation(description: "main queue drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 2)
         XCTAssertFalse(box.canUndo)
         XCTAssertFalse(box.canRedo)
     }
