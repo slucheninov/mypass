@@ -94,18 +94,13 @@ final class VaultBackupManager {
     private let defaults: UserDefaults
     private let now: () -> Date
     private let removeFile: (URL) throws -> Void
-    private let createDirectory: (URL) throws -> Void
     private let lock = NSLock()
     private var hasSnapshottedThisSession = false
     private var snapshotsSuppressed = false
 
     init(directory: URL, defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init,
-         removeFile: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) },
-         createDirectory: @escaping (URL) throws -> Void = {
-             try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true)
-         }) {
+         removeFile: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
         self.directory = directory
-        self.createDirectory = createDirectory
         self.defaults = defaults
         self.now = now
         self.removeFile = removeFile
@@ -208,20 +203,7 @@ final class VaultBackupManager {
     @discardableResult
     private func writeLocked(_ data: Data) throws -> URL {
         let fm = FileManager.default
-        do {
-            try createDirectory(directory)
-        } catch {
-            // `createDirectory(withIntermediateDirectories: true)` can report "a file with the
-            // same name already exists" (EEXIST) for a directory it did create, or that
-            // appeared meanwhile: seen on the first call under a fresh temporary folder on the
-            // GitHub macOS runner, where it made the very first snapshot silently fail. If the
-            // directory is there, the goal is met; only a missing directory (or a plain file in
-            // its place) is a real failure.
-            var isDirectory: ObjCBool = false
-            guard fm.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
-                throw error
-            }
-        }
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         let stamp = String(format: "%.6f", now().timeIntervalSince1970)
         var url = directory.appendingPathComponent("vault-\(stamp).kdbx")
         var suffix = 1
@@ -229,7 +211,20 @@ final class VaultBackupManager {
             suffix += 1
             url = directory.appendingPathComponent("vault-\(stamp)-\(suffix).kdbx")
         }
-        try data.write(to: url, options: .atomic)
+        // Own atomic scheme instead of `data.write(options: .atomic)`: on the GitHub macOS runner
+        // Foundation's atomic write reported a spurious "a file with the same name already
+        // exists" (EEXIST) against the backups folder, which silently dropped snapshots. A
+        // hidden temp file in the same directory plus a rename is atomic on the same volume and
+        // never touches the final name until the bytes are complete. `listLocked` ignores
+        // `.vault-*.partial` because it only accepts names starting with `vault-`.
+        let partial = directory.appendingPathComponent(".vault-\(UUID().uuidString).partial")
+        do {
+            try data.write(to: partial, options: .withoutOverwriting)
+            try fm.moveItem(at: partial, to: url)
+        } catch {
+            try? fm.removeItem(at: partial)
+            throw error
+        }
         notifyChanged()
         return url
     }
@@ -290,8 +285,14 @@ final class VaultBackupManager {
     }
 
     private func recordFailure(_ error: Error) {
-        let message = (error as NSError).localizedDescription
-        os_log("Vault backup failed: %{public}@", log: Self.log, type: .error, message)
+        let nsError = error as NSError
+        let message = nsError.localizedDescription
+        // The user-facing message is the localized text; the log carries the evidence needed to
+        // tell apart look-alike failures (domain, code, offending path, underlying error).
+        let underlying = (nsError.userInfo[NSUnderlyingErrorKey] as? NSError).map { "\($0.domain)/\($0.code)" } ?? "none"
+        let path = (nsError.userInfo[NSFilePathErrorKey] as? String) ?? nsError.userInfo[NSURLErrorKey].map { "\($0)" } ?? "none"
+        os_log("Vault backup failed: %{public}@ [domain=%{public}@ code=%ld path=%{public}@ underlying=%{public}@]",
+               log: Self.log, type: .error, message, nsError.domain, nsError.code, path, underlying)
         defaults.set(message, forKey: VaultBackupSettings.lastFailureMessageKey)
         defaults.set(now().timeIntervalSince1970, forKey: VaultBackupSettings.lastFailureDateKey)
         notifyChanged()
