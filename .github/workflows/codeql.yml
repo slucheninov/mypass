@@ -82,58 +82,6 @@ jobs:
         with:
           persist-credentials: false
 
-      # The Swift leg takes about 30 minutes (28 of them the traced build), so on a pull request it
-      # only does that work when the pull request can change what it analyzes. A pull request
-      # that touches only docs, the extension, other workflows or a GitHub Actions bump from
-      # Dependabot cannot change a Swift finding.
-      # This is deliberately a step and not a `paths:` filter on the workflow trigger: the
-      # branch ruleset on master requires the "Analyze (swift)" check, and a workflow that is
-      # filtered out never reports it, which would leave such a pull request unmergeable. Here
-      # the job still starts and finishes green, and the expensive steps below are skipped.
-      # What counts as relevant: everything scripts/dev.sh build --unsigned compiles or reads
-      # (MyPass/, ChromeHost/, Packages/, project.yml, scripts/dev.sh) plus this workflow and the
-      # CodeQL configuration, which change how the analysis runs. Test sources (MyPassTests/) are
-      # not analyzed, so they are not on the list. Add a path here when the Swift build starts to
-      # depend on a new one.
-      # Pushes to master, the weekly schedule and manual runs always analyze in full, so the
-      # alerts of the default branch never go stale because of a skipped pull request run.
-      # If the diff cannot be computed the step falls back to analyzing.
-      # A skipped Swift analysis leaves no Swift SARIF for the pull request's head commit; the
-      # actions and javascript-typescript legs still upload theirs, so the commit has CodeQL
-      # results. The master ruleset also has a "Require code scanning results" rule for CodeQL.
-      # If it ever blocks a pull request that skipped this analysis, drop this step and the
-      # `if:` conditions that read its output.
-      - name: Decide whether the Swift analysis is needed
-        id: scope
-        if: matrix.language == 'swift'
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          # Passed through env, never interpolated into the script. Empty outside pull requests.
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        run: |
-          relevant='^(MyPass/|ChromeHost/|Packages/|project\.yml$|scripts/dev\.sh$|\.github/workflows/codeql\.yml$|\.github/codeql/)'
-          analyze=true
-          if [[ "$EVENT_NAME" == "pull_request" ]]; then
-            # The checkout of a pull request is the merge commit of its head into the base, so the
-            # difference between the base tip and HEAD is exactly the change the pull request
-            # brings. Depth 1 is enough: only the two trees are compared.
-            if git fetch --no-tags --depth=1 origin "$BASE_SHA" && changed="$(git diff --name-only "$BASE_SHA" HEAD)"; then
-              echo "Changed files:"
-              echo "$changed"
-              if grep -qE "$relevant" <<<"$changed"; then
-                echo "A Swift-relevant file changed: running the Swift analysis."
-              else
-                analyze=false
-                echo "::notice::No Swift-relevant file changed in this pull request: the Swift analysis is skipped."
-              fi
-            else
-              echo "::warning::Could not compute the changed files: running the Swift analysis."
-            fi
-          else
-            echo "Event '$EVENT_NAME': running the Swift analysis in full."
-          fi
-          echo "analyze=$analyze" >> "$GITHUB_OUTPUT"
-
       - name: Check the pinned Xcode
         if: matrix.language == 'swift'
         run: |
@@ -149,7 +97,7 @@ jobs:
       # Rosetta 2. The runner image inventory does not list Rosetta, so verify it and install it
       # when it is missing instead of failing later inside the traced build.
       - name: Check Rosetta 2
-        if: matrix.language == 'swift' && steps.scope.outputs.analyze == 'true'
+        if: matrix.language == 'swift'
         run: |
           rosetta=/Library/Apple/usr/share/rosetta/rosetta
           if [[ ! -f "$rosetta" ]]; then
@@ -159,7 +107,7 @@ jobs:
           echo "Rosetta 2 is available."
 
       - name: Install xcodegen
-        if: matrix.language == 'swift' && steps.scope.outputs.analyze == 'true'
+        if: matrix.language == 'swift'
         run: brew install xcodegen
 
       # Swift package SOURCES only (git checkouts and repository clones), never build products.
@@ -174,15 +122,13 @@ jobs:
       # -onlyUsePackageVersionsFromResolvedFile, so a restored checkout can only be the pinned
       # revision and a stale or partial cache cannot move a dependency.
       - name: Cache Swift package sources
-        if: matrix.language == 'swift' && steps.scope.outputs.analyze == 'true'
+        if: matrix.language == 'swift'
         uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
         with:
           path: build/SourcePackages
           key: swiftpm-sources-${{ runner.os }}-${{ hashFiles('project.yml', 'Packages/*/Package.swift', 'Packages/*/Package.resolved') }}
 
-      # The non-Swift legs have no scope step (its output is empty), so they always run these.
       - name: Initialize CodeQL
-        if: matrix.language != 'swift' || steps.scope.outputs.analyze == 'true'
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
@@ -195,11 +141,10 @@ jobs:
       # identity and no provisioning profile are involved. The runner is fresh, so every file is
       # compiled and nothing is skipped as up to date.
       - name: Build for Swift extraction
-        if: matrix.build-mode == 'manual' && steps.scope.outputs.analyze == 'true'
+        if: matrix.build-mode == 'manual'
         run: ./scripts/dev.sh build --unsigned
 
       - name: Analyze
-        if: matrix.language != 'swift' || steps.scope.outputs.analyze == 'true'
         uses: github/codeql-action/analyze@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           category: /language:${{ matrix.language }}
