@@ -5,19 +5,37 @@ enum MarkdownWrapAction {
     case wrap(prefix: String, suffix: String)
 }
 
-/// Undo/redo requests from outside the text view (the toolbar buttons). Keyboard
-/// shortcuts need no command: Cmd-Z / Shift-Cmd-Z reach the focused NSTextView
-/// through the responder chain on their own.
-enum MarkdownEditorCommand {
-    case undo, redo
+/// Imperative handle for actions that originate outside the text view (the toolbar
+/// buttons, draft restore). Keyboard shortcuts need none: Cmd-Z / Shift-Cmd-Z reach the
+/// focused NSTextView through the responder chain on their own.
+///
+/// Why a handle and not state bindings: a one-shot command carried as a binding has to
+/// be consumed (and reset) inside `updateNSView`. SwiftUI does not reliably honour state
+/// writes made during an update pass, so the reset could be dropped while the side effect
+/// (which writes `text`) invalidated the view again, and the next pass re-ran the same
+/// command forever: Undo erased the text and wrapping inserted dozens of `**` before the
+/// app hung. Calling through this handle from a button action or `onReceive` runs the
+/// action from an event handler, outside any update pass, so nothing has to be reset.
+///
+/// The handle is a plain class: attaching the coordinator is a property assignment that
+/// SwiftUI does not observe, so it is safe to do from `makeNSView` / `updateNSView`.
+final class MarkdownEditorActions {
+    fileprivate weak var coordinator: MarkdownTextEditor.Coordinator?
+
+    init() {}
+
+    func undo() { coordinator?.undo() }
+    func redo() { coordinator?.redo() }
+    func wrap(prefix: String, suffix: String) {
+        coordinator?.apply(.wrap(prefix: prefix, suffix: suffix))
+    }
     /// Replaces the whole text as ONE undoable step (restoring a draft).
-    case replaceAll(String)
+    func replaceAll(_ newText: String) { coordinator?.replaceAll(with: newText) }
 }
 
 struct MarkdownTextEditor: NSViewRepresentable {
     @Binding var text: String
-    @Binding var wrapAction: MarkdownWrapAction?
-    @Binding var command: MarkdownEditorCommand?
+    let actions: MarkdownEditorActions
     @Binding var canUndo: Bool
     @Binding var canRedo: Bool
     /// Notes entries keep the monospaced face; login notes use the proportional body font.
@@ -28,16 +46,14 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
     init(
         text: Binding<String>,
-        wrapAction: Binding<MarkdownWrapAction?>,
-        command: Binding<MarkdownEditorCommand?> = .constant(nil),
+        actions: MarkdownEditorActions,
         canUndo: Binding<Bool> = .constant(false),
         canRedo: Binding<Bool> = .constant(false),
         usesMonospacedFont: Bool = true,
         tabMovesFocus: Bool = false
     ) {
         _text = text
-        _wrapAction = wrapAction
-        _command = command
+        self.actions = actions
         _canUndo = canUndo
         _canRedo = canRedo
         self.usesMonospacedFont = usesMonospacedFont
@@ -62,41 +78,24 @@ struct MarkdownTextEditor: NSViewRepresentable {
         scrollView.hasVerticalScroller = true
         scrollView.drawsBackground = false
         context.coordinator.textView = textView
+        actions.coordinator = context.coordinator
         return scrollView
     }
 
+    /// Must stay free of SwiftUI state writes (see `MarkdownEditorActions`): it only
+    /// re-attaches the coordinator and bindings, and mirrors external text into the view.
     func updateNSView(_ scrollView: NSScrollView, context: Context) {
         guard let textView = scrollView.documentView as? NSTextView else { return }
         context.coordinator.canUndo = $canUndo
         context.coordinator.canRedo = $canRedo
+        actions.coordinator = context.coordinator
         if textView.string != text {
             // An external replacement (another entry loaded into a reused editor)
             // is a new document: no undo registration, and the stack is cleared so
             // Undo can never carry one entry's text into another. Draft restores
-            // use the undoable `.replaceAll` command instead.
+            // use the undoable `MarkdownEditorActions.replaceAll` instead.
             context.coordinator.setExternalText(text, in: textView)
         }
-        if let action = wrapAction {
-            context.coordinator.apply(action, to: textView)
-            // Reset synchronously, before returning from this update pass. Deferring
-            // this via DispatchQueue.main.async left a window where a SwiftUI-triggered
-            // re-entrant updateNSView (from the `text` mutation inside apply()) could
-            // observe a still-non-nil wrapAction and re-apply the same action a second
-            // time against the already-wrapped selection. A synchronous reset closes
-            // that race at the cost of a possible one-time "modifying state during
-            // view update" console warning, which is an acceptable trade-off here.
-            wrapAction = nil
-        }
-        // The `command` reset and the canUndo/canRedo writes below happen inside the
-        // update pass, like the synchronous `wrapAction` reset above: deferring the
-        // command reset would let a re-entrant update re-run it, and the flag writes
-        // are guarded by inequality so they only fire on real changes. The cost is a
-        // possible one-time "modifying state during view update" console warning.
-        if let pending = command {
-            context.coordinator.perform(pending, on: textView)
-            command = nil
-        }
-        context.coordinator.refreshUndoState(of: textView)
     }
 
     func makeCoordinator() -> Coordinator {
@@ -137,12 +136,18 @@ struct MarkdownTextEditor: NSViewRepresentable {
             if canRedo.wrappedValue != canRedoNow { canRedo.wrappedValue = canRedoNow }
         }
 
-        func perform(_ command: MarkdownEditorCommand, on textView: NSTextView) {
-            switch command {
-            case .undo: undoManager.undo()
-            case .redo: undoManager.redo()
-            case .replaceAll(let newText): replaceAll(in: textView, with: newText)
-            }
+        func undo() {
+            undoManager.undo()
+            syncAfterAction()
+        }
+
+        func redo() {
+            undoManager.redo()
+            syncAfterAction()
+        }
+
+        private func syncAfterAction() {
+            guard let textView else { return }
             text.wrappedValue = textView.string
             refreshUndoState(of: textView)
         }
@@ -152,14 +157,22 @@ struct MarkdownTextEditor: NSViewRepresentable {
         func setExternalText(_ newText: String, in textView: NSTextView) {
             textView.string = newText
             undoManager.removeAllActions()
-            refreshUndoState(of: textView)
+            // This runs from updateNSView, where writing the flag bindings is a state
+            // write during a view update (ignored or looping, see MarkdownEditorActions).
+            // Defer to the next main-queue turn; the writes are inequality-guarded so
+            // they are idempotent and cannot feed back into another update.
+            DispatchQueue.main.async { [weak self, weak textView] in
+                guard let self, let textView else { return }
+                self.refreshUndoState(of: textView)
+            }
         }
 
         /// Replaces the whole content as a single undo step. Going through
         /// `shouldChangeText` + `replaceCharacters` registers the change with the
         /// undo manager; the explicit group and `breakUndoCoalescing` keep it from
         /// merging with neighbouring typing.
-        func replaceAll(in textView: NSTextView, with newText: String) {
+        func replaceAll(with newText: String) {
+            guard let textView else { return }
             let full = NSRange(location: 0, length: (textView.string as NSString).length)
             let manager = undoManager
             textView.breakUndoCoalescing()
@@ -175,6 +188,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
             }
             manager.endUndoGrouping()
             textView.breakUndoCoalescing()
+            syncAfterAction()
         }
 
         /// Plain-text fields hand Tab / Shift-Tab to the key-view loop; NSTextView would
@@ -198,7 +212,8 @@ struct MarkdownTextEditor: NSViewRepresentable {
             refreshUndoState(of: textView)
         }
 
-        func apply(_ action: MarkdownWrapAction, to textView: NSTextView) {
+        func apply(_ action: MarkdownWrapAction) {
+            guard let textView else { return }
             let selectedRange = textView.selectedRange()
             textView.breakUndoCoalescing()
             let nsString = textView.string as NSString

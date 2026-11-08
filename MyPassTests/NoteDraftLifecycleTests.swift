@@ -82,10 +82,6 @@ final class NoteDraftLifecycleTests: XCTestCase {
         model.restore(model.pendingDraft!)
         token.cancel()
         XCTAssertEqual(received, ["kept"])
-        guard case .replaceAll(let text) = NotesEditorCard.command(forRestoring: received[0]) else {
-            return XCTFail("restore must be an undoable replaceAll command")
-        }
-        XCTAssertEqual(text, "kept")
         XCTAssertNil(model.pendingDraft)
     }
 

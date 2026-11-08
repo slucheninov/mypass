@@ -8,7 +8,7 @@ final class NoteDraftEditorModel: ObservableObject {
     let controller: NoteDraftController
     @Published private(set) var pendingDraft: NoteDraftVersion?
     @Published private(set) var versions: [NoteDraftVersion]
-    /// Emits the text the editor must load through the undoable `.replaceAll` command.
+    /// Emits the text the editor must load through the undoable `replaceAll` editor action.
     /// A subject, not a @Published value read through a Binding: the card subscribes to it
     /// directly, so no parent re-render is needed for a restore to reach the editor.
     let restoreRequests = PassthroughSubject<String, Never>()
