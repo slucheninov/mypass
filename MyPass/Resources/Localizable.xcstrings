@@ -5614,6 +5614,22 @@
         }
       }
     },
+    "Open Files in MyPass" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть файлы в MyPass"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкрити файли в MyPass"
+          }
+        }
+      }
+    },
     "Open MyPass" : {
       "localizations" : {
         "ru" : {

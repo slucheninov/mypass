@@ -7,15 +7,15 @@ import MyPassKit
 /// semantic ones so the card reads correctly in light and dark mode.
 struct NotesEditorCard: View {
     @Binding var text: String
-    /// Draft-restore requests; each one becomes an undoable `.replaceAll` command.
+    /// Draft-restore requests; each one becomes an undoable `replaceAll` action.
     private let restoreRequests: AnyPublisher<String, Never>
     let entryID: UUID
     @ObservedObject private var controller: DraftControllerBox
     let placeholder: LocalizedStringKey
     let showsMarkdownToolbar: Bool
 
-    @State private var wrapAction: MarkdownWrapAction?
-    @State private var command: MarkdownEditorCommand?
+    /// A class, so its identity is stable across the re-inits every keystroke causes.
+    @State private var editorActions = MarkdownEditorActions()
     @State private var canUndo = false
     @State private var canRedo = false
     /// A @State-held publisher keeps one 10 s cadence across the re-inits that every
@@ -36,11 +36,6 @@ struct NotesEditorCard: View {
         self.controller = DraftControllerBox(controller)
         self.placeholder = placeholder
         self.showsMarkdownToolbar = showsMarkdownToolbar
-    }
-
-    /// A restore must be one undo step, hence `.replaceAll` and not a plain text assignment.
-    static func command(forRestoring text: String) -> MarkdownEditorCommand {
-        .replaceAll(text)
     }
 
     /// Short "Draft saved 1:05 PM" status, nil when nothing has been saved yet.
@@ -70,8 +65,7 @@ struct NotesEditorCard: View {
                     // across entries.
                     MarkdownTextEditor(
                         text: $text,
-                        wrapAction: $wrapAction,
-                        command: $command,
+                        actions: editorActions,
                         canUndo: $canUndo,
                         canRedo: $canRedo,
                         usesMonospacedFont: showsMarkdownToolbar,
@@ -100,7 +94,9 @@ struct NotesEditorCard: View {
             controller.controller?.noteTextChanged(newValue)
         }
         .onReceive(restoreRequests) { restored in
-            command = Self.command(forRestoring: restored)
+            // A restore must be one undo step, hence `replaceAll` and not a plain text
+            // assignment. onReceive runs outside the view update pass.
+            editorActions.replaceAll(restored)
         }
         .onReceive(ticker) { _ in
             controller.controller?.tick()
@@ -109,12 +105,12 @@ struct NotesEditorCard: View {
 
     private var toolbarRow: some View {
         HStack(spacing: 6) {
-            Button { command = .undo } label: { Image(systemName: "arrow.uturn.backward") }
+            Button { editorActions.undo() } label: { Image(systemName: "arrow.uturn.backward") }
                 .disabled(!canUndo)
                 .help("Undo")
                 .accessibilityLabel("Undo")
                 .accessibilityIdentifier("notesEditor.undo")
-            Button { command = .redo } label: { Image(systemName: "arrow.uturn.forward") }
+            Button { editorActions.redo() } label: { Image(systemName: "arrow.uturn.forward") }
                 .disabled(!canRedo)
                 .help("Redo")
                 .accessibilityLabel("Redo")
@@ -126,9 +122,9 @@ struct NotesEditorCard: View {
                 // need block-level or raw-HTML rendering that NotesBodyRenderer's plain
                 // Text display can't show, and an action with no visible effect would be
                 // worse than none.
-                markdownButton("bold", "B") { wrapAction = .wrap(prefix: "**", suffix: "**") }
-                markdownButton("italic", "I") { wrapAction = .wrap(prefix: "*", suffix: "*") }
-                markdownButton("code", "`code`") { wrapAction = .wrap(prefix: "`", suffix: "`") }
+                markdownButton("bold", "B") { editorActions.wrap(prefix: "**", suffix: "**") }
+                markdownButton("italic", "I") { editorActions.wrap(prefix: "*", suffix: "*") }
+                markdownButton("code", "`code`") { editorActions.wrap(prefix: "`", suffix: "`") }
             }
 
             Spacer(minLength: 8)
