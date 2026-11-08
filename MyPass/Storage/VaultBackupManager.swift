@@ -61,7 +61,11 @@ enum VaultBackupSettings {
     ) -> Bool {
         if isFirstWriteOfSession || interval == .everySave { return true }
         guard let newestBackupDate else { return true }
-        return now.timeIntervalSince(newestBackupDate) >= interval.seconds
+        let elapsed = now.timeIntervalSince(newestBackupDate)
+        // A negative gap means the newest backup is dated in the future (clock skew or a manual
+        // clock change); waiting for it would suppress backups for as long as the skew, so
+        // treat it as due.
+        return elapsed < 0 || elapsed >= interval.seconds
     }
 }
 
@@ -89,14 +93,17 @@ final class VaultBackupManager {
     let directory: URL
     private let defaults: UserDefaults
     private let now: () -> Date
+    private let removeFile: (URL) throws -> Void
     private let lock = NSLock()
     private var hasSnapshottedThisSession = false
     private var snapshotsSuppressed = false
 
-    init(directory: URL, defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
+    init(directory: URL, defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init,
+         removeFile: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
         self.directory = directory
         self.defaults = defaults
         self.now = now
+        self.removeFile = removeFile
     }
 
     /// Forget that this session already snapshotted, so the next write snapshots again.
@@ -108,31 +115,39 @@ final class VaultBackupManager {
     }
 
     /// Best-effort, never throws. `readCurrent` is only invoked when a snapshot is due, so a
-    /// skipped snapshot costs no read (relevant for evicted iCloud placeholders).
+    /// skipped snapshot costs no read (relevant for evicted iCloud placeholders). The decision
+    /// and the write each hold the lock, but the read does NOT: an iCloud coordinated read can
+    /// block until its timeout, and `list()` (called from the main thread by Settings) shares
+    /// this lock.
     func snapshotIfDue(_ readCurrent: () throws -> Data?) {
         lock.lock()
-        defer { lock.unlock() }
-        guard !snapshotsSuppressed else { return }
-        let backups = listLocked()
-        let due = VaultBackupSettings.isSnapshotDue(
+        let due = !snapshotsSuppressed && VaultBackupSettings.isSnapshotDue(
             interval: VaultBackupSettings.interval(defaults: defaults),
-            newestBackupDate: backups.first?.date,
+            newestBackupDate: listLocked().first?.date,
             now: now(),
             isFirstWriteOfSession: !hasSnapshottedThisSession
         )
+        lock.unlock()
         guard due else { return }
         do {
             guard let data = try readCurrent() else { return }
+            lock.lock()
+            defer { lock.unlock() }
+            guard !snapshotsSuppressed else { return }
             try writeLocked(data)
             hasSnapshottedThisSession = true
+            pruneBestEffortLocked()
             recordSuccess()
         } catch {
             recordFailure(error)
         }
     }
 
-    /// Snapshots `data` regardless of the interval; throws on failure. Used before a restore,
-    /// where "the current content is recoverable" is a hard requirement.
+    /// Snapshots `data` regardless of the interval; throws if the write fails. Used before a
+    /// restore, where "the current content is recoverable" is a hard requirement. It does NOT
+    /// prune: at the count limit the oldest file may be the restore source, and deleting it
+    /// before the restore write succeeds could leave the content in neither place. The caller
+    /// calls `pruneNow()` once the restore has succeeded.
     func forceSnapshot(_ data: Data) throws {
         lock.lock()
         defer { lock.unlock() }
@@ -144,6 +159,14 @@ final class VaultBackupManager {
             recordFailure(error)
             throw error
         }
+    }
+
+    /// Rotates down to the current `backupCount`. Best-effort.
+    func pruneNow() {
+        lock.lock()
+        defer { lock.unlock() }
+        pruneBestEffortLocked()
+        notifyChanged()
     }
 
     /// Runs `body` with automatic snapshots off (restore snapshots explicitly, once, before it
@@ -186,16 +209,22 @@ final class VaultBackupManager {
             url = directory.appendingPathComponent("vault-\(stamp)-\(suffix).kdbx")
         }
         try data.write(to: url, options: .atomic)
-        try pruneLocked()
         notifyChanged()
     }
 
-    private func pruneLocked() throws {
+    /// A failed prune must not turn a successful snapshot into a failure (it would abort a
+    /// restore whose safety snapshot is already on disk); it is logged and retried next time.
+    private func pruneBestEffortLocked() {
         let backups = listLocked()
         let keep = VaultBackupSettings.count(defaults: defaults)
         guard backups.count > keep else { return }
         for backup in backups.dropFirst(keep) {
-            try FileManager.default.removeItem(at: backup.url)
+            do {
+                try removeFile(backup.url)
+            } catch {
+                os_log("Vault backup prune failed: %{public}@", log: Self.log, type: .error,
+                       (error as NSError).localizedDescription)
+            }
         }
     }
 

@@ -4,8 +4,19 @@ import MyPassKit
 
 /// Isolated `UserDefaults` so backup tests never read or write the developer's real settings.
 enum BackupTestDefaults {
+    private static var suites: [String] = []
+    private static let lock = NSLock()
+
+    /// Removes every suite created since the last call; call from `tearDown`.
+    static func cleanUp() {
+        lock.lock(); let names = suites; suites = []; lock.unlock()
+        names.forEach { UserDefaults.standard.removePersistentDomain(forName: $0) }
+    }
+
     static func make(count: Int? = nil, interval: VaultBackupInterval? = nil) -> UserDefaults {
-        let defaults = UserDefaults(suiteName: "MyPassBackupTests-\(UUID().uuidString)")!
+        let name = "MyPassBackupTests-\(UUID().uuidString)"
+        lock.lock(); suites.append(name); lock.unlock()
+        let defaults = UserDefaults(suiteName: name)!
         if let count { defaults.set(count, forKey: VaultBackupSettings.countKey) }
         if let interval { defaults.set(interval.rawValue, forKey: VaultBackupSettings.intervalKey) }
         return defaults
@@ -21,6 +32,7 @@ final class VaultBackupManagerTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        BackupTestDefaults.cleanUp()
         try? FileManager.default.removeItem(at: dir)
     }
 
@@ -133,9 +145,7 @@ final class VaultBackupManagerTests: XCTestCase {
         XCTAssertNotNil(manager.lastFailure)
     }
 
-    func testICloudAndLocalStoresRecordBackupFailure() throws {
-        // Both stores route through the same manager API; the local one is exercised here with a
-        // sabotaged directory (the iCloud store's existing test covers the non-blocking save).
+    func testLocalFileStoreRecordsBackupFailureWithoutBlockingSave() throws {
         let defaults = BackupTestDefaults.make()
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let file = dir.appendingPathComponent("v.kdbx")
@@ -152,7 +162,115 @@ final class VaultBackupManagerTests: XCTestCase {
         XCTAssertNotNil(manager.lastFailure)
     }
 
+    func testNegativeElapsedCountsAsDue() {
+        let now = Date(timeIntervalSince1970: 100_000)
+        XCTAssertTrue(VaultBackupSettings.isSnapshotDue(
+            interval: .daily, newestBackupDate: now.addingTimeInterval(3600), now: now, isFirstWriteOfSession: false))
+    }
+
+    func testPruneFailureAfterSuccessfulSnapshotDoesNotFailForceSnapshot() throws {
+        struct Boom: Error {}
+        let defaults = BackupTestDefaults.make(count: 1)
+        let m = VaultBackupManager(directory: dir, defaults: defaults, now: { [unowned self] in self.clock },
+                                   removeFile: { _ in throw Boom() })
+        snap(m, "a")
+        XCTAssertNoThrow(try m.forceSnapshot(Data("b".utf8)))
+        m.pruneNow()
+        XCTAssertNil(m.lastFailure)
+        XCTAssertEqual(m.list().count, 2, "prune failed but both snapshots are on disk")
+    }
+
+    func testForceSnapshotDoesNotPruneUntilPruneNow() throws {
+        let m = manager(BackupTestDefaults.make(count: 1))
+        snap(m, "oldest")
+        try m.forceSnapshot(Data("forced".utf8))
+        XCTAssertEqual(m.list().count, 2)
+        m.pruneNow()
+        let kept = m.list().map { String(data: try! Data(contentsOf: $0.url), encoding: .utf8)! }
+        XCTAssertEqual(kept, ["forced"])
+    }
+
     // MARK: - Session restore
+
+    private func makeVaultPair() throws -> (backupFile: URL, oldBytes: Data, currentBytes: Data, defaults: UserDefaults) {
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let defaults = BackupTestDefaults.make(count: 1)
+        let store = VaultFileStore(directory: dir, backupManager: VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: defaults))
+        let first = VaultSession(fileStore: store)
+        try first.unlock(password: "old-password")
+        let oldBytes = try Data(contentsOf: dir.appendingPathComponent("vault.kdbx"))
+        let backupFile = dir.appendingPathComponent("chosen.kdbx")
+        try oldBytes.write(to: backupFile)
+        first.lock()
+        try FileManager.default.removeItem(at: dir.appendingPathComponent("vault.kdbx"))
+        let second = VaultSession(fileStore: store)
+        try second.unlock(password: "new-password")
+        second.lock()
+        return (backupFile, oldBytes, try Data(contentsOf: dir.appendingPathComponent("vault.kdbx")), defaults)
+    }
+
+    func testRestoreOfOldestBackupAtLimitKeepsSourceWhenWriteFails() throws {
+        let pair = try makeVaultPair()
+        let backups = dir.appendingPathComponent("backups")
+        let manager = VaultBackupManager(directory: backups, defaults: pair.defaults)
+        // The single allowed backup is the restore source.
+        let source = backups.appendingPathComponent("vault-1.000000.kdbx")
+        try FileManager.default.createDirectory(at: backups, withIntermediateDirectories: true)
+        try pair.oldBytes.write(to: source)
+        let store = ControllableVaultStore(directory: dir, manager: manager)
+        store.failWrites(with: NSError(domain: "test", code: 1))
+        let session = VaultSession(fileStore: store)
+        XCTAssertThrowsError(try session.restoreBackup(from: source, defaults: pair.defaults))
+        XCTAssertTrue(FileManager.default.fileExists(atPath: source.path), "restore source must survive a failed write")
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("vault.kdbx")), pair.currentBytes)
+    }
+
+    func testSuccessfulRestoreAtLimitPrunesAfterwardsKeepingNewest() throws {
+        let pair = try makeVaultPair()
+        let session = VaultSession(fileStore: VaultFileStore(
+            directory: dir,
+            backupManager: VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: pair.defaults)))
+        try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults)
+        let kept = try session.backupManager!.list().map { try Data(contentsOf: $0.url) }
+        XCTAssertEqual(kept, [pair.currentBytes], "count 1: only the newest (pre-restore) snapshot remains")
+    }
+
+    func testRestoreClearsSyncCheckpoints() throws {
+        let pair = try makeVaultPair()
+        let key = SyncBackendResolver.checkpointKey(for: .folder)
+        pair.defaults.set(Date(), forKey: key)
+        let session = VaultSession(fileStore: VaultFileStore(
+            directory: dir,
+            backupManager: VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: pair.defaults)))
+        try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults)
+        XCTAssertNil(pair.defaults.object(forKey: key))
+    }
+
+    func testRestoreAbortsWhenSafetySnapshotFails() throws {
+        let pair = try makeVaultPair()
+        let backups = dir.appendingPathComponent("backups")
+        try? FileManager.default.removeItem(at: backups)
+        try Data().write(to: backups) // snapshot cannot be written
+        let session = VaultSession(fileStore: VaultFileStore(
+            directory: dir, backupManager: VaultBackupManager(directory: backups, defaults: pair.defaults)))
+        XCTAssertThrowsError(try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults))
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("vault.kdbx")), pair.currentBytes)
+    }
+
+    func testRestoreRefusedWhileSaveIsPending() throws {
+        let pair = try makeVaultPair()
+        let store = ControllableVaultStore(
+            directory: dir,
+            manager: VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: pair.defaults))
+        let session = VaultSession(fileStore: store)
+        try session.unlock(password: "new-password")
+        store.holdWrites()
+        defer { store.releaseWrites() }
+        session.mutate { $0.rootGroup.name = "changed" }
+        XCTAssertThrowsError(try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults)) {
+            XCTAssertEqual($0 as? VaultSessionError, .writeInProgress)
+        }
+    }
 
     func testRestoreWritesBackupSnapshotsCurrentAndLocks() throws {
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

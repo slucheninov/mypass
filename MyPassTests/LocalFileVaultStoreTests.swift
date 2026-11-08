@@ -15,6 +15,7 @@ final class LocalFileVaultStoreTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        BackupTestDefaults.cleanUp()
         try? FileManager.default.removeItem(at: tempDir)
     }
 

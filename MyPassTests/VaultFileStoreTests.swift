@@ -12,6 +12,7 @@ final class VaultFileStoreTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        BackupTestDefaults.cleanUp()
         try? FileManager.default.removeItem(at: tempDir)
     }
 

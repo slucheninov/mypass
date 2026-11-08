@@ -419,12 +419,14 @@ final class VaultSession: ObservableObject, VaultFlushing {
     /// - The vault is then locked, which drops the in-memory database and the cached "last
     ///   written" state, so nothing in memory can overwrite the restored file. The user unlocks
     ///   with whatever master password the backup was encrypted with.
-    /// - The secondary sync destination is deliberately NOT touched. `SyncEngine` has no
+    /// - The secondary sync destination is deliberately NOT written. `SyncEngine` has no
     ///   force-push, and pushing the old content would destroy changes other devices made that
-    ///   this device never merged. The cost: on the next unlock the three-way merge sees the
-    ///   remote as newer and can merge entries that exist only there (added after the backup)
-    ///   back in. The restore confirmation warns about this when a secondary is configured.
-    func restoreBackup(from backupURL: URL) throws {
+    ///   this device never merged. Its checkpoint IS cleared (see below), so the next sync
+    ///   merges and entries that exist only on the remote can come back. A backup under an
+    ///   older master password makes that merge fail (`KdbxDatabase.open` throws on the
+    ///   remote); the failure surfaces as `lastSaveError` ("Failed to sync vault" /
+    ///   "Local save completed, but sync failed") and nothing is written on either side.
+    func restoreBackup(from backupURL: URL, defaults: UserDefaults = .standard) throws {
         guard !isQuitInProgress else { throw VaultSessionError.quitInProgress }
         guard let manager = fileStore.vaultBackupManager else { throw VaultSessionError.backupsUnavailable }
         writeStateLock.lock()
@@ -443,12 +445,26 @@ final class VaultSession: ObservableObject, VaultFlushing {
         try manager.withSnapshotsSuppressed {
             try fileStore.save(data: backupData)
         }
-        persistQueue.sync {
-            self.lastSuccessfullyWrittenBytes = nil
-            self.lastSuccessfullyWrittenDatabase = nil
+        // `async`, not `sync`: a remote sync may still be running on this queue, and waiting for
+        // it would block the main thread on the network. The queue is serial, so this runs after
+        // that job and before anything enqueued later (the next unlock's `recordSuccessfulWrite`
+        // hops on with `sync`), and nothing can enqueue until the user unlocks again.
+        persistQueue.async { [weak self] in
+            self?.lastSuccessfullyWrittenBytes = nil
+            self?.lastSuccessfullyWrittenDatabase = nil
         }
         noteSynchronousDurableWrite()
         hasDirtyLocalChanges = false
+        // The file now holds an arbitrary older copy. Invalidate the secondary checkpoints so
+        // the next sync can never take `SyncEngine`'s "remote unchanged since checkpoint" fast
+        // path, which blindly uploads the local file over the remote (possibly under an older
+        // master password that other devices cannot open). Without a checkpoint it must take
+        // the merge path instead.
+        SyncBackendResolver.clearCheckpoint(for: .folder, defaults: defaults)
+        SyncBackendResolver.clearCheckpoint(for: .sftp, defaults: defaults)
+        // Only now that the restore write succeeded is it safe to rotate: the restore source
+        // may have been the oldest backup at the count limit.
+        manager.pruneNow()
         lock()
     }
 

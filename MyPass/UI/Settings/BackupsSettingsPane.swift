@@ -151,7 +151,7 @@ struct BackupsSettingsPane: View {
         )
         if hasSecondary {
             text += "\n\n" + String(
-                localized: "Sync is on: the sync destination is not rolled back, so the next sync may merge newer entries from it back into the restored vault.",
+                localized: "Sync is on: the next sync merges the restored vault with the sync destination, so entries that exist only there can come back. If this backup uses an older master password, sync stops until both use the same password.",
                 comment: "Backup restore confirmation warning when a sync destination is configured"
             )
         }

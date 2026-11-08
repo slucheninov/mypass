@@ -9532,22 +9532,6 @@
         }
       }
     },
-    "Sync is on: the sync destination is not rolled back, so the next sync may merge newer entries from it back into the restored vault." : {
-      "localizations" : {
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Синхронізацію ввімкнено: місце синхронізації не відкочується, тож наступна синхронізація може злити новіші записи з нього назад у відновлене сховище."
-          }
-        },
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Синхронизация включена: место синхронизации не откатывается, поэтому следующая синхронизация может влить более новые записи из него обратно в восстановленное хранилище."
-          }
-        }
-      }
-    },
     "The backup could not be restored: %@" : {
       "localizations" : {
         "uk" : {
@@ -9608,6 +9592,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Общий размер"
+          }
+        }
+      }
+    },
+    "Sync is on: the next sync merges the restored vault with the sync destination, so entries that exist only there can come back. If this backup uses an older master password, sync stops until both use the same password." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Синхронізацію ввімкнено: наступна синхронізація зіллє відновлене сховище з місцем синхронізації, тож записи, які є лише там, можуть повернутися. Якщо ця резервна копія використовує старіший майстер-пароль, синхронізація зупиниться, доки обидва не матимуть однакового пароля."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Синхронизация включена: следующая синхронизация сольёт восстановленное хранилище с местом синхронизации, поэтому записи, которые есть только там, могут вернуться. Если эта резервная копия использует более старый мастер-пароль, синхронизация остановится, пока у обоих не будет одинакового пароля."
           }
         }
       }
