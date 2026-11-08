@@ -6344,22 +6344,6 @@
         }
       }
     },
-    "Rotate local backup copies of the vault file so you can recover from a corrupted save." : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Поддерживает набор локальных резервных копий файла хранилища, которые по очереди заменяются новыми, чтобы вы могли восстановиться после повреждённого сохранения."
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Підтримує набір локальних резервних копій файлу сховища, які по черзі замінюються новими, щоб ви могли відновитися після пошкодженого збереження."
-          }
-        }
-      }
-    },
     "SFTP" : {
       "shouldTranslate" : false
     },
@@ -9304,6 +9288,326 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Файл буде видалено під час збереження. Після збереження це не можна скасувати."
+          }
+        }
+      }
+    },
+    "A save is still in progress. Try again in a moment." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Збереження ще триває. Спробуйте за мить."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сохранение ещё выполняется. Повторите через мгновение."
+          }
+        }
+      }
+    },
+    "At most every 10 minutes" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не частіше ніж раз на 10 хвилин"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не чаще чем раз в 10 минут"
+          }
+        }
+      }
+    },
+    "Available backups" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступні резервні копії"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Доступные резервные копии"
+          }
+        }
+      }
+    },
+    "Daily" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щодня"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ежедневно"
+          }
+        }
+      }
+    },
+    "Every save" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Кожне збереження"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Каждое сохранение"
+          }
+        }
+      }
+    },
+    "Frequency" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Частота"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Частота"
+          }
+        }
+      }
+    },
+    "Hourly" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Щогодини"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ежечасно"
+          }
+        }
+      }
+    },
+    "Last backup failed: %@ (%@)" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося створити резервну копію: %@ (%@)"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось создать резервную копию: %@ (%@)"
+          }
+        }
+      }
+    },
+    "Latest backup" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Остання резервна копія"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Последняя резервная копия"
+          }
+        }
+      }
+    },
+    "None yet" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поки немає"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Пока нет"
+          }
+        }
+      }
+    },
+    "Restore Failed" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося відновити"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось восстановить"
+          }
+        }
+      }
+    },
+    "Restore this backup?" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відновити цю резервну копію?"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить эту резервную копию?"
+          }
+        }
+      }
+    },
+    "Restore…" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відновити…"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Восстановить…"
+          }
+        }
+      }
+    },
+    "Rotate local backup copies of the vault file so you can recover from a corrupted save. The first save after unlocking always makes a backup." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ротація локальних резервних копій файлу сховища, щоб можна було відновитися після пошкодженого збереження. Перше збереження після розблокування завжди створює резервну копію."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Ротация локальных резервных копий файла хранилища, чтобы можно было восстановиться после повреждённого сохранения. Первое сохранение после разблокировки всегда создаёт резервную копию."
+          }
+        }
+      }
+    },
+    "Show in Finder" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показати у Finder"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Показать в Finder"
+          }
+        }
+      }
+    },
+    "Sync is on: the sync destination is not rolled back, so the next sync may merge newer entries from it back into the restored vault." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Синхронізацію ввімкнено: місце синхронізації не відкочується, тож наступна синхронізація може злити новіші записи з нього назад у відновлене сховище."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Синхронизация включена: место синхронизации не откатывается, поэтому следующая синхронизация может влить более новые записи из него обратно в восстановленное хранилище."
+          }
+        }
+      }
+    },
+    "The backup could not be restored: %@" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося відновити резервну копію: %@"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось восстановить резервную копию: %@"
+          }
+        }
+      }
+    },
+    "The selected file is not a valid vault." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вибраний файл не є дійсним сховищем."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбранный файл не является допустимым хранилищем."
+          }
+        }
+      }
+    },
+    "The vault will be replaced with the backup from %@ and locked. The current vault is saved as a new backup first, so you can undo this. Unlock with the master password the backup was created with, which may be an older one." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Сховище буде замінено резервною копією від %@ і заблоковано. Поточне сховище спершу зберігається як нова резервна копія, тож це можна скасувати. Розблокуйте майстер-паролем, з яким створено копію, — це може бути старіший пароль."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Хранилище будет заменено резервной копией от %@ и заблокировано. Текущее хранилище сначала сохраняется как новая резервная копия, так что это можно отменить. Разблокируйте мастер-паролем, с которым создана копия, — это может быть более старый пароль."
+          }
+        }
+      }
+    },
+    "Total size" : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Загальний розмір"
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Общий размер"
           }
         }
       }

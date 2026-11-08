@@ -21,6 +21,12 @@ extension VaultState: Equatable {
 enum VaultSessionError: Error {
     case notUnlocked
     case quitInProgress
+    /// A queued save is still running; restoring now could be overwritten by it.
+    case writeInProgress
+    /// The chosen file is not a KDBX vault.
+    case invalidBackup
+    /// The current primary store keeps no local backups.
+    case backupsUnavailable
 }
 
 /// How a quit-time flush ended. `saveFailed` carries `lastSaveError` as it
@@ -385,11 +391,65 @@ final class VaultSession: ObservableObject, VaultFlushing {
         touchAccessPersistWorkItem = nil
         state = .locked
         sessionPassword = nil
+        // The next session's first write snapshots regardless of the backup interval.
+        fileStore.vaultBackupManager?.beginSession()
         // A write still in flight may succeed after this, but the drafts of entries deleted
         // in it survive on purpose (they expire via the 7-day purge or the orphan logic).
         writeStateLock.lock()
         pendingDraftDeletions.removeAll()
         writeStateLock.unlock()
+    }
+
+    /// The backup manager of the current primary store (Settings lists and restores from it).
+    var backupManager: VaultBackupManager? { fileStore.vaultBackupManager }
+
+    /// `true` when a secondary sync destination (folder or SFTP) is configured.
+    var hasSecondaryDestination: Bool { syncEngine != nil }
+
+    /// Replaces the primary vault file with the bytes of `backupURL` and locks the vault.
+    ///
+    /// Semantics, chosen for safety:
+    /// - Refused while any queued save is pending (`writeInProgress`) or a quit is under way.
+    ///   Everything runs on the main thread, where new saves are enqueued, so none can start
+    ///   between the check and the write.
+    /// - The CURRENT on-disk bytes are force-snapshotted first (ignoring the backup interval);
+    ///   if that fails the restore is aborted, so a restore can always be undone by restoring
+    ///   the newest backup. The write itself runs with automatic snapshots suppressed so it
+    ///   does not add a duplicate of the same bytes.
+    /// - The vault is then locked, which drops the in-memory database and the cached "last
+    ///   written" state, so nothing in memory can overwrite the restored file. The user unlocks
+    ///   with whatever master password the backup was encrypted with.
+    /// - The secondary sync destination is deliberately NOT touched. `SyncEngine` has no
+    ///   force-push, and pushing the old content would destroy changes other devices made that
+    ///   this device never merged. The cost: on the next unlock the three-way merge sees the
+    ///   remote as newer and can merge entries that exist only there (added after the backup)
+    ///   back in. The restore confirmation warns about this when a secondary is configured.
+    func restoreBackup(from backupURL: URL) throws {
+        guard !isQuitInProgress else { throw VaultSessionError.quitInProgress }
+        guard let manager = fileStore.vaultBackupManager else { throw VaultSessionError.backupsUnavailable }
+        writeStateLock.lock()
+        let busy = pendingLocalWrites > 0
+        writeStateLock.unlock()
+        guard !busy else { throw VaultSessionError.writeInProgress }
+
+        let backupData = try Data(contentsOf: backupURL)
+        guard VaultMigrationService.looksLikeKdbx(backupData) else { throw VaultSessionError.invalidBackup }
+
+        if let current = try fileStore.load() {
+            try manager.forceSnapshot(current)
+        }
+        touchAccessPersistWorkItem?.cancel()
+        touchAccessPersistWorkItem = nil
+        try manager.withSnapshotsSuppressed {
+            try fileStore.save(data: backupData)
+        }
+        persistQueue.sync {
+            self.lastSuccessfullyWrittenBytes = nil
+            self.lastSuccessfullyWrittenDatabase = nil
+        }
+        noteSynchronousDurableWrite()
+        hasDirtyLocalChanges = false
+        lock()
     }
 
     /// Swaps the primary store the session reads/writes from — used when the
