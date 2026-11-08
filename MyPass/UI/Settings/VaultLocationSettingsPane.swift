@@ -27,6 +27,11 @@ struct VaultLocationSettingsPane: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .truncationMode(.middle)
+                if case .connected(let info) = vaultSession.vaultFileStatus, let summary = info.summary {
+                    Text(verbatim: summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
                 if vaultSession.iCloudPrimaryFallbackActive {
                     Label(
                         "MyPass could not reach the configured iCloud Drive folder and is using the local copy on this Mac instead.",
