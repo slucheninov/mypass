@@ -14,6 +14,8 @@ struct MenuBarRecentEntryRow: View {
             HStack(spacing: 10) {
                 if entry.entryType == .address {
                     Image(systemName: "house.fill").foregroundStyle(.teal).frame(width: 28, height: 28)
+                } else if entry.entryType == .files {
+                    Image(systemName: "paperclip").foregroundStyle(.indigo).frame(width: 28, height: 28)
                 } else {
                     LetterAvatarView(title: displayTitle, size: 28, cornerRadius: 6)
                 }
@@ -21,8 +23,8 @@ struct MenuBarRecentEntryRow: View {
                     Text(verbatim: displayTitle)
                         .font(.system(size: 13, weight: .semibold))
                         .lineLimit(1)
-                    if entry.entryType == .address || !entry.login.isEmpty {
-                        Text(verbatim: entry.entryType == .address ? entry.addressSummary : entry.login)
+                    if !EntryListSubtitle.text(for: entry).isEmpty {
+                        Text(verbatim: EntryListSubtitle.text(for: entry))
                             .font(.system(size: 12))
                             .foregroundStyle(.secondary)
                             .lineLimit(1)

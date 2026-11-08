@@ -9,4 +9,9 @@ enum EntryType: String {
     case address = "Address"
     case card = "Card"
     case notes = "Notes"
+    /// An item whose main content is file attachments (the attachments themselves live in
+    /// the KDBX binary pool, like on every other kind). A build that predates this case
+    /// reads the unknown value as `.login` (see `KdbxEntry.entryType`): the entry shows up
+    /// as a title-only login, but nothing is lost, because the attachments stay intact.
+    case files = "Files"
 }

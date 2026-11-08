@@ -22,6 +22,8 @@ enum EntryCategoryFilter {
             return all.filter { $0.hasPasskey && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         case .notes:
             return all.filter { $0.entryType == .notes && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
+        case .files:
+            return all.filter { $0.entryType == .files && !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         case .security:
             return all // callers must not use Security for filtering; kept for completeness
         case .deleted:

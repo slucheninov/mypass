@@ -6,7 +6,7 @@ final class SmartCategoryTests: XCTestCase {
     func testAllCasesPresent() {
         XCTAssertEqual(
             Set(SmartCategory.allCases.map(\.rawValue)),
-            Set(["all", "favorites", "codes", "passkeys", "addresses", "cards", "notes", "security", "deleted"])
+            Set(["all", "favorites", "codes", "passkeys", "addresses", "cards", "notes", "files", "security", "deleted"])
         )
     }
 
@@ -17,6 +17,7 @@ final class SmartCategoryTests: XCTestCase {
         XCTAssertEqual(String(localized: SmartCategory.passkeys.title), "Passkeys")
         XCTAssertEqual(String(localized: SmartCategory.cards.title), "Cards")
         XCTAssertEqual(String(localized: SmartCategory.notes.title), "Notes")
+        XCTAssertEqual(String(localized: SmartCategory.files.title), "Files")
         XCTAssertEqual(String(localized: SmartCategory.security.title), "Security")
         XCTAssertEqual(String(localized: SmartCategory.deleted.title), "Deleted")
     }

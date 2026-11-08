@@ -93,6 +93,7 @@ final class ExtensionBridgeService {
     /// indirectly through `passkeyCreateCandidates(forOriginUrl:rpId:in:)`).
     private func passkeyEntries(forRelyingParty rpId: String, in database: KdbxDatabase) -> [KdbxEntry] {
         EntrySearch.allEntries(in: database.rootGroup)
+            .filter { $0.entryType != .files } // Files items are app-only, even if one somehow carries passkey fields.
             .filter { $0.passkeyRelyingParty == rpId }
             .filter { $0.uriMatchMode != .never }
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
@@ -158,6 +159,7 @@ final class ExtensionBridgeService {
     /// the app not to offer it to the browser.
     private func favoriteEntries(in database: KdbxDatabase) -> [KdbxEntry] {
         EntrySearch.allEntries(in: database.rootGroup)
+            .filter { $0.entryType != .files }
             .filter { $0.isFavorite }
             .filter { $0.uriMatchMode != .never }
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
@@ -171,7 +173,9 @@ final class ExtensionBridgeService {
         if category == "favorites" {
             return favoriteEntries(in: database)
         }
+        // Files items are app-only: the browser never lists, searches or fills them.
         let live = EntrySearch.allEntries(in: database.rootGroup)
+            .filter { $0.entryType != .files }
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
         let matched: [KdbxEntry]
         switch category {
@@ -239,6 +243,8 @@ final class ExtensionBridgeService {
             entry.login = cardholderName
         case .notes:
             entry.notesBody = notes
+        case .files:
+            break // Rejected in `createEntry` before this runs; Files items are created in the app only.
         }
         return entry
     }
@@ -247,7 +253,7 @@ final class ExtensionBridgeService {
     /// soft-deleted entries must never be surfaced to or filled by the extension.
     private func matchingEntries(forURL url: String, in database: KdbxDatabase) -> [KdbxEntry] {
         ExtensionEntryMatcher.matchingEntries(in: database.rootGroup, forURL: url)
-            .filter { $0.entryType != .address }
+            .filter { $0.entryType != .address && $0.entryType != .files }
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
     }
 
@@ -378,6 +384,7 @@ final class ExtensionBridgeService {
                 return .credentialList([])
             }
             let matches = EntrySearch.allEntries(in: database.rootGroup)
+                .filter { $0.entryType != .files }
                 .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }
                 .filter { EntrySearch.matches(entry: $0, query: trimmed) }
                 .sorted { $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending }
@@ -409,6 +416,8 @@ final class ExtensionBridgeService {
                 resolvedTitle = trimmedTitle.isEmpty ? trimmedHolder : trimmedTitle
             case .notes:
                 resolvedTitle = trimmedTitle
+            case .files:
+                return .error("Create files in MyPass using Add > Files")
             }
             guard !resolvedTitle.isEmpty else {
                 return .error("title required")

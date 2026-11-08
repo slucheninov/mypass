@@ -47,6 +47,14 @@ struct MenuBarEntryDetailPanelView: View {
                                 .foregroundStyle(.secondary)
                             Button("Edit Address in MyPass", action: openEntryForEdit)
                         }.frame(maxWidth: .infinity, alignment: .leading)
+                    } else if entry.entryType == .files {
+                        // No username or password to copy: show the file count and hand editing
+                        // and exporting to the main window.
+                        VStack(alignment: .leading, spacing: 8) {
+                            Text(verbatim: EntryListSubtitle.text(for: entry))
+                                .foregroundStyle(.secondary)
+                            Button("Open Files in MyPass", action: openEntryForEdit)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
                     } else {
                         fieldsCard
                     }
@@ -97,6 +105,8 @@ struct MenuBarEntryDetailPanelView: View {
         HStack(alignment: .center, spacing: 12) {
             if entry.entryType == .address {
                 Image(systemName: "house.fill").font(.title).foregroundStyle(.teal).frame(width: 44, height: 44)
+            } else if entry.entryType == .files {
+                Image(systemName: "paperclip").font(.title).foregroundStyle(.indigo).frame(width: 44, height: 44)
             } else {
                 LetterAvatarView(title: displayTitle, size: 44, cornerRadius: 10)
             }
