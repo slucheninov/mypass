@@ -127,8 +127,11 @@ final class MarkdownTextEditorUndoTests: XCTestCase {
         XCTAssertTrue(box.canUndo)
         coordinator.setExternalText("other entry", in: textView)
         XCTAssertEqual(textView.string, "other entry")
-        // The flag refresh is deferred out of the update pass; let it run.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        // The flag refresh is deferred out of the update pass. The main queue is FIFO, so a
+        // sentinel block enqueued now runs after it; no wall-clock wait needed.
+        let drained = expectation(description: "main queue drained")
+        DispatchQueue.main.async { drained.fulfill() }
+        wait(for: [drained], timeout: 2)
         XCTAssertFalse(box.canUndo)
         XCTAssertFalse(box.canRedo)
     }
