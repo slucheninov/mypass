@@ -155,6 +155,8 @@ final class VaultSession: ObservableObject, VaultFlushing {
     private let writeStateLock = NSLock()
     private var queuedWriteError: String?
     private var pendingLocalWrites = 0
+    /// `persist` jobs from enqueue until the closure fully returns, remote sync included.
+    private var persistJobsInFlight = 0
     private var writeGeneration = 0
     private var supersededThroughGeneration = 0
     private var localDrainWaiters: [(String?) -> Void] = []
@@ -430,15 +432,19 @@ final class VaultSession: ObservableObject, VaultFlushing {
         guard !isQuitInProgress else { throw VaultSessionError.quitInProgress }
         guard let manager = fileStore.vaultBackupManager else { throw VaultSessionError.backupsUnavailable }
         writeStateLock.lock()
-        let busy = pendingLocalWrites > 0
+        // `persistJobsInFlight` also covers the remote sync that follows a finished local write:
+        // a sync that started before the restore could otherwise save a fresh checkpoint after
+        // the restore cleared it, re-enabling the blind upload of the restored copy.
+        let busy = pendingLocalWrites > 0 || persistJobsInFlight > 0
         writeStateLock.unlock()
         guard !busy else { throw VaultSessionError.writeInProgress }
 
         let backupData = try Data(contentsOf: backupURL)
         guard VaultMigrationService.looksLikeKdbx(backupData) else { throw VaultSessionError.invalidBackup }
 
+        var safetySnapshot: URL?
         if let current = try fileStore.load() {
-            try manager.forceSnapshot(current)
+            safetySnapshot = try manager.forceSnapshot(current)
         }
         touchAccessPersistWorkItem?.cancel()
         touchAccessPersistWorkItem = nil
@@ -464,7 +470,7 @@ final class VaultSession: ObservableObject, VaultFlushing {
         SyncBackendResolver.clearCheckpoint(for: .sftp, defaults: defaults)
         // Only now that the restore write succeeded is it safe to rotate: the restore source
         // may have been the oldest backup at the count limit.
-        manager.pruneNow()
+        manager.pruneNow(protecting: safetySnapshot)
         lock()
     }
 
@@ -1071,6 +1077,9 @@ final class VaultSession: ObservableObject, VaultFlushing {
             recycleBinGroupUUID: db.recycleBinGroupUUID
         )
         let generation = beginLocalWrite()
+        writeStateLock.lock()
+        persistJobsInFlight += 1
+        writeStateLock.unlock()
         if !draftIDs.isEmpty {
             writeStateLock.lock()
             pendingDraftDeletions.append((generation, draftIDs))
@@ -1078,6 +1087,11 @@ final class VaultSession: ObservableObject, VaultFlushing {
         }
         persistQueue.async { [weak self, fileStore, syncEngine] in
             guard let self else { return }
+            defer {
+                self.writeStateLock.lock()
+                self.persistJobsInFlight -= 1
+                self.writeStateLock.unlock()
+            }
 
             // Logically identical to what's already on disk (and, if
             // attached, already synced) — skip both the KDF derivation +

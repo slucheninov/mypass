@@ -134,9 +134,9 @@ final class VaultBackupManager {
             lock.lock()
             defer { lock.unlock() }
             guard !snapshotsSuppressed else { return }
-            try writeLocked(data)
+            let written = try writeLocked(data)
             hasSnapshottedThisSession = true
-            pruneBestEffortLocked()
+            pruneBestEffortLocked(protecting: written)
             recordSuccess()
         } catch {
             recordFailure(error)
@@ -148,24 +148,26 @@ final class VaultBackupManager {
     /// prune: at the count limit the oldest file may be the restore source, and deleting it
     /// before the restore write succeeds could leave the content in neither place. The caller
     /// calls `pruneNow()` once the restore has succeeded.
-    func forceSnapshot(_ data: Data) throws {
+    @discardableResult
+    func forceSnapshot(_ data: Data) throws -> URL {
         lock.lock()
         defer { lock.unlock() }
         do {
-            try writeLocked(data)
+            let written = try writeLocked(data)
             hasSnapshottedThisSession = true
             recordSuccess()
+            return written
         } catch {
             recordFailure(error)
             throw error
         }
     }
 
-    /// Rotates down to the current `backupCount`. Best-effort.
-    func pruneNow() {
+    /// Rotates down to the current `backupCount`. Best-effort. `protecting` is never deleted.
+    func pruneNow(protecting: URL? = nil) {
         lock.lock()
         defer { lock.unlock() }
-        pruneBestEffortLocked()
+        pruneBestEffortLocked(protecting: protecting)
         notifyChanged()
     }
 
@@ -198,7 +200,8 @@ final class VaultBackupManager {
 
     // MARK: - Private (lock held)
 
-    private func writeLocked(_ data: Data) throws {
+    @discardableResult
+    private func writeLocked(_ data: Data) throws -> URL {
         let fm = FileManager.default
         try fm.createDirectory(at: directory, withIntermediateDirectories: true)
         let stamp = String(format: "%.6f", now().timeIntervalSince1970)
@@ -210,15 +213,22 @@ final class VaultBackupManager {
         }
         try data.write(to: url, options: .atomic)
         notifyChanged()
+        return url
     }
 
     /// A failed prune must not turn a successful snapshot into a failure (it would abort a
     /// restore whose safety snapshot is already on disk); it is logged and retried next time.
-    private func pruneBestEffortLocked() {
-        let backups = listLocked()
-        let keep = VaultBackupSettings.count(defaults: defaults)
-        guard backups.count > keep else { return }
-        for backup in backups.dropFirst(keep) {
+    ///
+    /// `protecting` is the snapshot just written. Backups are ordered by their filename
+    /// timestamp, so an older backup dated in the future (clock skew) would otherwise rank
+    /// newer than the fresh one and the prune would delete the very snapshot that was just
+    /// taken, for example the pre-restore safety copy at a retention of one.
+    private func pruneBestEffortLocked(protecting: URL? = nil) {
+        let all = listLocked()
+        let others = all.filter { $0.url != protecting }
+        let keep = max(VaultBackupSettings.count(defaults: defaults) - (protecting == nil ? 0 : 1), 0)
+        guard others.count > keep else { return }
+        for backup in others.dropFirst(keep) {
             do {
                 try removeFile(backup.url)
             } catch {

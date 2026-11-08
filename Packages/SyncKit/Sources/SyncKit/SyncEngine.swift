@@ -72,7 +72,9 @@ public final class SyncEngine {
         let remoteModificationDate = try remote.modificationDate()
         let lastKnownCheckpoint = try checkpointStore.loadCheckpoint()
 
-        if remoteModificationDate == lastKnownCheckpoint {
+        // A missing modification date (an SFTP server that omits it) must never count as
+        // "unchanged": nil == nil would blind-upload over a remote that was never compared.
+        if let remoteModificationDate, remoteModificationDate == lastKnownCheckpoint {
             try remote.write(localData)
             try checkpointStore.saveCheckpoint(try remote.modificationDate())
             return .uploadedDirect

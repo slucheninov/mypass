@@ -1,5 +1,6 @@
 import XCTest
 import MyPassKit
+import SyncKit
 @testable import MyPass
 
 /// Isolated `UserDefaults` so backup tests never read or write the developer's real settings.
@@ -180,6 +181,27 @@ final class VaultBackupManagerTests: XCTestCase {
         XCTAssertEqual(m.list().count, 2, "prune failed but both snapshots are on disk")
     }
 
+    func testPruneNeverDeletesTheSnapshotJustWrittenWhenAnOlderOneIsFutureDated() throws {
+        let m = manager(BackupTestDefaults.make(count: 1))
+        clock = clock.addingTimeInterval(10_000)
+        snap(m, "future")                     // dated ahead of the clock used below
+        clock = Date(timeIntervalSince1970: 1_000_000)
+        snap(m, "fresh")
+        let kept = m.list().map { String(data: try! Data(contentsOf: $0.url), encoding: .utf8)! }
+        XCTAssertEqual(kept, ["fresh"])
+    }
+
+    func testPruneNowProtectsTheGivenSnapshot() throws {
+        let m = manager(BackupTestDefaults.make(count: 1))
+        clock = clock.addingTimeInterval(10_000)
+        snap(m, "future")
+        clock = Date(timeIntervalSince1970: 1_000_000)
+        let url = try m.forceSnapshot(Data("safety".utf8))
+        m.pruneNow(protecting: url)
+        XCTAssertTrue(FileManager.default.fileExists(atPath: url.path))
+        XCTAssertEqual(m.list().count, 1)
+    }
+
     func testForceSnapshotDoesNotPruneUntilPruneNow() throws {
         let m = manager(BackupTestDefaults.make(count: 1))
         snap(m, "oldest")
@@ -255,6 +277,50 @@ final class VaultBackupManagerTests: XCTestCase {
             directory: dir, backupManager: VaultBackupManager(directory: backups, defaults: pair.defaults)))
         XCTAssertThrowsError(try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults))
         XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("vault.kdbx")), pair.currentBytes)
+    }
+
+    /// Blocks `write` (the sync's upload) until released, to hold a sync in flight.
+    final class BlockingRemote: StorageBackend {
+        let inner = InMemoryStorageBackend()
+        let entered = DispatchSemaphore(value: 0)
+        let gate = DispatchSemaphore(value: 0)
+        private let lock = NSLock()
+        private var blocking = false
+        func block() { lock.lock(); blocking = true; lock.unlock() }
+        func read() throws -> Data? { try inner.read() }
+        func exists() throws -> Bool { try inner.exists() }
+        func modificationDate() throws -> Date? { try inner.modificationDate() }
+        func write(_ data: Data) throws {
+            lock.lock(); let b = blocking; lock.unlock()
+            if b { entered.signal(); gate.wait() }
+            try inner.write(data)
+        }
+    }
+
+    func testRestoreRefusedWhileSyncIsInFlightThenAllowed() throws {
+        let pair = try makeVaultPair()
+        let remote = BlockingRemote()
+        let engine = SyncEngine(remote: remote, checkpointStore: InMemorySyncCheckpointStore())
+        let store = VaultFileStore(
+            directory: dir,
+            backupManager: VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: pair.defaults))
+        let session = VaultSession(fileStore: store, syncEngine: engine)
+        try session.unlock(password: "new-password")
+        remote.block()
+        session.mutate { $0.rootGroup.name = "changed" }
+        XCTAssertEqual(remote.entered.wait(timeout: .now() + 30), .success, "sync never started")
+        // The local write is finished; only the remote sync is still running.
+        XCTAssertThrowsError(try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults)) {
+            XCTAssertEqual($0 as? VaultSessionError, .writeInProgress)
+        }
+        remote.gate.signal()
+        let deadline = Date().addingTimeInterval(30)
+        var restored = false
+        while Date() < deadline, !restored {
+            do { try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults); restored = true }
+            catch { Thread.sleep(forTimeInterval: 0.05) }
+        }
+        XCTAssertTrue(restored)
     }
 
     func testRestoreRefusedWhileSaveIsPending() throws {

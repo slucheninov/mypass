@@ -93,6 +93,32 @@ final class SyncEngineTests: XCTestCase {
         XCTAssertNotEqual(checkpointAfterFirstSync, checkpointAfterSecondSync)
     }
 
+    /// A backend that reports no modification date (an SFTP server omitting the attribute).
+    final class NoDateBackend: StorageBackend {
+        let inner = InMemoryStorageBackend()
+        func read() throws -> Data? { try inner.read() }
+        func write(_ data: Data) throws { try inner.write(data) }
+        func exists() throws -> Bool { try inner.exists() }
+        func modificationDate() throws -> Date? { nil }
+    }
+
+    func testMissingRemoteModificationDateMergesInsteadOfBlindUpload() throws {
+        let rootUUID = UUID()
+        let remote = NoDateBackend()
+        let remoteOnly = makeEntry(title: "RemoteOnly", uuid: UUID(), modified: Date(timeIntervalSince1970: 5_000))
+        try remote.write(try makeDatabase(rootUUID: rootUUID, entries: [remoteOnly])
+            .save(password: password, cipher: .aes256, compression: .gzip))
+        let local = makeDatabase(rootUUID: rootUUID, entries: [makeEntry(title: "LocalOnly")])
+        // No checkpoint and no remote date: nil == nil must NOT take the direct-upload path.
+        let engine = SyncEngine(remote: remote, checkpointStore: InMemorySyncCheckpointStore())
+
+        let result = try engine.sync(local: local, password: password, cipher: .aes256, compression: .gzip)
+
+        guard case .merged(let merged) = result else { return XCTFail("expected .merged, got \(result)") }
+        let titles = Set(merged.rootGroup.entries.compactMap { titleFieldValue(of: $0) })
+        XCTAssertEqual(titles, ["RemoteOnly", "LocalOnly"])
+    }
+
     func testChangedRemoteTriggersMerge() throws {
         let rootUUID = UUID()
         let sharedEntry = makeEntry(title: "Shared", uuid: UUID())
