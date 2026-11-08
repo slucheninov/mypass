@@ -45,9 +45,16 @@ final class VaultFileStatusTests: XCTestCase {
         )
     }
 
-    func testFallbackIsMissingEvenWhenTheDefaultFileExists() throws {
+    func testFallbackWithExistingDefaultCopyIsMissingUsingLocalCopy() throws {
         let url = dir.appendingPathComponent("vault.kdbx")
         try Data([1]).write(to: url)
+        let status = VaultFileStatus.resolve(primaryURL: url, isDefaultLocation: true, fallbackActive: true)
+        guard case .missingUsingLocalCopy(let info) = status else { return XCTFail("got \(status)") }
+        XCTAssertEqual(info.url, url)
+    }
+
+    func testFallbackWithoutAnyFileIsMissingWithoutPath() {
+        let url = dir.appendingPathComponent("vault.kdbx")
         XCTAssertEqual(
             VaultFileStatus.resolve(primaryURL: url, isDefaultLocation: true, fallbackActive: true),
             .missing(path: nil)

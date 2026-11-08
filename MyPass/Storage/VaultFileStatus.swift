@@ -70,6 +70,9 @@ enum VaultFileStatus: Equatable {
     /// A vault file was configured (a bookmarked `.kdbx`, or iCloud Drive) but is unreachable.
     /// `path` is `nil` when the bookmark did not resolve, so the old location is unknown.
     case missing(path: String?)
+    /// The configured file is unreachable and MyPass is using the existing default copy instead.
+    /// The master password unlocks that copy.
+    case missingUsingLocalCopy(VaultFileInfo)
 
     /// - Parameters:
     ///   - primaryURL: the file the active primary store reads and writes.
@@ -82,7 +85,12 @@ enum VaultFileStatus: Equatable {
         fileManager: FileManager = .default
     ) -> VaultFileStatus {
         // Checked first: the default file may well exist, but it is not the one the user chose.
-        if fallbackActive { return .missing(path: nil) }
+        if fallbackActive {
+            if let primaryURL, let copy = VaultFileInfo(url: primaryURL, fileManager: fileManager) {
+                return .missingUsingLocalCopy(copy)
+            }
+            return .missing(path: nil)
+        }
         guard let primaryURL else { return .noVault }
         if let info = VaultFileInfo(url: primaryURL, fileManager: fileManager) { return .connected(info) }
         return isDefaultLocation ? .noVault : .missing(path: primaryURL.path)

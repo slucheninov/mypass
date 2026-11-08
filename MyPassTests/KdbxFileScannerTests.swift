@@ -119,6 +119,42 @@ final class KdbxFileScannerTests: XCTestCase {
         XCTAssertEqual(found.count, 4, "Priority folders must not be listed twice")
     }
 
+    func testSymlinkedPriorityRootIsScannedOnce() throws {
+        try touch("Library/CloudStorage/Dropbox-Personal/drop.kdbx")
+        try fm.createSymbolicLink(
+            at: root.appendingPathComponent("Dropbox"),
+            withDestinationURL: root.appendingPathComponent("Library/CloudStorage/Dropbox-Personal")
+        )
+        let found = KdbxFileScanner().scan(folder: root, home: root)
+        XCTAssertEqual(names(found), ["drop.kdbx"])
+    }
+
+    func testCancellingTheCallingTaskStopsTheDetachedScan() async throws {
+        for index in 0..<300 { try touch("f\(index).kdbx") }
+        let visits = Counter()
+        let task = Task {
+            // Slow poll so the full scan would take ~3 s if cancellation did not reach it.
+            await KdbxFileScanner().scanAsync(folder: root, isCancelled: {
+                visits.increment()
+                Thread.sleep(forTimeInterval: 0.01)
+                return false
+            })
+        }
+        try await Task.sleep(nanoseconds: 150_000_000)
+        let started = Date()
+        task.cancel()
+        _ = await task.value
+        XCTAssertLessThan(Date().timeIntervalSince(started), 1.0)
+        XCTAssertLessThan(visits.value, 200)
+    }
+
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock()
+        private var count = 0
+        func increment() { lock.lock(); count += 1; lock.unlock() }
+        var value: Int { lock.lock(); defer { lock.unlock() }; return count }
+    }
+
     func testNonHomeFolderDoesNotSkipLibrary() throws {
         try touch("Library/x.kdbx")
         XCTAssertEqual(names(KdbxFileScanner().scan(folder: root, home: root.appendingPathComponent("elsewhere"))), ["x.kdbx"])

@@ -209,32 +209,23 @@ struct UnlockView: View {
     private var vaultStatusView: some View {
         switch vaultStatus {
         case .connected(let info):
-            HStack(spacing: 10) {
-                Image(systemName: "doc.fill")
-                    .foregroundStyle(.secondary)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(verbatim: info.fileName)
-                        .font(.system(size: 12, weight: .semibold))
-                    Text(verbatim: info.abbreviatedPath)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    if let summary = info.summary {
-                        Text(verbatim: summary)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                }
-            }
-            .frame(maxWidth: 340, alignment: .leading)
+            vaultFileCard(info)
         case .noVault:
             Text("No vault file selected. Choose an existing .kdbx file or create a new one.")
                 .font(.caption)
                 .foregroundStyle(.red)
                 .multilineTextAlignment(.center)
                 .frame(maxWidth: 340)
+        case .missingUsingLocalCopy(let copy):
+            // Not red: the password still unlocks a real vault, just not the one the user chose.
+            VStack(spacing: 8) {
+                Text("Your chosen vault file can't be found. MyPass is using the copy on this Mac. Choose the file again to switch back.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 340)
+                vaultFileCard(copy)
+            }
         case .missing(let path):
             Group {
                 if let path {
@@ -248,6 +239,29 @@ struct UnlockView: View {
             .multilineTextAlignment(.center)
             .frame(maxWidth: 340)
         }
+    }
+
+    private func vaultFileCard(_ info: VaultFileInfo) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.fill")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: info.fileName)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(verbatim: info.abbreviatedPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let summary = info.summary {
+                    Text(verbatim: summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: 340, alignment: .leading)
     }
 
     /// Creation itself is the existing first-run path (the master password unlocks into a new

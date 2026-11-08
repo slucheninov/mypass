@@ -11,6 +11,10 @@ struct VaultLocationSettingsPane: View {
     @EnvironmentObject private var vaultSession: VaultSession
     @AppStorage("vaultLocation") private var vaultLocationRawValue: String = VaultLocationOption.local.rawValue
     @State private var pendingTargetLocation: VaultLocationOption?
+    /// Cached: resolving it touches the file system, and `body` re-runs on every
+    /// `VaultSession` change. Refreshed on appear and when the location, path or fallback
+    /// state changes; it does not track every save, so the date shown is as of the last refresh.
+    @State private var fileInfo: VaultFileInfo?
 
     private var currentLocation: VaultLocationOption {
         VaultLocationOption(rawValue: vaultLocationRawValue) ?? .local
@@ -27,7 +31,7 @@ struct VaultLocationSettingsPane: View {
                     .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .truncationMode(.middle)
-                if case .connected(let info) = vaultSession.vaultFileStatus, let summary = info.summary {
+                if let summary = fileInfo?.summary {
                     Text(verbatim: summary)
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -65,6 +69,18 @@ struct VaultLocationSettingsPane: View {
                 Text("Location")
                     .font(.system(size: 13, weight: .semibold))
             }
+        }
+        .onAppear(perform: refreshFileInfo)
+        .onChange(of: vaultLocationRawValue) { _, _ in refreshFileInfo() }
+        .onChange(of: vaultSession.primaryVaultPathDisplay) { _, _ in refreshFileInfo() }
+        .onChange(of: vaultSession.localFileFallbackActive) { _, _ in refreshFileInfo() }
+        .onChange(of: vaultSession.iCloudPrimaryFallbackActive) { _, _ in refreshFileInfo() }
+    }
+
+    private func refreshFileInfo() {
+        switch vaultSession.vaultFileStatus {
+        case .connected(let info), .missingUsingLocalCopy(let info): fileInfo = info
+        case .noVault, .missing: fileInfo = nil
         }
     }
 }

@@ -73,8 +73,36 @@ struct KdbxFileScanner {
         return roots
     }
 
-    private static func key(_ url: URL) -> String { url.standardizedFileURL.path }
+    /// Identity used for every dedup and exclusion: symlinks resolved, so a symlinked root
+    /// (`~/Dropbox` -> `Library/CloudStorage/Dropbox`) is the same place as its target.
+    private static func key(_ url: URL) -> String { url.resolvingSymlinksInPath().standardizedFileURL.path }
     private static func samePath(_ a: URL, _ b: URL) -> Bool { key(a) == key(b) }
+
+    /// Scans on a background thread and stops promptly when the calling task is cancelled.
+    /// `Task.detached` does not inherit cancellation, so the outer task's cancellation is
+    /// forwarded through a flag the scan polls. `isCancelled` adds an extra stop condition.
+    func scanAsync(
+        folder: URL,
+        home: URL? = nil,
+        isCancelled extra: @escaping @Sendable () -> Bool = { false }
+    ) async -> [FoundVaultFile] {
+        let flag = CancelFlag()
+        let scanner = self
+        return await withTaskCancellationHandler {
+            await Task.detached(priority: .userInitiated) {
+                scanner.scan(folder: folder, home: home, isCancelled: { flag.isSet || extra() })
+            }.value
+        } onCancel: {
+            flag.set()
+        }
+    }
+
+    private final class CancelFlag: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = false
+        var isSet: Bool { lock.lock(); defer { lock.unlock() }; return value }
+        func set() { lock.lock(); value = true; lock.unlock() }
+    }
 
     private final class Run {
         let limits: Limits
@@ -82,6 +110,7 @@ struct KdbxFileScanner {
         let deadline: Date
         var results: [FoundVaultFile] = []
         var seen = Set<String>()
+        var walkedRoots = Set<String>()
 
         private static let keys: [URLResourceKey] = [
             .isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .isPackageKey,
@@ -98,7 +127,12 @@ struct KdbxFileScanner {
             results.count >= limits.maxResults || isCancelled() || Date() >= deadline
         }
 
+        /// Time and cancellation are checked between file-system calls only, so a single call
+        /// that blocks (listing a streaming `Library/CloudStorage` provider can) may overrun the
+        /// budget. The scan runs off the main thread, so this delays the result, never the UI.
         func walk(root: URL, excluded: Set<String>) {
+            // A root reachable by two paths (a symlink into another root) is walked once.
+            guard walkedRoots.insert(KdbxFileScanner.key(root)).inserted else { return }
             var stack: [(url: URL, depth: Int)] = [(root, 0)]
             while let (directory, depth) = stack.popLast() {
                 if shouldStop { return }

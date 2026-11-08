@@ -53,16 +53,9 @@ struct FindVaultFilesSheet: View {
         .padding(20)
         .frame(width: 520)
         .task {
-            // Detached so the walk never runs on the main actor; cancelling this task (sheet
-            // dismissed) stops the walk through `isCancelled`.
-            let folder = folder
-            let found = await Task.detached(priority: .userInitiated) {
-                KdbxFileScanner().scan(
-                    folder: folder,
-                    home: RealHomeDirectory.url,
-                    isCancelled: { Task.isCancelled }
-                )
-            }.value
+            // `scanAsync` runs off the main actor and stops when this task is cancelled
+            // (sheet dismissed).
+            let found = await KdbxFileScanner().scanAsync(folder: folder, home: RealHomeDirectory.url)
             results = found
             isScanning = false
         }

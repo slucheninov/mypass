@@ -9499,6 +9499,22 @@
           }
         }
       }
+    },
+    "Your chosen vault file can't be found. MyPass is using the copy on this Mac. Choose the file again to switch back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбранный файл хранилища не найден. MyPass использует копию на этом Mac. Выберите файл снова, чтобы вернуться к нему."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вибраний файл сховища не знайдено. MyPass використовує копію на цьому Mac. Виберіть файл знову, щоб повернутися до нього."
+          }
+        }
+      }
     }
   },
   "version" : "1.0"
