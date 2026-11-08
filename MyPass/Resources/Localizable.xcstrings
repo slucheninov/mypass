@@ -7341,6 +7341,22 @@
         }
       }
     },
+    "The backup could not be restored and the vault file may be damaged. Restore the newest backup in the list, which was made just before this attempt." : {
+      "localizations" : {
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не вдалося відновити резервну копію, і файл сховища може бути пошкоджений. Відновіть найновішу резервну копію зі списку, створену безпосередньо перед цією спробою."
+          }
+        },
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Не удалось восстановить резервную копию, и файл хранилища может быть повреждён. Восстановите самую новую резервную копию из списка, созданную непосредственно перед этой попыткой."
+          }
+        }
+      }
+    },
     "The backup could not be restored: %@" : {
       "localizations" : {
         "uk" : {

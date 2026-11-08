@@ -128,6 +128,8 @@ struct BackupsSettingsPane: View {
             restoreError = String(localized: "A save is still in progress. Try again in a moment.", comment: "Backup restore error")
         } catch VaultSessionError.invalidBackup {
             restoreError = String(localized: "The selected file is not a valid vault.", comment: "Backup restore error")
+        } catch VaultSessionError.restoreFailedVaultMayBeDamaged {
+            restoreError = String(localized: "The backup could not be restored and the vault file may be damaged. Restore the newest backup in the list, which was made just before this attempt.", comment: "Backup restore error")
         } catch {
             restoreError = String(localized: "The backup could not be restored: \(error.localizedDescription)", comment: "Backup restore error; the argument is the underlying reason")
         }

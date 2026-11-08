@@ -359,6 +359,51 @@ final class VaultBackupManagerTests: XCTestCase {
         XCTAssertNoThrow(try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults))
     }
 
+    /// Mimics `LocalFileVaultStore`'s direct write: it truncates the file, then fails.
+    final class TruncatingFailingStore: VaultPrimaryStorage {
+        private let inner: VaultFileStore
+        private let manager: VaultBackupManager
+        private var failuresLeft: Int
+        init(directory: URL, manager: VaultBackupManager, failures: Int) {
+            inner = VaultFileStore(directory: directory, backupManager: manager)
+            self.manager = manager
+            failuresLeft = failures
+        }
+        var vaultBackupManager: VaultBackupManager? { manager }
+        var primaryVaultFileURL: URL? { inner.primaryVaultFileURL }
+        func load() throws -> Data? { try inner.load() }
+        func deleteVaultFileIfPresent() throws { try inner.deleteVaultFileIfPresent() }
+        func save(data: Data) throws {
+            if failuresLeft > 0 {
+                failuresLeft -= 1
+                if let url = inner.primaryVaultFileURL { try Data().write(to: url) }
+                throw NSError(domain: "test", code: 7)
+            }
+            try inner.save(data: data)
+        }
+    }
+
+    func testFailedRestoreWriteRollsBackToThePreRestoreBytes() throws {
+        let pair = try makeVaultPair()
+        let manager = VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: pair.defaults)
+        let session = VaultSession(fileStore: TruncatingFailingStore(directory: dir, manager: manager, failures: 1))
+        XCTAssertThrowsError(try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults)) {
+            XCTAssertEqual(($0 as NSError).code, 7)
+        }
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("vault.kdbx")), pair.currentBytes)
+    }
+
+    func testFailedRestoreWriteAndFailedRollbackReportPossibleDamage() throws {
+        let pair = try makeVaultPair()
+        let manager = VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: pair.defaults)
+        let session = VaultSession(fileStore: TruncatingFailingStore(directory: dir, manager: manager, failures: 2))
+        XCTAssertThrowsError(try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults)) {
+            XCTAssertEqual($0 as? VaultSessionError, .restoreFailedVaultMayBeDamaged)
+        }
+        let snapshots = try manager.list().map { try Data(contentsOf: $0.url) }
+        XCTAssertTrue(snapshots.contains(pair.currentBytes), "the safety snapshot must still hold the pre-restore bytes")
+    }
+
     func testRestoreRefusedWhileSaveIsPending() throws {
         let pair = try makeVaultPair()
         let store = ControllableVaultStore(

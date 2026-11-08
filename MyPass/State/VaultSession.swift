@@ -27,6 +27,9 @@ enum VaultSessionError: Error {
     case invalidBackup
     /// The current primary store keeps no local backups.
     case backupsUnavailable
+    /// The restore write failed part-way and putting the previous bytes back failed too, so the
+    /// vault file may be damaged. The safety snapshot taken just before is the way back.
+    case restoreFailedVaultMayBeDamaged
 }
 
 /// How a quit-time flush ended. `saveFailed` carries `lastSaveError` as it
@@ -470,13 +473,33 @@ final class VaultSession: ObservableObject, VaultFlushing {
         guard VaultMigrationService.looksLikeKdbx(backupData) else { throw VaultSessionError.invalidBackup }
 
         var safetySnapshot: URL?
-        if let current = try fileStore.load() {
+        let originalBytes = try fileStore.load()
+        if let current = originalBytes {
             safetySnapshot = try manager.forceSnapshot(current)
         }
         touchAccessPersistWorkItem?.cancel()
         touchAccessPersistWorkItem = nil
-        try manager.withSnapshotsSuppressed {
-            try fileStore.save(data: backupData)
+        do {
+            try manager.withSnapshotsSuppressed {
+                try fileStore.save(data: backupData)
+            }
+        } catch {
+            // `LocalFileVaultStore.save` (the same call a normal save makes) is a direct
+            // `Data.write(to:)` on the user-selected file, because the sandbox grants no sibling
+            // temp file to rename from. A failure can therefore leave that file truncated or
+            // partly written. The pre-restore bytes are still in memory (they are also the
+            // safety snapshot), so put them back through the same store; if even that fails,
+            // say so, because the vault file may now be damaged.
+            if let current = originalBytes {
+                do {
+                    try manager.withSnapshotsSuppressed {
+                        try fileStore.save(data: current)
+                    }
+                } catch {
+                    throw VaultSessionError.restoreFailedVaultMayBeDamaged
+                }
+            }
+            throw error
         }
         // `async`, not `sync`: a remote sync may still be running on this queue, and waiting for
         // it would block the main thread on the network. The queue is serial, so this runs after
