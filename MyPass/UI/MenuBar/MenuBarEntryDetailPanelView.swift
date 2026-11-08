@@ -5,7 +5,7 @@ import MyPassKit
 /// Only login entries ever reach this panel (`RecentEntriesQuery` drops every other type), so it
 /// renders the login form unconditionally. Each row stacks its label above the value instead of
 /// using a fixed-width label column: a narrow column broke long Ukrainian and Russian labels
-/// ("Ім’я користувача") mid-word in the 320 pt popover.
+/// (the Ukrainian "Username") mid-word in the 320 pt popover.
 struct MenuBarEntryDetailPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
     @EnvironmentObject private var navigationState: NavigationState
