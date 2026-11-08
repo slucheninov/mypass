@@ -12,13 +12,7 @@ struct MenuBarRecentEntryRow: View {
     var body: some View {
         Button(action: action) {
             HStack(spacing: 10) {
-                if entry.entryType == .address {
-                    Image(systemName: "house.fill").foregroundStyle(.teal).frame(width: 28, height: 28)
-                } else if entry.entryType == .files {
-                    Image(systemName: "paperclip").foregroundStyle(.indigo).frame(width: 28, height: 28)
-                } else {
-                    LetterAvatarView(title: displayTitle, size: 28, cornerRadius: 6)
-                }
+                LetterAvatarView(title: displayTitle, size: 28, cornerRadius: 6)
                 VStack(alignment: .leading, spacing: 2) {
                     Text(verbatim: displayTitle)
                         .font(.system(size: 13, weight: .semibold))

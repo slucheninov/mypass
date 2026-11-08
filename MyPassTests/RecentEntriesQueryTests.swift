@@ -33,6 +33,30 @@ final class RecentEntriesQueryTests: XCTestCase {
         XCTAssertTrue(RecentEntriesQuery.recent(in: dbCopy).isEmpty)
     }
 
+    func testOnlyLoginsAppear() {
+        // Every non-login type carries the newest access time and would otherwise lead the list.
+        let now = Date()
+        func entry(_ title: String, _ type: EntryType?, access: TimeInterval) -> KdbxEntry {
+            var e = KdbxEntry(uuid: UUID(), iconID: 0, fields: [], creationTime: now, lastModificationTime: now, lastAccessTime: Date(timeIntervalSince1970: access), locationChanged: now, history: [])
+            e.title = title
+            if let type { e.entryType = type }
+            return e
+        }
+        let entries = [
+            entry("Match note", .notes, access: 900),
+            entry("Match address", .address, access: 800),
+            entry("Match card", .card, access: 700),
+            entry("Match files", .files, access: 600),
+            entry("Match login", .login, access: 100),
+            entry("Match untyped", nil, access: 50),
+        ]
+        let root = KdbxGroup(uuid: UUID(), name: "Root", iconID: 0, creationTime: now, lastModificationTime: now, locationChanged: now, entries: entries, subgroups: [])
+        let db = KdbxDatabase(rootGroup: root, deletedObjects: [])
+
+        let recent = RecentEntriesQuery.recent(in: db, limit: 5)
+        XCTAssertEqual(recent.map(\.title), ["Match login", "Match untyped"])
+    }
+
     private func makeDatabaseWithEntries(accessTimes: [TimeInterval]) -> KdbxDatabase {
         let now = Date()
         let entries = accessTimes.map { t in

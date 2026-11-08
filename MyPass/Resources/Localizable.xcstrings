@@ -1864,22 +1864,6 @@
         }
       }
     },
-    "Coming later" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Появится позже"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "З’явиться пізніше"
-          }
-        }
-      }
-    },
     "Confirm Master Password" : {
       "localizations" : {
         "ru" : {
@@ -2662,22 +2646,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Змінити адресу"
-          }
-        }
-      }
-    },
-    "Edit Address in MyPass" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Изменить адрес в MyPass"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Змінити адресу в MyPass"
           }
         }
       }
@@ -5695,22 +5663,6 @@
         }
       }
     },
-    "Open Quick Access" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть быстрый доступ"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Відкрити швидкий доступ"
-          }
-        }
-      }
-    },
     "Open Website" : {
       "localizations" : {
         "ru" : {
@@ -6812,22 +6764,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Показати MyPass"
-          }
-        }
-      }
-    },
-    "Show Quick Access" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показывать быстрый доступ"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показати швидкий доступ"
           }
         }
       }

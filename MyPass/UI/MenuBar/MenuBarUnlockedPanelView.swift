@@ -48,17 +48,6 @@ struct MenuBarUnlockedPanelView: View {
                 activateMainWindow()
             }
 
-            HStack {
-                Text("Open Quick Access")
-                Spacer()
-                Text("Coming later")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .foregroundStyle(.secondary)
-
             Divider()
 
             menuRow("Lock") {
