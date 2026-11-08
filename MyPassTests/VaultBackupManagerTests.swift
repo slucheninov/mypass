@@ -338,6 +338,27 @@ final class VaultBackupManagerTests: XCTestCase {
         XCTAssertTrue(restored)
     }
 
+    /// A persist that starts after the busy check (the folder watcher is off the main thread)
+    /// must not write the pre-restore database over the restored file.
+    func testPersistDuringRestoreDoesNotOverwriteRestoredFile() throws {
+        let pair = try makeVaultPair()
+        let session = VaultSession(fileStore: VaultFileStore(
+            directory: dir,
+            backupManager: VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: pair.defaults)))
+        try session.unlock(password: "new-password")
+        session.drainPersistQueueForTesting()
+        session.restoreBackupAfterReservationHook = {
+            // Make the in-memory database differ from the last written one so a persist would write.
+            if case .unlocked(let db) = session.state { db.rootGroup.name = "stale-in-memory" }
+            session.triggerBackgroundSync()
+        }
+        try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults)
+        session.drainPersistQueueForTesting()
+        XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("vault.kdbx")), pair.oldBytes)
+        // The reservation is released: a later restore is not refused.
+        XCTAssertNoThrow(try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults))
+    }
+
     func testRestoreRefusedWhileSaveIsPending() throws {
         let pair = try makeVaultPair()
         let store = ControllableVaultStore(

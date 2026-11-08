@@ -157,6 +157,15 @@ final class VaultSession: ObservableObject, VaultFlushing {
     private var pendingLocalWrites = 0
     /// `persist` jobs from enqueue until the closure fully returns, remote sync included.
     private var persistJobsInFlight = 0
+    /// Set by `restoreBackup` (atomically with its busy check) until it returns. While set,
+    /// `persist` refuses to enqueue: `triggerBackgroundSync` is also reached from the folder
+    /// watcher, which is not the main thread, so a persist could otherwise start after the
+    /// busy check and write the pre-restore database over the restored file, or run a sync
+    /// that recreates the checkpoint the restore just cleared. A refused persist is safe to
+    /// drop: the restore locks the session, and the next unlock syncs again.
+    private var restoreReserved = false
+    /// Test seam: runs inside `restoreBackup` right after the reservation, before any write.
+    var restoreBackupAfterReservationHook: (() -> Void)?
     private var writeGeneration = 0
     private var supersededThroughGeneration = 0
     private var localDrainWaiters: [(String?) -> Void] = []
@@ -444,9 +453,18 @@ final class VaultSession: ObservableObject, VaultFlushing {
         // `persistJobsInFlight` also covers the remote sync that follows a finished local write:
         // a sync that started before the restore could otherwise save a fresh checkpoint after
         // the restore cleared it, re-enabling the blind upload of the restored copy.
-        let busy = pendingLocalWrites > 0 || persistJobsInFlight > 0
+        let busy = pendingLocalWrites > 0 || persistJobsInFlight > 0 || restoreReserved
+        if !busy { restoreReserved = true }
         writeStateLock.unlock()
         guard !busy else { throw VaultSessionError.writeInProgress }
+        // Released on every exit, after `lock()` on success so a refused persist cannot slip in
+        // between the reservation ending and the state being dropped.
+        defer {
+            writeStateLock.lock()
+            restoreReserved = false
+            writeStateLock.unlock()
+        }
+        restoreBackupAfterReservationHook?()
 
         let backupData = try Data(contentsOf: backupURL)
         guard VaultMigrationService.looksLikeKdbx(backupData) else { throw VaultSessionError.invalidBackup }
@@ -1075,6 +1093,9 @@ final class VaultSession: ObservableObject, VaultFlushing {
         }
     }
 
+    /// Blocks until every job queued so far has run. Tests only.
+    func drainPersistQueueForTesting() { persistQueue.sync {} }
+
     private func persist(_ db: KdbxDatabase, deletingDraftsFor draftIDs: Set<UUID> = []) {
         guard let sessionPassword else { return }
         // Deep-copy the group tree synchronously (main thread, no concurrent
@@ -1085,8 +1106,15 @@ final class VaultSession: ObservableObject, VaultFlushing {
             deletedObjects: db.deletedObjects,
             recycleBinGroupUUID: db.recycleBinGroupUUID
         )
-        let generation = beginLocalWrite()
+        // Reservation check and job registration are one critical section (see `restoreReserved`).
         writeStateLock.lock()
+        if restoreReserved {
+            writeStateLock.unlock()
+            return
+        }
+        pendingLocalWrites += 1
+        writeGeneration += 1
+        let generation = writeGeneration
         persistJobsInFlight += 1
         writeStateLock.unlock()
         if !draftIDs.isEmpty {
