@@ -47,6 +47,7 @@ struct MainWindowToolbarModifier: ViewModifier {
                         Button("Address") { presentCreate(entryType: .address) }
                         Button("Card") { presentCreate(entryType: .card) }
                         Button("Notes") { presentCreate(entryType: .notes) }
+                        Button("Files") { presentCreate(entryType: .files) }
                     }
                     ToolbarSearchField(focusRequest: searchFocusRequest)
                     Menu("Import", systemImage: "square.and.arrow.down") {

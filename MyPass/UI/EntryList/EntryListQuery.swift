@@ -16,17 +16,17 @@ enum EntryListQuery {
         if navigation.selectedSmartCategory == .security, navigation.securityUsesGroupScope {
             return navigation.searchText.isEmpty
                 ? group.entries
-                : EntrySearch.entries(in: root, matching: navigation.searchText)
+                : EntrySearch.entries(in: root, matching: navigation.searchText, includeAttachmentNames: true)
         }
         if navigation.isCategoryMode, let database {
             let scoped = EntryCategoryFilter.entries(for: navigation.activeCategoryFilter, in: database)
             return navigation.searchText.isEmpty
                 ? scoped
-                : scoped.filter { EntrySearch.matches(entry: $0, query: navigation.searchText) }
+                : scoped.filter { EntrySearch.matches(entry: $0, query: navigation.searchText, includeAttachmentNames: true) }
         }
         return navigation.searchText.isEmpty
             ? group.entries
-            : EntrySearch.entries(in: root, matching: navigation.searchText)
+            : EntrySearch.entries(in: root, matching: navigation.searchText, includeAttachmentNames: true)
     }
 
     private static func findGroup(_ id: UUID, in group: KdbxGroup) -> KdbxGroup? {

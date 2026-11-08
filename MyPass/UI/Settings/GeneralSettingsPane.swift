@@ -51,13 +51,6 @@ struct GeneralSettingsPane: View {
 
             Section {
                 ShortcutRecorderField(label: "Show MyPass", storageKey: "shortcutShowMyPass", defaultValue: "")
-                HStack {
-                    Text("Show Quick Access")
-                    Spacer()
-                    Text("Coming later")
-                        .foregroundStyle(.secondary)
-                }
-                .foregroundStyle(.secondary)
                 ShortcutRecorderField(label: "Lock MyPass", storageKey: "shortcutLockMyPass", defaultValue: "shift+command+L")
                 SettingsHelperText(text: "Shortcuts work while MyPass is running. Lock applies only when the vault is unlocked.")
             } header: {

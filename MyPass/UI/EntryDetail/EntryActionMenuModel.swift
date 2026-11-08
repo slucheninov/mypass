@@ -52,8 +52,8 @@ struct EntryActionMenuModel: Equatable {
             copyGroup.append(.copy(.cvv, isEnabled: !entry.cvv.isEmpty))
         case .notes:
             copyGroup.append(.copy(.note, isEnabled: !entry.notesBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && notesRevealed))
-        case .address:
-            break
+        case .address, .files:
+            break // nothing to copy: addresses fill via the browser, files are exported from the detail pane
         }
         if !copyGroup.isEmpty {
             sections.append(copyGroup)

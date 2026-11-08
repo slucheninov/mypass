@@ -172,6 +172,89 @@
     "%lld" : {
       "shouldTranslate" : false
     },
+    "%lld files" : {
+      "comment" : "Entry list subtitle for a Files item; the argument is the number of attached files",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld file"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld files"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файл"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файла"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файлов"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файла"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файл"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файли"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файлів"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файлу"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld items" : {
       "comment" : "Scope overview: number of entries; the argument is the count",
       "localizations" : {
@@ -1829,22 +1912,6 @@
         }
       }
     },
-    "Coming later" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Появится позже"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "З’явиться пізніше"
-          }
-        }
-      }
-    },
     "Confirm Master Password" : {
       "localizations" : {
         "ru" : {
@@ -2478,6 +2545,22 @@
         }
       }
     },
+    "Description" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Описание"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Опис"
+          }
+        }
+      }
+    },
     "Device unlock didn't complete. Try again or enter your master password." : {
       "comment" : "Menu bar unlock panel: inline message\nUnlock screen: inline message",
       "localizations" : {
@@ -2631,22 +2714,6 @@
         }
       }
     },
-    "Edit Address in MyPass" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Изменить адрес в MyPass"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Змінити адресу в MyPass"
-          }
-        }
-      }
-    },
     "Edit Card" : {
       "localizations" : {
         "ru" : {
@@ -2675,6 +2742,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Змінити запис"
+          }
+        }
+      }
+    },
+    "Edit Files" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редактировать файлы"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редагувати файли"
           }
         }
       }
@@ -3153,6 +3236,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вибране"
+          }
+        }
+      }
+    },
+    "Files" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлы"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файли"
           }
         }
       }
@@ -5255,6 +5354,22 @@
         }
       }
     },
+    "New Files" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новые файлы"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нові файли"
+          }
+        }
+      }
+    },
     "New Group" : {
       "localizations" : {
         "ru" : {
@@ -5299,6 +5414,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Сертифікат не вибрано (необов’язково)"
+          }
+        }
+      }
+    },
+    "No files attached." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлы не прикреплены."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлів не додано."
           }
         }
       }
@@ -5643,6 +5774,22 @@
         }
       }
     },
+    "Open Files in MyPass" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Открыть файлы в MyPass"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Відкрити файли в MyPass"
+          }
+        }
+      }
+    },
     "Open MyPass" : {
       "localizations" : {
         "ru" : {
@@ -5672,22 +5819,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Відкрийте MyPass і знову відкрийте його розширення для браузера, щоб перевірити ключі доступу."
-          }
-        }
-      }
-    },
-    "Open Quick Access" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Открыть быстрый доступ"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Відкрити швидкий доступ"
           }
         }
       }
@@ -6857,22 +6988,6 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Показати MyPass"
-          }
-        }
-      }
-    },
-    "Show Quick Access" : {
-      "localizations" : {
-        "ru" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показывать быстрый доступ"
-          }
-        },
-        "uk" : {
-          "stringUnit" : {
-            "state" : "translated",
-            "value" : "Показати швидкий доступ"
           }
         }
       }

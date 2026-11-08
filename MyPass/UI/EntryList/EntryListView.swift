@@ -38,12 +38,16 @@ struct EntryListView: View {
         }
     }
 
+    private func subtitle(for entry: KdbxEntry) -> String {
+        EntryListSubtitle.text(for: entry)
+    }
+
     var body: some View {
         List(displayedEntries, selection: $navigationState.selectedEntryID) { entry in
             let isSelected = navigationState.selectedEntryID == entry.uuid
             EntryListRow(
                 title: displayTitle(for: entry),
-                subtitle: entry.entryType == .address ? entry.addressSummary : entry.login,
+                subtitle: subtitle(for: entry),
                 entryType: entry.entryType
             )
             .tag(entry.uuid)
@@ -101,6 +105,8 @@ private struct EntryListRow: View {
             templateIconTile(systemName: "creditcard")
         case .notes:
             templateIconTile(systemName: "note.text")
+        case .files:
+            templateIconTile(systemName: "paperclip")
         case .login:
             LetterAvatarView(
                 title: title,

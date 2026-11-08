@@ -9,6 +9,7 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
     case addresses
     case cards
     case notes
+    case files
     case security
     case deleted
 
@@ -24,6 +25,7 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
         case .addresses: return "Addresses"
         case .cards: return "Cards"
         case .notes: return "Notes"
+        case .files: return "Files"
         case .security: return "Security"
         case .deleted: return "Deleted"
         }
@@ -42,6 +44,7 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
         case .addresses: return "house.fill"
         case .cards: return "creditcard.fill"
         case .notes: return "note.text"
+        case .files: return "paperclip"
         case .security: return "shield.lefthalf.filled"
         case .deleted: return "trash.fill"
         }
@@ -57,6 +60,7 @@ enum SmartCategory: String, CaseIterable, Identifiable, Hashable {
         case .addresses: return Color.teal
         case .cards: return Color.blue
         case .notes: return Color.orange
+        case .files: return Color.indigo
         case .security: return Color.red
         case .deleted: return Color.secondary
         }

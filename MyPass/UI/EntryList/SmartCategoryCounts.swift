@@ -20,6 +20,8 @@ enum SmartCategoryCounts {
             return String(cardsCount(in: database))
         case .notes:
             return String(notesCount(in: database))
+        case .files:
+            return String(EntryCategoryFilter.entries(for: .files, in: database).count)
         case .deleted:
             return String(deletedCount(in: database))
         }

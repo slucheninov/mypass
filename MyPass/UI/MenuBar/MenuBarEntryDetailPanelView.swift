@@ -2,6 +2,10 @@ import SwiftUI
 import AppKit
 import MyPassKit
 
+/// Only login entries ever reach this panel (`RecentEntriesQuery` drops every other type), so it
+/// renders the login form unconditionally. Each row stacks its label above the value instead of
+/// using a fixed-width label column: a narrow column broke long Ukrainian and Russian labels
+/// (the Ukrainian "Username") mid-word in the 320 pt popover.
 struct MenuBarEntryDetailPanelView: View {
     @EnvironmentObject private var vaultSession: VaultSession
     @EnvironmentObject private var navigationState: NavigationState
@@ -40,16 +44,7 @@ struct MenuBarEntryDetailPanelView: View {
             ScrollView {
                 VStack(spacing: 12) {
                     heroSection
-                    if entry.entryType == .address {
-                        VStack(alignment: .leading, spacing: 8) {
-                            Text(verbatim: entry.addressSummary)
-                            Text(verbatim: [entry.address.addressLine1, entry.address.addressLine2, entry.address.postalCode, entry.address.countryName].filter { !$0.isEmpty }.joined(separator: "\n"))
-                                .foregroundStyle(.secondary)
-                            Button("Edit Address in MyPass", action: openEntryForEdit)
-                        }.frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        fieldsCard
-                    }
+                    fieldsCard
                 }
                 .padding(.horizontal, 12)
                 .padding(.bottom, 12)
@@ -95,11 +90,7 @@ struct MenuBarEntryDetailPanelView: View {
 
     private var heroSection: some View {
         HStack(alignment: .center, spacing: 12) {
-            if entry.entryType == .address {
-                Image(systemName: "house.fill").font(.title).foregroundStyle(.teal).frame(width: 44, height: 44)
-            } else {
-                LetterAvatarView(title: displayTitle, size: 44, cornerRadius: 10)
-            }
+            LetterAvatarView(title: displayTitle, size: 44, cornerRadius: 10)
             VStack(alignment: .leading, spacing: 2) {
                 Text(verbatim: displayTitle)
                     .font(.headline)
@@ -147,10 +138,11 @@ struct MenuBarEntryDetailPanelView: View {
     }
 
     private var passwordRow: some View {
-        HStack(alignment: .center, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
             Text("Password")
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(width: 70, alignment: .leading)
+                .lineLimit(1)
 
             Button {
                 copy(entry.password)
@@ -186,10 +178,11 @@ struct MenuBarEntryDetailPanelView: View {
         let code = TOTPCode.currentCode(secretBase32: secret, digits: 6, period: 30, algorithm: .sha1, now: now) ?? "------"
         let displayValue = copiedField == .totp ? String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value") : code
 
-        return HStack(alignment: .center, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 2) {
             Text("Code")
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(width: 70, alignment: .leading)
+                .lineLimit(1)
 
             Button {
                 copy(code)
@@ -216,10 +209,11 @@ struct MenuBarEntryDetailPanelView: View {
     }
 
     private var websiteRow: some View {
-        HStack(alignment: .center, spacing: 6) {
+        VStack(alignment: .leading, spacing: 2) {
             Text("Website")
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(width: 70, alignment: .leading)
+                .lineLimit(1)
             if let url = URL(string: entry.url), !entry.url.isEmpty {
                 Link(destination: url) {
                     HStack(spacing: 4) {
@@ -249,10 +243,11 @@ struct MenuBarEntryDetailPanelView: View {
     ) -> some View {
         let shownValue = copiedField == field ? String(localized: "Copied", comment: "Brief confirmation shown in place of a copied field value") : displayValue
 
-        return HStack(alignment: .center, spacing: 6) {
+        return VStack(alignment: .leading, spacing: 2) {
             Text(label)
+                .font(.caption)
                 .foregroundStyle(.secondary)
-                .frame(width: 70, alignment: .leading)
+                .lineLimit(1)
 
             Button {
                 copy(copyValue)
