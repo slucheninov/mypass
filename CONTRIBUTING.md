@@ -50,7 +50,9 @@ make something pass.
   fact, so it is not a substitute for running the suite yourself.
 - `.github/workflows/codeql.yml` runs CodeQL on pull requests that target `master`
   (CI runs on pull requests to any branch), on pushes to `master` and on manual
-  dispatch, plus a weekly schedule. `.coderabbit.yaml` configures CodeRabbit pull request reviews, which run
+  dispatch, plus a weekly schedule. On a pull request the slow Swift leg skips its
+  build and analysis (and still reports green) when no Swift-relevant file changed;
+  the path list is in the workflow. `.coderabbit.yaml` configures CodeRabbit pull request reviews, which run
   only while the CodeRabbit GitHub App is installed; if no review starts, comment
   `@coderabbitai review`. Neither result blocks a merge by itself: that is set in the
   repository's GitHub branch protection, not in these files.
