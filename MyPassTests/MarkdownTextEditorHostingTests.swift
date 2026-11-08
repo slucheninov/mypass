@@ -51,9 +51,11 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
         window.isReleasedWhenClosed = false
         window.contentView = hosting
         window.makeKeyAndOrderFront(nil)
-        pump()
+        // SwiftUI builds the NSTextView lazily; wait for it instead of a fixed delay.
+        waitUntil("editor text view is attached") { findTextView(in: hosting) != nil }
         textView = try XCTUnwrap(findTextView(in: hosting))
         window.makeFirstResponder(textView)
+        waitUntil("editor text view is first responder") { window.firstResponder === textView }
     }
 
     override func tearDown() {
@@ -61,8 +63,32 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
         super.tearDown()
     }
 
-    private func pump(_ turns: Int = 10) {
-        for _ in 0..<turns { RunLoop.main.run(until: Date().addingTimeInterval(0.05)) }
+    /// Spins the main run loop in short slices until `condition` holds, failing with
+    /// `description` after `timeout`. Waiting on the exact state an assertion needs keeps
+    /// slow CI from asserting stale values, which a fixed delay cannot guarantee.
+    private func waitUntil(_ description: String, timeout: TimeInterval = 2,
+                           file: StaticString = #filePath, line: UInt = #line,
+                           _ condition: () -> Bool) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition() {
+            if Date() >= deadline {
+                XCTFail("Timed out waiting for: \(description)", file: file, line: line)
+                return
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+    }
+
+    /// Keeps spinning for a few more short turns, for "must stay put" checks: an update
+    /// loop would keep changing the state during them.
+    private func spin(_ turns: Int = 10) {
+        for _ in 0..<turns { RunLoop.main.run(until: Date().addingTimeInterval(0.01)) }
+    }
+
+    /// Waits until the editor's text and the reported binding agree on `expected`.
+    private func waitForText(_ expected: String, file: StaticString = #filePath, line: UInt = #line) {
+        waitUntil("text == \(expected.debugDescription) (view \(textView.string.debugDescription), binding \(text.debugDescription))",
+                  file: file, line: line) { text == expected && textView.string == expected }
     }
 
     private func findTextView(in view: NSView) -> NSTextView? {
@@ -81,14 +107,16 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
         manager.beginUndoGrouping()
         textView.insertText(s, replacementRange: textView.selectedRange())
         manager.endUndoGrouping()
-        pump()
+        waitUntil("typed text reported and undoable") { text == textView.string && canUndo }
     }
 
     func testWrapAppliesExactlyOnce() throws {
         try host(initial: "abc")
         textView.setSelectedRange(NSRange(location: 0, length: 3))
         actions.wrap(prefix: "**", suffix: "**")
-        pump()
+        waitForText("**abc**")
+        // A feedback loop would keep re-wrapping; the text must stay put.
+        spin()
         XCTAssertEqual(textView.string, "**abc**")
         XCTAssertEqual(text, "**abc**")
     }
@@ -99,7 +127,8 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
         type(" two")
         XCTAssertEqual(text, "one two")
         actions.undo()
-        pump()
+        waitForText("one")
+        waitUntil("canRedo after undo") { canRedo }
         XCTAssertEqual(text, "one")
         XCTAssertEqual(textView.string, "one")
         XCTAssertTrue(canRedo)
@@ -111,13 +140,13 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
         try host(initial: "")
         type("original")
         actions.replaceAll("restored")
-        pump()
+        waitForText("restored")
         XCTAssertEqual(text, "restored")
         actions.undo()
-        pump()
+        waitForText("original")
         XCTAssertEqual(text, "original")
         actions.redo()
-        pump()
+        waitForText("restored")
         XCTAssertEqual(text, "restored")
     }
 
@@ -126,9 +155,9 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
     private func typeLikeUser(_ s: String) {
         for ch in s {
             textView.insertText(String(ch), replacementRange: textView.selectedRange())
-            pump(1)
+            waitUntil("keystroke \(String(ch).debugDescription) reported (view \(textView.string.debugDescription), binding \(text.debugDescription))") { text == textView.string }
         }
-        pump()
+        waitUntil("canUndo after typing") { canUndo }
     }
 
     func testTypeUndoRedoRoundTripsRepeatedly() throws {
@@ -138,13 +167,13 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
         XCTAssertTrue(canUndo)
         for round in 1...3 {
             actions.undo()
-            pump()
+            waitUntil("round \(round) undo reported") { text == "" && textView.string == "" && !canUndo && canRedo }
             XCTAssertEqual(textView.string, "", "round \(round) undo")
             XCTAssertEqual(text, "", "round \(round) undo binding")
             XCTAssertFalse(canUndo, "round \(round)")
             XCTAssertTrue(canRedo, "round \(round)")
             actions.redo()
-            pump()
+            waitUntil("round \(round) redo reported") { text == "hello world" && textView.string == "hello world" && canUndo && !canRedo }
             XCTAssertEqual(textView.string, "hello world", "round \(round) redo")
             XCTAssertEqual(text, "hello world", "round \(round) redo binding")
             XCTAssertTrue(canUndo, "round \(round)")
@@ -162,20 +191,20 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
         // so the action is sent the way the menu item sends it).
         XCTAssertTrue(window.firstResponder === textView)
         XCTAssertTrue(textView.tryToPerform(Selector(("undo:")), with: nil))
-        pump()
+        waitUntil("keyboard undo reported") { text == "" && textView.string == "" && !canUndo && canRedo }
         XCTAssertEqual(textView.string, "")
         XCTAssertEqual(text, "")
         XCTAssertFalse(canUndo)
         XCTAssertTrue(canRedo)
         XCTAssertTrue(textView.tryToPerform(Selector(("redo:")), with: nil))
-        pump()
+        waitUntil("keyboard redo reported") { text == "typed" && textView.string == "typed" && canUndo && !canRedo }
         XCTAssertEqual(textView.string, "typed")
         XCTAssertEqual(text, "typed")
         XCTAssertTrue(canUndo)
         XCTAssertFalse(canRedo)
         // Mixed: toolbar undo after a keyboard redo still works.
         actions.undo()
-        pump()
+        waitUntil("toolbar undo after keyboard redo reported") { text == "" && canRedo }
         XCTAssertEqual(text, "")
         XCTAssertTrue(canRedo)
     }
