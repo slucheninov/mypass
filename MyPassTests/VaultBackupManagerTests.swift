@@ -202,6 +202,18 @@ final class VaultBackupManagerTests: XCTestCase {
         XCTAssertEqual(m.list().count, 1)
     }
 
+    /// The listing may spell the folder differently from the URL the write returned
+    /// (`/var` vs `/private/var`); the protected snapshot must still not be counted twice.
+    func testPruneProtectsSnapshotGivenWithADifferentPathSpelling() throws {
+        let m = manager(BackupTestDefaults.make(count: 2))
+        snap(m, "older")
+        let url = try m.forceSnapshot(Data("safety".utf8))
+        let alias = URL(fileURLWithPath: url.deletingLastPathComponent().path + "/./" + url.lastPathComponent)
+        XCTAssertNotEqual(alias, url)
+        m.pruneNow(protecting: alias)
+        XCTAssertEqual(m.list().count, 2)
+    }
+
     func testForceSnapshotDoesNotPruneUntilPruneNow() throws {
         let m = manager(BackupTestDefaults.make(count: 1))
         snap(m, "oldest")

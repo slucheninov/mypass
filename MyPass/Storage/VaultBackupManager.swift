@@ -229,14 +229,10 @@ final class VaultBackupManager {
         return url
     }
 
-    /// Makes sure `directory` exists, without ever failing the snapshot on its own.
-    ///
-    /// On the GitHub macos-26 runner `createDirectory(withIntermediateDirectories: true)` threw
-    /// NSCocoaErrorDomain 516 (underlying POSIX 17, EEXIST) with the path set to the backups
-    /// directory itself, which dropped the first snapshot of a fresh folder. So an existing
-    /// directory is never re-created, and an EEXIST-style failure is not trusted either way:
-    /// the write that follows is the authority (a missing directory or a file in its place
-    /// makes it fail with its own error, which `recordFailure` records).
+    /// Makes sure `directory` exists, without ever failing the snapshot on its own: an existing
+    /// directory is not re-created, and a `createDirectory` failure is logged with the facts
+    /// needed to diagnose it, then left to the write that follows, which is the authority (a
+    /// missing directory or a file in its place makes it fail with its own recorded error).
     private func ensureDirectoryExists() {
         let fm = FileManager.default
         if (try? directory.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { return }
@@ -266,7 +262,11 @@ final class VaultBackupManager {
     /// taken, for example the pre-restore safety copy at a retention of one.
     private func pruneBestEffortLocked(protecting: URL? = nil) {
         let all = listLocked()
-        let others = all.filter { $0.url != protecting }
+        // Compared by file name, not by URL: the directory listing can spell the folder differently
+        // from the URL `writeLocked` returned (`/var/...` vs `/private/var/...` on the GitHub
+        // macOS runner), and a URL mismatch left the protected snapshot among the "others",
+        // so it was counted twice and every prune kept one backup fewer than `backupCount`.
+        let others = all.filter { $0.url.lastPathComponent != protecting?.lastPathComponent }
         let keep = max(VaultBackupSettings.count(defaults: defaults) - (protecting == nil ? 0 : 1), 0)
         guard others.count > keep else { return }
         for backup in others.dropFirst(keep) {
