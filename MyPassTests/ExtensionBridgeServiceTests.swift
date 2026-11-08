@@ -195,9 +195,12 @@ final class ExtensionBridgeServiceTests: XCTestCase {
             token: "t", requestId: 70, requestDetailsJson: getFixtureRequestJSON(),
             originUrl: "https://example.com", pairing: authorizedPairingSecret
         ))
-        if case .passkeyGetPending(_, _, let matches) = get {
-            XCTAssertTrue(matches.isEmpty)
+        guard case .passkeyGetComplete(let requestId, let responseJson, let error) = get else {
+            return XCTFail("expected a passkey get refusal, got \(get)")
         }
+        XCTAssertEqual(requestId, 70)
+        XCTAssertNil(responseJson)
+        XCTAssertEqual(error?.name, "NotAllowedError")
         guard case .passkeyCreatePending(_, _, _, let candidates) = service.handle(.passkeyCreate(
             token: "t", requestId: 71, requestDetailsJson: createFixtureRequestJSON(),
             originUrl: "https://example.com", pairing: authorizedPairingSecret
