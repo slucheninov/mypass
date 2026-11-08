@@ -24,7 +24,7 @@ with `./scripts/dev.sh generate`; never edit or commit it.
 | `./scripts/dev.sh run` | Quit every running MyPass, build, open the new build. |
 | `./scripts/dev.sh install-host [--host PATH] [--install-root DIR]` | Install the native messaging host and manifests. |
 | `./scripts/dev.sh package [--out DIR] [--release]` | Build the unsigned development artifacts (a DMG and the extension zip) into `./dist`; `--release` names them for a tagged release. |
-| `./scripts/test.sh [--ci] [--no-js]` | Run the app tests, the three package suites and all extension JS suites. |
+| `./scripts/test.sh [--ci] [--no-js] [--only app\|packages\|js]` | Run the app tests, the three package suites and all extension JS suites; `--only` runs just one of those three parts. |
 
 Load the extension unpacked from `ChromeExtension/` on `chrome://extensions` and
 reload it after editing JavaScript. Manual end-to-end fixtures are served with
@@ -41,14 +41,18 @@ make something pass.
   JavaScript suites were **not** run. A change that touches `ChromeExtension/` needs
   them run.
 - `--ci` is the unsigned mode used by the CI workflow. It rejects `--no-js` and
-  requires every tool. A green unsigned run proves logic, not the runtime behaviour
+  requires every tool. CI runs the three parts as parallel jobs through
+  `--only app`, `--only packages` and `--only js`; a plain run still does all of them. A green unsigned run proves logic, not the runtime behaviour
   of a signed build (Touch ID, Keychain access groups).
 - A GitHub Actions workflow (`.github/workflows/ci.yml`) runs on pull requests, on
-  pushes to `master` and on manual dispatch. It is unsigned and reports after the
+  pushes to `master` and on manual dispatch, as parallel jobs plus a final `ci` job
+  that reports the combined result. It is unsigned and reports after the
   fact, so it is not a substitute for running the suite yourself.
 - `.github/workflows/codeql.yml` runs CodeQL on pull requests that target `master`
   (CI runs on pull requests to any branch), on pushes to `master` and on manual
-  dispatch, plus a weekly schedule. `.coderabbit.yaml` configures CodeRabbit pull request reviews, which run
+  dispatch, plus a weekly schedule. On pull requests it analyzes only the workflows and
+  the extension JavaScript; the roughly 30 minute Swift analysis runs after the merge,
+  on the weekly schedule and on manual dispatch. `.coderabbit.yaml` configures CodeRabbit pull request reviews, which run
   only while the CodeRabbit GitHub App is installed; if no review starts, comment
   `@coderabbitai review`. Neither result blocks a merge by itself: that is set in the
   repository's GitHub branch protection, not in these files.

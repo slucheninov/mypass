@@ -51,9 +51,10 @@ brew install xcodegen                          # prerequisite, plus Xcode
 ./scripts/dev.sh install-host [--host PATH] [--install-root DIR]   # ChromeHost + native messaging manifests
 ./scripts/dev.sh package [--out DIR]           # unsigned, ad-hoc-sealed development zips into ./dist
 ./scripts/test.sh [--ci] [--no-js]             # full suite
+./scripts/test.sh [--ci] --only app|packages|js   # one part of it
 ```
 
-`scripts/test.sh` runs `xcodebuild test -scheme MyPass`, then `swift test` in each of the three packages, then every `ChromeExtension/tests/*.test.js` suite (36 today, discovered by glob; each in its own `node` process, failures aggregated). There is no JS test framework — each test file is a plain node script. Without `node` a local run fails unless `--no-js` is passed, which prints that the JS suites were not run. `--ci` rejects `--no-js`, requires every tool, and builds unsigned through command-line overrides only (`project.yml` is untouched). `--no-js` is never a way to report a change as tested when it touches `ChromeExtension/`. Hosted app tests run with `-testLanguage en` so assertions see English text, and `LocalizationCatalogTests` fails when any catalog key lacks a translated `uk` or `ru` entry.
+`scripts/test.sh` runs `xcodebuild test -scheme MyPass`, then `swift test` in each of the three packages, then every `ChromeExtension/tests/*.test.js` suite (41 today, discovered by glob; each in its own `node` process, failures aggregated). There is no JS test framework — each test file is a plain node script. Without `node` a local run fails unless `--no-js` is passed, which prints that the JS suites were not run. `--only app|packages|js` runs a single part (`app` is the `xcodebuild` run, plus the ChromeHost build under `--ci`; `packages` the three `swift test` runs; `js` the node suites), preflight-checks only the tools that part needs, and cannot be combined with `--no-js`; without it everything runs, exactly as before. `--ci` rejects `--no-js`, requires every tool, and builds unsigned through command-line overrides only (`project.yml` is untouched). `--no-js` is never a way to report a change as tested when it touches `ChromeExtension/`. Hosted app tests run with `-testLanguage en` so assertions see English text, and `LocalizationCatalogTests` fails when any catalog key lacks a translated `uk` or `ru` entry.
 
 Local builds keep the stable team signing from `project.yml`. Unsigned output exists only behind explicit flags (`--unsigned`, `--ci`, `package`); unsigned artifacts are for development and inspection, and Touch ID and the Keychain-backed app-to-host exchange are expected to be limited there (untested).
 
@@ -63,7 +64,7 @@ The extension has no build step. Load `ChromeExtension/` unpacked and reload it 
 
 **No linter or formatter is configured** anywhere in this repo. Match the style of the surrounding code by hand.
 
-**CI is a second check, not a substitute.** `.github/workflows/ci.yml` runs `scripts/test.sh --ci` and `scripts/dev.sh package` on pull requests, on pushes to `master` and on manual dispatch. It builds unsigned on arm64, so a green run proves logic only, not the runtime behaviour of a signed build, and it reports after the fact. Look at the Actions run for the real result instead of assuming one, and run `./scripts/test.sh` yourself before claiming work is done.
+**CI is a second check, not a substitute.** `.github/workflows/ci.yml` runs `scripts/test.sh --ci --only app|packages|js` and `scripts/dev.sh package` as four parallel jobs (`app-tests`, `packages`, `js` on Linux, `package`) on pull requests, on pushes to `master` and on manual dispatch. A final aggregator job named `ci` (the required status check of the master ruleset) passes only when all four succeeded, so keep that job name. It builds unsigned on arm64, so a green run proves logic only, not the runtime behaviour of a signed build, and it reports after the fact. Look at the Actions run for the real result instead of assuming one, and run `./scripts/test.sh` yourself before claiming work is done.
 
 ## Architecture essentials
 

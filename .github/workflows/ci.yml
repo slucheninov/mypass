@@ -1,6 +1,9 @@
 name: CI
 
 # Runs the same scripts a developer runs locally (scripts/test.sh --ci, scripts/dev.sh package).
+# The work is split into independent jobs that run in parallel (the wall-clock time is the
+# slowest job instead of the sum of all of them, and a failure names its part), and a final
+# aggregator job called "ci" reports one verdict for the whole workflow.
 # No secrets are used and there is no pull_request_target trigger, so workflows from forks
 # run with a read-only token.
 on:
@@ -19,8 +22,15 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  ci:
-    name: ci
+  # Why the work is split: one sequential job took about 21 minutes (the macOS app tests
+  # about 16 of them, packaging about 5). The parts do not depend on each other, so each one
+  # gets its own runner and the run takes as long as the slowest part. The repository is public,
+  # so the extra runner minutes are free; the macOS concurrency limit is 5 and this workflow uses
+  # at most 3 macOS runners at a time (on a push to master the CodeQL Swift leg is a fourth).
+  # Every part keeps the "same script as a developer runs" rule: scripts/test.sh --only <part>.
+
+  app-tests:
+    name: App tests (xcodebuild)
     # macos-26: arm64, macOS 26 image 20261013.0424.1 (Xcode 26.6 default, Node 24, Homebrew).
     # The unsigned build and the tests run on arm64 only; nothing here exercises x86_64.
     runs-on: macos-26
@@ -63,10 +73,95 @@ jobs:
           path: build/SourcePackages
           key: swiftpm-sources-${{ runner.os }}-${{ hashFiles('project.yml', 'Packages/*/Package.swift', 'Packages/*/Package.resolved') }}
 
-      # Every suite runs here: the app, ChromeHost, the three Swift packages and all
-      # ChromeExtension/tests/*.test.js scripts. Nothing is skipped to get a green run.
+      # The MyPass scheme (hosted XCTest) and the ChromeHost build.
       - name: Test
-        run: ./scripts/test.sh --ci
+        run: ./scripts/test.sh --ci --only app
+
+  packages:
+    name: Swift package tests
+    # macOS and not Linux, decided by evidence: the three packages declare macOS-only
+    # platforms (Package.swift) and their sources and tests import Apple frameworks (CryptoKit,
+    # Security, CommonCrypto, CoreServices, Darwin), so they do not build on Linux.
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      # Same pin and reason as in app-tests.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the pinned Xcode
+        run: |
+          if [[ ! -d "$DEVELOPER_DIR" ]]; then
+            echo "::error::$DEVELOPER_DIR is not on this runner image. Installed Xcode versions:"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          swift --version
+
+      # No xcodegen and no package-source cache: `swift test` works from each package's own
+      # Package.resolved and builds in Packages/<name>/.build, not in build/SourcePackages.
+      - name: Test
+        run: ./scripts/test.sh --ci --only packages
+
+  js:
+    name: Extension JS tests
+    # The ChromeExtension suites are plain node scripts (node: built-ins and the extension's own
+    # files only; no browser, no macOS tool), so a cheap Linux runner is enough and no Xcode is
+    # needed. The pinned node major matches the one on the macos-26 image.
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Test
+        run: ./scripts/test.sh --ci --only js
+
+  package:
+    name: Package development artifacts
+    runs-on: macos-26
+    timeout-minutes: 60
+    env:
+      # Same pin and reason as in app-tests.
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+    steps:
+      - name: Check out
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Check the pinned Xcode
+        run: |
+          if [[ ! -d "$DEVELOPER_DIR" ]]; then
+            echo "::error::$DEVELOPER_DIR is not on this runner image. Installed Xcode versions:"
+            ls -d /Applications/Xcode*.app
+            exit 1
+          fi
+          xcodebuild -version
+
+      - name: Install xcodegen
+        run: brew install xcodegen
+
+      # Same package-source cache and key as in app-tests (see the comment there). The first run
+      # after a dependency change fetches the sources in both jobs, the later ones restore them.
+      - name: Cache Swift package sources
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: build/SourcePackages
+          key: swiftpm-sources-${{ runner.os }}-${{ hashFiles('project.yml', 'Packages/*/Package.swift', 'Packages/*/Package.resolved') }}
 
       - name: Package development artifacts
         run: ./scripts/dev.sh package
@@ -86,3 +181,38 @@ jobs:
           path: dist/MyPass-chrome-extension-*.zip
           retention-days: 14
           if-no-files-found: error
+
+  # The aggregator. The branch ruleset on master requires a status check named exactly "ci" (the
+  # name of the single job this workflow used to have). The jobs above have their own names, so
+  # without this job the required check would never be reported and every pull request would
+  # wait for it forever. This job keeps that name and passes only when every job passed, so the
+  # ruleset does not have to list each job (and does not have to change when a job is added).
+  # "if: always()" is essential: by default a job is skipped when one of its needs failed, and a
+  # skipped required check counts as passing for the merge button. It then runs even after a
+  # failure or a cancellation and turns any result other than "success" (failure, cancelled and
+  # skipped included) into a red check. Do not rename the job or its name without updating the
+  # ruleset.
+  ci:
+    name: ci
+    needs: [app-tests, packages, js, package]
+    if: ${{ always() }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Require every job to have succeeded
+        # Results go through env, never interpolated into the script text.
+        env:
+          APP_TESTS: ${{ needs.app-tests.result }}
+          PACKAGES: ${{ needs.packages.result }}
+          JS: ${{ needs.js.result }}
+          PACKAGE: ${{ needs.package.result }}
+        run: |
+          status=0
+          for entry in "app-tests=$APP_TESTS" "packages=$PACKAGES" "js=$JS" "package=$PACKAGE"; do
+            echo "${entry%%=*}: ${entry#*=}"
+            if [[ "${entry#*=}" != "success" ]]; then
+              echo "::error::Job '${entry%%=*}' finished with '${entry#*=}', expected 'success'."
+              status=1
+            fi
+          done
+          exit "$status"

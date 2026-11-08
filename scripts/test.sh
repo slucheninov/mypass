@@ -5,6 +5,12 @@
 #   scripts/test.sh              local run, stable team signing from project.yml
 #   scripts/test.sh --no-js      local run that explicitly skips the JS suites (loudly)
 #   scripts/test.sh --ci         unsigned run for CI; every tool and every suite is required
+#   scripts/test.sh --only app|packages|js
+#                                run one part only (the parallel CI jobs use this); combines with --ci
+#
+# The parts: "app" is the xcodebuild test run of the MyPass scheme (plus the ChromeHost build in
+# --ci mode), "packages" is `swift test` in the three Swift packages, "js" is every
+# ChromeExtension/tests/*.test.js suite. Without --only all three run, in that order.
 #
 # Opt-in integration suites keep their environment switches (MYPASS_KEYCHAIN_TESTS=1,
 # MYPASS_SFTP_INTEGRATION_TESTS=1, MYPASS_ICLOUD_INTEGRATION_TESTS=1).
@@ -14,29 +20,65 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
 usage() {
-  echo "Usage: scripts/test.sh [--ci] [--no-js]" >&2
-  echo "  --ci     unsigned build overrides, arm64, every tool and suite required" >&2
-  echo "  --no-js  local only: skip the JS suites (prints a loud warning; rejected with --ci)" >&2
+  echo "Usage: scripts/test.sh [--ci] [--no-js] [--only app|packages|js]" >&2
+  echo "  --ci           unsigned build overrides, arm64, every tool and suite required" >&2
+  echo "  --no-js        local only: skip the JS suites (prints a loud warning; rejected with --ci" >&2
+  echo "                 and with --only)" >&2
+  echo "  --only PART    run one part only: app (xcodebuild), packages (swift test) or js (node)" >&2
 }
 
 # Task-scoped on purpose: a bare `CI` variable here would shadow the CI=true that GitHub Actions
 # exports to every child process (xcodebuild, swift, node), so the inherited value is left alone.
 CI_MODE=0
 NO_JS=0
+ONLY=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --ci) CI_MODE=1 ;;
     --no-js) NO_JS=1 ;;
+    --only)
+      if [[ $# -lt 2 ]]; then
+        echo "Error: --only needs a value: app, packages or js." >&2; usage; exit 2
+      fi
+      ONLY="$2"
+      shift
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "Error: unknown option: $1" >&2; usage; exit 2 ;;
   esac
   shift
 done
 
+case "$ONLY" in
+  ""|app|packages|js) ;;
+  *) echo "Error: unknown --only value: $ONLY (expected app, packages or js)." >&2; usage; exit 2 ;;
+esac
+
 if (( CI_MODE && NO_JS )); then
   echo "Error: --ci runs every suite; it cannot be combined with --no-js." >&2
   exit 2
 fi
+
+# --no-js is the "I know I am skipping the JS suites" switch of a full local run. Next to --only
+# it is either contradictory (--only js) or redundant (the other parts never run JS), and a
+# redundant flag would make the loud "JS suites NOT run" warning misleading, so both are errors.
+if (( NO_JS )) && [[ -n "$ONLY" ]]; then
+  echo "Error: --no-js cannot be combined with --only (--only js has nothing left to run;" >&2
+  echo "       --only app and --only packages never run the JS suites anyway)." >&2
+  exit 2
+fi
+
+# Which parts this run covers. Everything by default, so a plain run and `--ci` behave as before.
+RUN_APP=0
+RUN_PACKAGES=0
+RUN_JS=0
+case "$ONLY" in
+  "")       RUN_APP=1; RUN_PACKAGES=1; RUN_JS=1 ;;
+  app)      RUN_APP=1 ;;
+  packages) RUN_PACKAGES=1 ;;
+  js)       RUN_JS=1 ;;
+esac
+if (( NO_JS )); then RUN_JS=0; fi
 
 require_command() {
   local cmd="$1"
@@ -48,20 +90,29 @@ require_command() {
   fi
 }
 
-require_command xcodebuild "Install Xcode from the App Store."
-require_command swift "Install Xcode from the App Store."
-require_command xcodegen "Install with: brew install xcodegen"
-if (( CI_MODE )); then
-  require_command node "--ci runs every suite, including the JS ones: install Node.js."
-elif (( ! NO_JS )); then
-  require_command node "Install Node.js, or pass --no-js to skip the JS suites explicitly (they are then reported as NOT run)."
+# Only the tools the selected parts need, so the JS job can run on a runner with no Xcode at all.
+if (( RUN_APP )); then
+  require_command xcodebuild "Install Xcode from the App Store."
+  require_command xcodegen "Install with: brew install xcodegen"
+fi
+if (( RUN_PACKAGES )); then
+  require_command swift "Install Xcode from the App Store."
+fi
+if (( RUN_JS )); then
+  if (( CI_MODE )); then
+    require_command node "--ci runs every suite, including the JS ones: install Node.js."
+  else
+    require_command node "Install Node.js, or pass --no-js to skip the JS suites explicitly (they are then reported as NOT run)."
+  fi
 fi
 
 if (( CI_MODE )); then
   echo "== CI mode: unsigned, arm64 =="
-  xcodebuild -version
-  swift --version
-  node --version
+  # Explicit ifs, not `(( ... )) && cmd`: a false test as the last command of a block would make
+  # the block return non-zero under `set -e`.
+  if (( RUN_APP )); then xcodebuild -version; fi
+  if (( RUN_APP || RUN_PACKAGES )); then swift --version; fi
+  if (( RUN_JS )); then node --version; fi
 fi
 
 # Stages run to completion and failures are collected, so one broken suite does not hide
@@ -81,48 +132,55 @@ run_stage() {
   fi
 }
 
-"$ROOT/scripts/dev.sh" generate
+# Only the xcodebuild stages need the generated project; the package and JS parts do not.
+if (( RUN_APP )); then
+  "$ROOT/scripts/dev.sh" generate
+fi
 
 # Dependencies resolve only to the committed pins that `generate` seeded into the workspace
 # (see dev.sh, "Swift package lock"); Xcode fails instead of picking newer versions. The
 # package suites get the same guarantee from SwiftPM with each package's own Package.resolved.
 RESOLVED_ONLY=(-onlyUsePackageVersionsFromResolvedFile)
 
-# Hosted tests assert English text, so both invocations pin -testLanguage en: the result
-# must not depend on the developer's (or the CI runner's) system language.
-if (( CI_MODE )); then
-  # Overrides exist only on the command line; project.yml keeps the stable team signing
-  # (ad-hoc signing there would break the biometric Keychain ACL). A separate derived
-  # data path keeps this run from touching the signed dev build under build/dev.
-  CI_SETTINGS=(CODE_SIGNING_ALLOWED=NO CODE_SIGN_ENTITLEMENTS= ARCHS=arm64 ONLY_ACTIVE_ARCH=NO)
-  CI_DESTINATION='platform=macOS,arch=arm64'
-  CI_DERIVED="$ROOT/build/ci"
-  CI_PACKAGES="$ROOT/build/SourcePackages"
-  run_stage "MyPass app tests" \
-    xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination "$CI_DESTINATION" \
-      -testLanguage en \
-      -derivedDataPath "$CI_DERIVED" -clonedSourcePackagesDirPath "$CI_PACKAGES" "${RESOLVED_ONLY[@]}" "${CI_SETTINGS[@]}"
-  run_stage "ChromeHost build" \
-    xcodebuild build -project MyPass.xcodeproj -scheme ChromeHost -destination "$CI_DESTINATION" \
-      -derivedDataPath "$CI_DERIVED" -clonedSourcePackagesDirPath "$CI_PACKAGES" "${RESOLVED_ONLY[@]}" "${CI_SETTINGS[@]}"
-else
-  run_stage "MyPass app tests" \
-    xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -testLanguage en "${RESOLVED_ONLY[@]}"
+if (( RUN_APP )); then
+  # Hosted tests assert English text, so both invocations pin -testLanguage en: the result
+  # must not depend on the developer's (or the CI runner's) system language.
+  if (( CI_MODE )); then
+    # Overrides exist only on the command line; project.yml keeps the stable team signing
+    # (ad-hoc signing there would break the biometric Keychain ACL). A separate derived
+    # data path keeps this run from touching the signed dev build under build/dev.
+    CI_SETTINGS=(CODE_SIGNING_ALLOWED=NO CODE_SIGN_ENTITLEMENTS= ARCHS=arm64 ONLY_ACTIVE_ARCH=NO)
+    CI_DESTINATION='platform=macOS,arch=arm64'
+    CI_DERIVED="$ROOT/build/ci"
+    CI_PACKAGES="$ROOT/build/SourcePackages"
+    run_stage "MyPass app tests" \
+      xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination "$CI_DESTINATION" \
+        -testLanguage en \
+        -derivedDataPath "$CI_DERIVED" -clonedSourcePackagesDirPath "$CI_PACKAGES" "${RESOLVED_ONLY[@]}" "${CI_SETTINGS[@]}"
+    run_stage "ChromeHost build" \
+      xcodebuild build -project MyPass.xcodeproj -scheme ChromeHost -destination "$CI_DESTINATION" \
+        -derivedDataPath "$CI_DERIVED" -clonedSourcePackagesDirPath "$CI_PACKAGES" "${RESOLVED_ONLY[@]}" "${CI_SETTINGS[@]}"
+  else
+    run_stage "MyPass app tests" \
+      xcodebuild test -project MyPass.xcodeproj -scheme MyPass -destination 'platform=macOS' -testLanguage en "${RESOLVED_ONLY[@]}"
+  fi
 fi
 
 package_tests() {
   (cd "$ROOT/Packages/$1" && swift test --only-use-versions-from-resolved-file)
 }
-run_stage "MyPassKit tests" package_tests MyPassKit
-run_stage "SyncKit tests" package_tests SyncKit
-run_stage "ExtensionBridgeKit tests" package_tests ExtensionBridgeKit
+if (( RUN_PACKAGES )); then
+  run_stage "MyPassKit tests" package_tests MyPassKit
+  run_stage "SyncKit tests" package_tests SyncKit
+  run_stage "ExtensionBridgeKit tests" package_tests ExtensionBridgeKit
+fi
 
 JS_RAN=0
 JS_FAILED=()
 if (( NO_JS )); then
   echo
   echo "!! JS suites NOT run (--no-js). This run does not cover ChromeExtension/tests. !!" >&2
-else
+elif (( RUN_JS )); then
   # Each suite is a plain node script in its own process. Glob order is made stable with
   # LC_ALL=C; an empty match is an error, not a pass (a moved directory must not turn the
   # JS tests silently green).

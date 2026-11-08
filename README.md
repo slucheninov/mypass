@@ -36,7 +36,7 @@ equally unsigned and not notarized: the warning below applies to them in full.
   security review of MyPass is claimed. To report a vulnerability privately, see
   [`SECURITY.md`](SECURITY.md).
 - The GitHub Actions workflow in `.github/workflows/ci.yml` runs the full test suite
-  and packages the development artifacts on pull requests, on pushes to `master` and
+  and packages the development artifacts (as parallel jobs) on pull requests, on pushes to `master` and
   on manual dispatch. It builds unsigned on arm64, so a green run is evidence about
   logic only. Check the Actions tab for the actual result of any given run.
 
@@ -99,7 +99,7 @@ There are three maintained scripts under `scripts/` (`dev.sh`, `test.sh` and
 | `./scripts/dev.sh set-version X.Y.Z` | Set the app, host and extension version together (`project.yml` twice, `ChromeExtension/manifest.json`). Plain `X.Y.Z` only; it does not commit. |
 | `./scripts/dev.sh install-host [--host PATH] [--install-root DIR]` | Install the native messaging host and browser manifests (see below). |
 | `./scripts/dev.sh package [--out DIR] [--release]` | Build Release for arm64, seal it ad hoc, and write the macOS DMG and the Chrome extension zip into `./dist` (or `DIR`); `--release` is for tagged releases (see Cutting a release). |
-| `./scripts/test.sh [--ci] [--no-js]` | Run the Xcode app tests, the three Swift package test suites and every `ChromeExtension/tests/*.test.js` suite. |
+| `./scripts/test.sh [--ci] [--no-js] [--only app\|packages\|js]` | Run the Xcode app tests, the three Swift package test suites and every `ChromeExtension/tests/*.test.js` suite; `--only` runs just one of those three parts. |
 | `./scripts/update-password-rules.sh` | Refresh the vendored Apple password-rules snapshot and its provenance file. |
 
 `scripts/test.sh` needs `node` for the JavaScript suites. Without it a local run
