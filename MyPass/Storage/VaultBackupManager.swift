@@ -203,7 +203,7 @@ final class VaultBackupManager {
     @discardableResult
     private func writeLocked(_ data: Data) throws -> URL {
         let fm = FileManager.default
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        ensureDirectoryExists()
         let stamp = String(format: "%.6f", now().timeIntervalSince1970)
         var url = directory.appendingPathComponent("vault-\(stamp).kdbx")
         var suffix = 1
@@ -227,6 +227,34 @@ final class VaultBackupManager {
         }
         notifyChanged()
         return url
+    }
+
+    /// Makes sure `directory` exists, without ever failing the snapshot on its own.
+    ///
+    /// On the GitHub macos-26 runner `createDirectory(withIntermediateDirectories: true)` threw
+    /// NSCocoaErrorDomain 516 (underlying POSIX 17, EEXIST) with the path set to the backups
+    /// directory itself, which dropped the first snapshot of a fresh folder. So an existing
+    /// directory is never re-created, and an EEXIST-style failure is not trusted either way:
+    /// the write that follows is the authority (a missing directory or a file in its place
+    /// makes it fail with its own error, which `recordFailure` records).
+    private func ensureDirectoryExists() {
+        let fm = FileManager.default
+        if (try? directory.resourceValues(forKeys: [.isDirectoryKey]))?.isDirectory == true { return }
+        do {
+            try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        } catch {
+            var isDir: ObjCBool = false
+            let exists = fm.fileExists(atPath: directory.path, isDirectory: &isDir)
+            var isResolvedDir: ObjCBool = false
+            let resolved = directory.resolvingSymlinksInPath()
+            let resolvedExists = fm.fileExists(atPath: resolved.path, isDirectory: &isResolvedDir)
+            let type = (try? fm.attributesOfItem(atPath: directory.path))?[.type] as? FileAttributeType
+            let nsError = error as NSError
+            os_log("Vault backup directory creation failed [domain=%{public}@ code=%ld] path=%{public}@ exists=%{public}@ isDir=%{public}@ resolved=%{public}@ resolvedExists=%{public}@ resolvedIsDir=%{public}@ type=%{public}@ standardized=%{public}@",
+                   log: Self.log, type: .error, nsError.domain, nsError.code, directory.path,
+                   String(exists), String(isDir.boolValue), resolved.path, String(resolvedExists),
+                   String(isResolvedDir.boolValue), type?.rawValue ?? "none", directory.standardizedFileURL.path)
+        }
     }
 
     /// A failed prune must not turn a successful snapshot into a failure (it would abort a

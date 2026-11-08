@@ -260,12 +260,15 @@ final class VaultBackupManagerTests: XCTestCase {
     func testRestoreClearsSyncCheckpoints() throws {
         let pair = try makeVaultPair()
         let key = SyncBackendResolver.checkpointKey(for: .folder)
+        let sftpKey = SyncBackendResolver.checkpointKey(for: .sftp)
         pair.defaults.set(Date(), forKey: key)
+        pair.defaults.set(Date(), forKey: sftpKey)
         let session = VaultSession(fileStore: VaultFileStore(
             directory: dir,
             backupManager: VaultBackupManager(directory: dir.appendingPathComponent("backups"), defaults: pair.defaults)))
         try session.restoreBackup(from: pair.backupFile, defaults: pair.defaults)
         XCTAssertNil(pair.defaults.object(forKey: key))
+        XCTAssertNil(pair.defaults.object(forKey: sftpKey))
     }
 
     func testRestoreAbortsWhenSafetySnapshotFails() throws {
