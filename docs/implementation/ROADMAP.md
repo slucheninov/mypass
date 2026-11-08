@@ -40,3 +40,7 @@ the name "MyPass" in Google's passkey UI depends on the community registry.
 - [ ] Note drafts after a restore. Note drafts are keyed by vault path, so drafts written after
   the restored backup can be offered for recovery once the restored vault is unlocked. Decide
   whether to discard or flag them.
+- [ ] Apply background sync merges locally. `VaultSession.persist(_:)` discards the
+  `SyncResult.merged` database, so entries another device added reach the remote but only appear
+  locally at the next unlock. Apply and publish the merged result without replacing newer local
+  edits made while the sync ran.
