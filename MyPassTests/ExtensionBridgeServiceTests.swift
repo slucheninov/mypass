@@ -144,6 +144,34 @@ final class ExtensionBridgeServiceTests: XCTestCase {
         XCTAssertEqual(service.handle(.listEntries(token: "t", category: "addresses", pairing: authorizedPairingSecret)), .credentialList([]))
     }
 
+    func testFilesEntriesAreNeverListedSearchedMatchedOrCreatedByTheBrowser() {
+        let now = Date()
+        var entry = KdbxEntry(
+            uuid: UUID(), iconID: 0, fields: [],
+            creationTime: now, lastModificationTime: now, lastAccessTime: now, locationChanged: now, history: []
+        )
+        entry.title = "Passport scans"
+        entry.entryType = .files
+        entry.url = "https://shop.example"
+        entry.isFavorite = true
+        entry.attachments = [KdbxAttachment(name: "passport.pdf", data: Data("x".utf8))]
+        session.mutate { $0.rootGroup.entries.append(entry) }
+        let pairing = authorizedPairingSecret!
+        for category in ["all", "logins", "favorites"] {
+            XCTAssertEqual(service.handle(.listEntries(token: "t", category: category, pairing: pairing)), .credentialList([]), category)
+        }
+        XCTAssertEqual(service.handle(.searchEntries(token: "t", query: "passport", pairing: pairing)), .credentialList([]))
+        XCTAssertEqual(service.handle(.getCredentials(token: "t", url: "https://shop.example", pairing: pairing)), .credentialList([]))
+        XCTAssertEqual(
+            service.handle(.createEntry(
+                token: "t", entryType: "Files", title: "Nope", username: "", password: "", url: "",
+                cardNumber: "", cardholderName: "", expiry: "", cvv: "", notes: "",
+                favorite: false, match: "", otp: "", pairing: pairing
+            )),
+            .error("Create files in MyPass using Add > Files")
+        )
+    }
+
     func testStartPairingReturnsLockedWhenVaultIsLocked() {
         session.lock()
         let (service, _, _) = makeServiceWithPairing()

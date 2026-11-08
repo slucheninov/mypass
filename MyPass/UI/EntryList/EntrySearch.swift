@@ -5,6 +5,9 @@ enum EntrySearch {
     static func matches(entry: KdbxEntry, query: String) -> Bool {
         guard !query.isEmpty else { return true }
         var haystacks = [entry.title, entry.login, entry.url, entry.notes, entry.notesBody]
+        // Attachment names are not secret (the detail pane shows them unblurred), so any kind
+        // can be found by the name of a file it carries.
+        haystacks += entry.attachments.map(\.name)
         if entry.entryType == .address {
             let address = entry.address
             haystacks += KdbxEntry.addressFields.map { address[keyPath: $0.1] }

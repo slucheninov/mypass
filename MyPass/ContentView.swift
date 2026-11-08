@@ -148,6 +148,8 @@ private struct DetailColumnView: View {
                 CardDetailView(entry: entry)
             case .notes:
                 NotesDetailView(entry: entry)
+            case .files:
+                FilesDetailView(entry: entry)
             case .login:
                 EntryDetailView()
             }
@@ -245,6 +247,13 @@ private struct DetailColumnView: View {
             .id(navigationState.detailPresentation)
         case .notes:
             NotesEditView(
+                existingEntry: existingEntry, rootGroup: rootGroup,
+                recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
+                onCancel: onCancel, onSave: onSave, onDelete: onDelete
+            )
+            .id(navigationState.detailPresentation)
+        case .files:
+            FilesEditView(
                 existingEntry: existingEntry, rootGroup: rootGroup,
                 recycleBinGroupUUID: recycleBinGroupUUID, defaultGroupID: targetGroupID,
                 onCancel: onCancel, onSave: onSave, onDelete: onDelete
