@@ -120,4 +120,63 @@ final class MarkdownTextEditorHostingTests: XCTestCase {
         pump()
         XCTAssertEqual(text, "restored")
     }
+
+    /// Types like a user: real first responder, plain `insertText`, no explicit undo
+    /// grouping (the run loop decides how the keystrokes group).
+    private func typeLikeUser(_ s: String) {
+        for ch in s {
+            textView.insertText(String(ch), replacementRange: textView.selectedRange())
+            pump(1)
+        }
+        pump()
+    }
+
+    func testTypeUndoRedoRoundTripsRepeatedly() throws {
+        try host(initial: "")
+        typeLikeUser("hello world")
+        XCTAssertEqual(text, "hello world")
+        XCTAssertTrue(canUndo)
+        for round in 1...3 {
+            actions.undo()
+            pump()
+            XCTAssertEqual(textView.string, "", "round \(round) undo")
+            XCTAssertEqual(text, "", "round \(round) undo binding")
+            XCTAssertFalse(canUndo, "round \(round)")
+            XCTAssertTrue(canRedo, "round \(round)")
+            actions.redo()
+            pump()
+            XCTAssertEqual(textView.string, "hello world", "round \(round) redo")
+            XCTAssertEqual(text, "hello world", "round \(round) redo binding")
+            XCTAssertTrue(canUndo, "round \(round)")
+            XCTAssertFalse(canRedo, "round \(round)")
+        }
+        typeLikeUser("!")
+        XCTAssertEqual(text, "hello world!")
+    }
+
+    func testKeyboardPathUndoRedoKeepsBindingAndFlagsInSync() throws {
+        try host(initial: "")
+        typeLikeUser("typed")
+        // Cmd-Z / Shift-Cmd-Z dispatch `undo:` / `redo:` down the responder chain to the
+        // focused text view (its `undoManager` property is not the delegate-provided one,
+        // so the action is sent the way the menu item sends it).
+        XCTAssertTrue(window.firstResponder === textView)
+        XCTAssertTrue(textView.tryToPerform(Selector(("undo:")), with: nil))
+        pump()
+        XCTAssertEqual(textView.string, "")
+        XCTAssertEqual(text, "")
+        XCTAssertFalse(canUndo)
+        XCTAssertTrue(canRedo)
+        XCTAssertTrue(textView.tryToPerform(Selector(("redo:")), with: nil))
+        pump()
+        XCTAssertEqual(textView.string, "typed")
+        XCTAssertEqual(text, "typed")
+        XCTAssertTrue(canUndo)
+        XCTAssertFalse(canRedo)
+        // Mixed: toolbar undo after a keyboard redo still works.
+        actions.undo()
+        pump()
+        XCTAssertEqual(text, "")
+        XCTAssertTrue(canRedo)
+    }
 }

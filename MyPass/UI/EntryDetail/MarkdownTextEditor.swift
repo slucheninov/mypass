@@ -127,6 +127,21 @@ struct MarkdownTextEditor: NSViewRepresentable {
             self.text = text
             self.canUndo = canUndo
             self.canRedo = canRedo
+            super.init()
+            // Cmd-Z / Shift-Cmd-Z are handled by NSTextView itself, and an undo or redo
+            // replays the stored change without telling the delegate (`textDidChange` never
+            // fires). Without this, the `text` binding would stay stale, and the next
+            // updateNSView would see `textView.string != text`, treat it as an external
+            // document, restore the stale text and wipe the undo/redo stacks. The manager's
+            // own notifications fire for every path (keyboard, menu, toolbar).
+            for name in [Notification.Name.NSUndoManagerDidUndoChange, .NSUndoManagerDidRedoChange] {
+                NotificationCenter.default.addObserver(
+                    self, selector: #selector(undoManagerDidChange(_:)), name: name, object: undoManager)
+            }
+        }
+
+        @objc private func undoManagerDidChange(_ note: Notification) {
+            syncAfterAction()
         }
 
         func refreshUndoState(of textView: NSTextView) {
@@ -148,7 +163,7 @@ struct MarkdownTextEditor: NSViewRepresentable {
 
         private func syncAfterAction() {
             guard let textView else { return }
-            text.wrappedValue = textView.string
+            if text.wrappedValue != textView.string { text.wrappedValue = textView.string }
             refreshUndoState(of: textView)
         }
 
