@@ -15,7 +15,23 @@ struct UnlockView: View {
     @State private var password: String = ""
     @State private var errorMessage: String?
     @State private var isFirstRun = false
-    @State private var openExistingVaultURL: URL?
+    @State private var vaultStatus: VaultFileStatus = .noVault
+    @State private var activeSheet: UnlockSheet?
+    /// Folder access from "Find .kdbx Files…", kept open until the open flow it leads to ends.
+    @State private var folderGrant: FolderAccessGrant?
+    @FocusState private var passwordFocused: Bool
+
+    private enum UnlockSheet: Identifiable {
+        case find(folder: URL)
+        case open(fileURL: URL)
+
+        var id: String {
+            switch self {
+            case .find(let folder): return "find:" + folder.path
+            case .open(let fileURL): return "open:" + fileURL.path
+            }
+        }
+    }
 
     let biometricKeyStore: BiometricKeyStoring
 
@@ -63,6 +79,8 @@ struct UnlockView: View {
                 .padding(.bottom, 4)
                 .accessibilityHidden(true)
 
+            vaultStatusView
+
             if isFirstRun {
                 VStack(spacing: 4) {
                     Text("Choose a master password for this vault.")
@@ -78,6 +96,7 @@ struct UnlockView: View {
             SecureField(isFirstRun ? "Choose a Master Password" : "Master Password", text: $password)
                 .textFieldStyle(.roundedBorder)
                 .frame(maxWidth: 320)
+                .focused($passwordFocused)
                 .onSubmit(attemptUnlock)
 
             KeyboardLayoutIndicator()
@@ -103,8 +122,16 @@ struct UnlockView: View {
                     .frame(maxWidth: 320)
             }
 
-            Button("Open Existing .kdbx…") { openExistingVault() }
-                .buttonStyle(.link)
+            HStack(spacing: 16) {
+                Button("Open Existing .kdbx…") { openExistingVault() }
+                Button("Find .kdbx Files…") { findVaultFiles() }
+                // A new vault can only be created where none exists yet. With an existing
+                // default copy in use as the fallback, the password field unlocks that copy.
+                if isFirstRun, !hasVaultFile {
+                    Button("Create New Vault") { createNewVault() }
+                }
+            }
+            .buttonStyle(.link)
 
             Text(isFirstRun
                  ? "This password protects your vault. Remember it — it cannot be changed or reset later."
@@ -119,6 +146,7 @@ struct UnlockView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear {
             isFirstRun = (try? vaultSession.loadVaultData()) == nil
+            vaultStatus = vaultSession.vaultFileStatus
             // Appearing never prompts by itself. The one exception is an explicit
             // extension Unlock that arrived while the window was closed, before this
             // view existed — `MyPassApp.onUnlockRequested` recorded it on the
@@ -141,21 +169,121 @@ struct UnlockView: View {
             guard deviceUnlockPromptCoordinator.consumeExtensionUnlockRequest() else { return }
             attemptDeviceUnlock()
         }
-        .sheet(isPresented: Binding(
-            get: { openExistingVaultURL != nil },
-            set: { if !$0 { openExistingVaultURL = nil } }
-        )) {
-            if let url = openExistingVaultURL {
+        .sheet(item: $activeSheet, onDismiss: {
+            // Covers every way out of the open flow (success, Cancel, Esc). A hand-off from the
+            // find sheet to the open sheet swaps `activeSheet` without dismissing, so the grant
+            // survives exactly as long as it is needed.
+            if case .open = activeSheet { return }
+            folderGrant?.release()
+            folderGrant = nil
+        }) { sheet in
+            switch sheet {
+            case .find(let folder):
+                FindVaultFilesSheet(
+                    folder: folder,
+                    connectedFile: vaultSession.currentPrimaryStore.primaryVaultFileURL,
+                    onSelect: { activeSheet = .open(fileURL: $0) },
+                    onCancel: { activeSheet = nil }
+                )
+            case .open(let url):
                 OpenExistingVaultSheet(
                     fileURL: url,
                     onSuccess: { database, openedPassword in
-                        openExistingVaultURL = nil
                         completeOpenExistingVault(fileURL: url, password: openedPassword, database: database)
+                        activeSheet = nil
                     },
-                    onCancel: { openExistingVaultURL = nil }
+                    onCancel: { activeSheet = nil }
                 )
             }
         }
+    }
+
+    private var hasVaultFile: Bool {
+        if case .connected = vaultStatus { return true }
+        return false
+    }
+
+    /// Always visible, so it is clear which file a master password will be checked against (or
+    /// that there is none). Red is reserved for "no usable vault file".
+    @ViewBuilder
+    private var vaultStatusView: some View {
+        switch vaultStatus {
+        case .connected(let info):
+            vaultFileCard(info)
+        case .noVault:
+            Text("No vault file selected. Choose an existing .kdbx file or create a new one.")
+                .font(.caption)
+                .foregroundStyle(.red)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 340)
+        case .missingUsingLocalCopy(let copy):
+            // Not red: the password still unlocks a real vault, just not the one the user chose.
+            VStack(spacing: 8) {
+                Text("Your chosen vault file can't be found. MyPass is using the copy on this Mac. Choose the file again to switch back.")
+                    .font(.caption)
+                    .foregroundStyle(.orange)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 340)
+                vaultFileCard(copy)
+            }
+        case .missing(let path):
+            Group {
+                if let path {
+                    Text("The vault file at \(VaultFileInfo.abbreviatedPath(path)) can't be found. Choose it again or create a new vault.")
+                } else {
+                    Text("Your vault file can't be found. Choose it again or create a new vault.")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.red)
+            .multilineTextAlignment(.center)
+            .frame(maxWidth: 340)
+        }
+    }
+
+    private func vaultFileCard(_ info: VaultFileInfo) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "doc.fill")
+                .foregroundStyle(.secondary)
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(verbatim: info.fileName)
+                    .font(.system(size: 12, weight: .semibold))
+                Text(verbatim: info.abbreviatedPath)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                if let summary = info.summary {
+                    Text(verbatim: summary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+        }
+        .frame(maxWidth: 340, alignment: .leading)
+    }
+
+    /// Creation itself is the existing first-run path (the master password unlocks into a new
+    /// vault); this just points the user at it.
+    private func createNewVault() {
+        passwordFocused = true
+        if !password.isEmpty { attemptUnlock() }
+    }
+
+    private func findVaultFiles() {
+        let panel = NSOpenPanel()
+        panel.canChooseDirectories = true
+        panel.canChooseFiles = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = RealHomeDirectory.url
+        panel.prompt = String(localized: "Search", comment: "Open panel: confirm button when choosing the folder to search for .kdbx files")
+        panel.message = String(localized: "MyPass will look for .kdbx files in the folder you choose. Choose your home folder to search everywhere.", comment: "Open panel: explains the folder choice for finding vault files")
+        guard panel.runModal() == .OK, let folder = panel.url else { return }
+        // One-shot access for the scan and the open flow; the home folder is never bookmarked.
+        folderGrant?.release()
+        folderGrant = FolderAccessGrant(url: folder)
+        activeSheet = .find(folder: folder)
     }
 
     private func attemptUnlock() {
@@ -176,7 +304,7 @@ struct UnlockView: View {
         panel.allowedContentTypes = [.data]
         panel.allowsMultipleSelection = false
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        openExistingVaultURL = url
+        activeSheet = .open(fileURL: url)
     }
 
     /// Called once `OpenExistingVaultSheet` has already proven `password`
@@ -199,6 +327,7 @@ struct UnlockView: View {
             lastFullPasswordEntryTimestamp = now
         } catch {
             errorMessage = String(localized: "Could not switch to this vault file.", comment: "Unlock screen: inline message")
+            vaultStatus = vaultSession.vaultFileStatus
         }
     }
 

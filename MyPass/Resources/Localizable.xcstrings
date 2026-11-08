@@ -172,6 +172,89 @@
     "%lld" : {
       "shouldTranslate" : false
     },
+    "%lld files" : {
+      "comment" : "Entry list subtitle for a Files item; the argument is the number of attached files",
+      "localizations" : {
+        "en" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld file"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld files"
+                }
+              }
+            }
+          }
+        },
+        "ru" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файл"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файла"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файлов"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файла"
+                }
+              }
+            }
+          }
+        },
+        "uk" : {
+          "variations" : {
+            "plural" : {
+              "one" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файл"
+                }
+              },
+              "few" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файли"
+                }
+              },
+              "many" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файлів"
+                }
+              },
+              "other" : {
+                "stringUnit" : {
+                  "state" : "translated",
+                  "value" : "%lld файлу"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "%lld items" : {
       "comment" : "Scope overview: number of entries; the argument is the count",
       "localizations" : {
@@ -1696,7 +1779,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Після натискання на піктограму"
+            "value" : "Натискання піктограми"
           }
         }
       }
@@ -2135,7 +2218,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не вдалося перейти на цей файл сховища."
+            "value" : "Не вдалося перемкнутися на цей файл сховища."
           }
         }
       }
@@ -2152,7 +2235,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Не вдалося оновити налаштування розблокування пристроєм."
+            "value" : "Не вдалося оновити параметри розблокування пристроєм."
           }
         }
       }
@@ -2398,6 +2481,22 @@
         }
       }
     },
+    "Description" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Описание"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Опис"
+          }
+        }
+      }
+    },
     "Device unlock didn't complete. Try again or enter your master password." : {
       "comment" : "Menu bar unlock panel: inline message\nUnlock screen: inline message",
       "localizations" : {
@@ -2579,6 +2678,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Змінити запис"
+          }
+        }
+      }
+    },
+    "Edit Files" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редактировать файлы"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Редагувати файли"
           }
         }
       }
@@ -3041,6 +3156,22 @@
           "stringUnit" : {
             "state" : "translated",
             "value" : "Вибране"
+          }
+        }
+      }
+    },
+    "Files" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлы"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файли"
           }
         }
       }
@@ -3525,7 +3656,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Дім"
+            "value" : "Домашня"
           }
         }
       }
@@ -3802,7 +3933,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Зберігати додаткову копію сховища в папці або на SFTP-сервері на додачу до основного розташування (задається в розділі «Розташування» вище). Після зміни перезапустіть MyPass."
+            "value" : "Зберігати додаткову копію сховища в папці або на SFTP-сервері окрім основного розташування (задається в розділі «Розташування» вище). Після зміни перезапустіть MyPass."
           }
         }
       }
@@ -4222,7 +4353,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Вхід"
+            "value" : "Логін"
           }
         }
       }
@@ -4775,7 +4906,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "MyPass не зміг перейти на нове розташування. Нічого не змінено. Знову виберіть папку й повторіть спробу."
+            "value" : "MyPass не зміг перейти до нового розташування. Нічого не змінено. Знову виберіть папку й повторіть спробу."
           }
         }
       }
@@ -5079,6 +5210,22 @@
         }
       }
     },
+    "New Files" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Новые файлы"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Нові файли"
+          }
+        }
+      }
+    },
     "New Group" : {
       "localizations" : {
         "ru" : {
@@ -5127,6 +5274,22 @@
         }
       }
     },
+    "No files attached." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлы не прикреплены."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файлів не додано."
+          }
+        }
+      }
+    },
     "No folder selected." : {
       "localizations" : {
         "ru" : {
@@ -5170,7 +5333,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Немає з’єднаних браузерів. Відкрийте розширення MyPass у браузері, щоб підключитися."
+            "value" : "Немає підключених браузерів. Відкрийте розширення MyPass у браузері, щоб підключитися."
           }
         }
       }
@@ -5560,7 +5723,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "З’єднано %@"
+            "value" : "Підключено %@"
           }
         }
       }
@@ -5576,7 +5739,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "З’єднані браузери"
+            "value" : "Підключені браузери"
           }
         }
       }
@@ -6128,7 +6291,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Знову відкрийте розширення MyPass і виберіть «Check this browser». Дозвольте перевірку лише для читання, коли Chrome запитає. Поверніться в «Налаштування» → «Браузер» у MyPass, щоб побачити звіт і час його отримання."
+            "value" : "Знову відкрийте розширення MyPass і виберіть «Check this browser». Дозвольте перевірку лише для читання, коли Chrome запитає. Поверніться в «Параметри» → «Браузер» у MyPass, щоб побачити звіт і час його отримання."
           }
         }
       }
@@ -6488,7 +6651,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Налаштування…"
+            "value" : "Параметри…"
           }
         }
       }
@@ -7254,7 +7417,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Сховище переключено, але стару копію в %@ не вдалося видалити."
+            "value" : "Сховище перемкнено, але стару копію в %@ не вдалося видалити."
           }
         }
       }
@@ -7271,7 +7434,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Сховище переключено, але стару копію не вдалося видалити."
+            "value" : "Сховище перемкнено, але стару копію не вдалося видалити."
           }
         }
       }
@@ -7481,7 +7644,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Назва (наприклад, «Дім»)"
+            "value" : "Назва (наприклад, «Домашня»)"
           }
         }
       }
@@ -7934,7 +8097,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Використовувати системну"
+            "value" : "Системна мова"
           }
         }
       }
@@ -8193,7 +8356,7 @@
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Робота"
+            "value" : "Робоча"
           }
         }
       }
@@ -9244,165 +9407,210 @@
         }
       }
     },
-    "Files" : {
+    "Modified %@" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Файлы"
+            "value" : "Изменено: %@"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Файли"
+            "value" : "Змінено: %@"
           }
         }
       }
     },
-    "New Files" : {
+    "Find .kdbx Files…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Новые файлы"
+            "value" : "Найти файлы .kdbx…"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Нові файли"
+            "value" : "Знайти файли .kdbx…"
           }
         }
       }
     },
-    "Edit Files" : {
+    "Find .kdbx Files" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Редактировать файлы"
+            "value" : "Поиск файлов .kdbx"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Редагувати файли"
+            "value" : "Пошук файлів .kdbx"
           }
         }
       }
     },
-    "Description" : {
+    "Create New Vault" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Описание"
+            "value" : "Создать новое хранилище"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Опис"
+            "value" : "Створити нове сховище"
           }
         }
       }
     },
-    "No files attached." : {
+    "Searching…" : {
       "localizations" : {
         "ru" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Файлы не прикреплены."
+            "value" : "Поиск…"
           }
         },
         "uk" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Файлів не додано."
+            "value" : "Пошук…"
           }
         }
       }
     },
-    "%lld files" : {
-      "comment" : "Entry list subtitle for a Files item; the argument is the number of attached files",
+    "No .kdbx files found in %@." : {
       "localizations" : {
-        "en" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld file"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld files"
-                }
-              }
-            }
-          }
-        },
         "ru" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld файл"
-                }
-              },
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld файла"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld файлов"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld файла"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В %@ не найдено файлов .kdbx."
           }
         },
         "uk" : {
-          "variations" : {
-            "plural" : {
-              "one" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld файл"
-                }
-              },
-              "few" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld файли"
-                }
-              },
-              "many" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld файлів"
-                }
-              },
-              "other" : {
-                "stringUnit" : {
-                  "state" : "translated",
-                  "value" : "%lld файлу"
-                }
-              }
-            }
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "У %@ не знайдено файлів .kdbx."
+          }
+        }
+      }
+    },
+    "Current" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Текущий"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Поточний"
+          }
+        }
+      }
+    },
+    "In iCloud, not downloaded yet" : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В iCloud, ещё не загружено"
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "В iCloud, ще не завантажено"
+          }
+        }
+      }
+    },
+    "No vault file selected. Choose an existing .kdbx file or create a new one." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл хранилища не выбран. Выберите существующий файл .kdbx или создайте новое хранилище."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл сховища не вибрано. Виберіть наявний файл .kdbx або створіть нове сховище."
+          }
+        }
+      }
+    },
+    "The vault file at %@ can't be found. Choose it again or create a new vault." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл хранилища в %@ не найден. Выберите его снова или создайте новое хранилище."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл сховища в %@ не знайдено. Виберіть його знову або створіть нове сховище."
+          }
+        }
+      }
+    },
+    "Your vault file can't be found. Choose it again or create a new vault." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл хранилища не найден. Выберите его снова или создайте новое хранилище."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Файл сховища не знайдено. Виберіть його знову або створіть нове сховище."
+          }
+        }
+      }
+    },
+    "MyPass will look for .kdbx files in the folder you choose. Choose your home folder to search everywhere." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyPass будет искать файлы .kdbx в выбранной папке. Выберите домашнюю папку, чтобы искать везде."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "MyPass шукатиме файли .kdbx у вибраній папці. Виберіть домашню папку, щоб шукати всюди."
+          }
+        }
+      }
+    },
+    "Your chosen vault file can't be found. MyPass is using the copy on this Mac. Choose the file again to switch back." : {
+      "localizations" : {
+        "ru" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Выбранный файл хранилища не найден. MyPass использует копию на этом Mac. Выберите файл снова, чтобы вернуться к нему."
+          }
+        },
+        "uk" : {
+          "stringUnit" : {
+            "state" : "translated",
+            "value" : "Вибраний файл сховища не знайдено. MyPass використовує копію на цьому Mac. Виберіть файл знову, щоб повернутися до нього."
           }
         }
       }
