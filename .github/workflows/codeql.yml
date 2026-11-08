@@ -10,6 +10,16 @@ name: CodeQL
 #                           analyzed, so the test targets (MyPassTests, Packages/*/Tests) are not.
 # The vendored C code (CArgon2) is not analyzed on purpose.
 #
+# Which legs run on a pull request: only "actions" and "javascript-typescript". The Swift leg is
+# left out of the matrix on pull_request (see strategy.matrix.language below) and runs on a push
+# to master, on the weekly schedule and on manual dispatch. Why: the Swift leg is a full traced build of the app
+# on an arm64 runner whose tracer runs through Rosetta 2, about 30 minutes, and as a required
+# check it held up every pull request, including the ones that never touch Swift. Its findings
+# still reach the Security tab (code scanning alerts) after the merge and every week, just not
+# before it. The other two legs take about a minute each, so they keep running on every pull
+# request and keep a CodeQL result present on every pull request head commit, which is what the
+# `code_scanning` rule of the master ruleset looks for.
+#
 # Like ci.yml this uses the plain pull_request event (no pull_request_target) and no secrets, so a
 # pull request from a fork runs with a read-only token and cannot reach anything privileged.
 # GitHub documents that code scanning still accepts the SARIF upload when the run is triggered by
@@ -39,10 +49,21 @@ concurrency:
 jobs:
   analyze:
     # The job name is what a branch protection rule or ruleset matches as a required status
-    # check, exactly like "ci" in ci.yml: "Analyze (actions)", "Analyze (javascript-typescript)"
-    # and "Analyze (swift)". Do not rename it without updating those rules.
+    # check, exactly like "ci" in ci.yml. Only "Analyze (actions)" and
+    # "Analyze (javascript-typescript)" are required; do not rename the job without updating
+    # those rules. "Analyze (swift)" is deliberately NOT required and must not be added back:
+    # on a pull request the matrix has no swift leg, so that check is never reported at all and a
+    # required "Analyze (swift)" would stay pending forever, blocking the merge. (A job skipped
+    # by its own `if` would not help either: GitHub reports it under the unexpanded name
+    # "Analyze (${{ matrix.language }})", and the `matrix` context is not even available in
+    # jobs.<id>.if, which actionlint confirms.)
     name: Analyze (${{ matrix.language }})
-    runs-on: ${{ matrix.runs-on }}
+    # Everything that differs per language is derived from matrix.language in the expressions
+    # below instead of an `include` list. The reason is the language list itself: it is the one
+    # thing that has to depend on the event, and an `include` entry that matches no combination
+    # is added as a new combination, so an include-based swift entry could not be dropped on
+    # pull requests.
+    runs-on: ${{ matrix.language == 'swift' && 'macos-26' || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:
       # Read the repository.
@@ -54,26 +75,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - language: actions
-            build-mode: none
-            runs-on: ubuntu-24.04
-          - language: javascript-typescript
-            build-mode: none
-            runs-on: ubuntu-24.04
-          # macos-26 and the pinned Xcode match ci.yml (arm64, Xcode 26.6). The CodeQL bundle
-          # pinned below (2.27.3) supports Swift 5.4 to 6.3 and Xcode 26.6 ships Swift 6.3 (Apple's
-          # release notes), but the first run is the real check. CodeQL does not support building
-          # with Xcode 27 selected on macOS 26 (a local Xcode 27 is Swift 6.4), hence the pin.
-          # Apple Silicon support is a beta that needs Rosetta 2 while it traces the build.
-          - language: swift
-            build-mode: manual
-            runs-on: macos-26
-            developer-dir: /Applications/Xcode_26.6.app
+        # No swift on pull requests (reasoning in the header). `github` is an available context in
+        # strategy, so this is decided when the matrix is expanded: on pull_request the run has
+        # the actions and javascript-typescript legs only; on a push to master, the schedule and
+        # workflow_dispatch it has all three.
+        language: ${{ fromJSON(github.event_name == 'pull_request' && '["actions","javascript-typescript"]' || '["actions","javascript-typescript","swift"]') }}
     env:
       # Empty for the non-Swift legs. Pinned for Swift so a runner image bump cannot change the
-      # toolchain the extractor traces silently.
-      DEVELOPER_DIR: ${{ matrix.developer-dir }}
+      # toolchain the extractor traces silently. macos-26 and the pinned Xcode match ci.yml (arm64,
+      # Xcode 26.6). The CodeQL bundle pinned below (2.27.3) supports Swift 5.4 to 6.3 and
+      # Xcode 26.6 ships Swift 6.3 (Apple's release notes), but the first run is the real check.
+      # CodeQL does not support building with Xcode 27 selected on macOS 26 (a local Xcode 27 is
+      # Swift 6.4), hence the pin. Apple Silicon support is a beta that needs Rosetta 2 while it
+      # traces the build.
+      DEVELOPER_DIR: ${{ matrix.language == 'swift' && '/Applications/Xcode_26.6.app' || '' }}
       HOMEBREW_NO_AUTO_UPDATE: "1"
       HOMEBREW_NO_INSTALL_CLEANUP: "1"
     steps:
@@ -132,7 +147,8 @@ jobs:
         uses: github/codeql-action/init@9b3254085494b55a0f7c4c2b3d2d52cc712ce370 # v4.39.1
         with:
           languages: ${{ matrix.language }}
-          build-mode: ${{ matrix.build-mode }}
+          # The Swift build is traced (manual); the other two languages need no build.
+          build-mode: ${{ matrix.language == 'swift' && 'manual' || 'none' }}
           config-file: ./.github/codeql/codeql-config.yml
 
       # CodeQL traces this build to extract Swift. It is the same unsigned Debug build as
@@ -141,7 +157,7 @@ jobs:
       # identity and no provisioning profile are involved. The runner is fresh, so every file is
       # compiled and nothing is skipped as up to date.
       - name: Build for Swift extraction
-        if: matrix.build-mode == 'manual'
+        if: matrix.language == 'swift'
         run: ./scripts/dev.sh build --unsigned
 
       - name: Analyze

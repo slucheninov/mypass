@@ -26,7 +26,7 @@ jobs:
   # about 16 of them, packaging about 5). The parts do not depend on each other, so each one
   # gets its own runner and the run takes as long as the slowest part. The repository is public,
   # so the extra runner minutes are free; the macOS concurrency limit is 5 and this workflow uses
-  # at most 3 macOS runners at a time (the CodeQL Swift leg is a fourth).
+  # at most 3 macOS runners at a time (on a push to master the CodeQL Swift leg is a fourth).
   # Every part keeps the "same script as a developer runs" rule: scripts/test.sh --only <part>.
 
   app-tests:
