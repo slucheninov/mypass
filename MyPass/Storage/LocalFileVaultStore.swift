@@ -11,13 +11,14 @@ final class LocalFileVaultStore: VaultPrimaryStorage {
     /// `ICloudDriveVaultStore`'s `localBackupDirectory`, which exists for
     /// the same reason (it doesn't own the iCloud file's directory either).
     private let localBackupDirectory: URL
-    private let backupCount: Int
+    let backupManager: VaultBackupManager
     private let queue = DispatchQueue(label: "com.tentens.mypass.LocalFileVaultStore")
 
     var vaultURL: URL { fileURL }
     var primaryVaultFileURL: URL? { fileURL }
+    var vaultBackupManager: VaultBackupManager? { backupManager }
 
-    init(bookmarkData: Data, localBackupDirectory: URL, backupCount: Int = 10) throws {
+    init(bookmarkData: Data, localBackupDirectory: URL, backupManager: VaultBackupManager? = nil) throws {
         var isStale = false
         guard !bookmarkData.isEmpty,
               let url = try? URL(
@@ -36,7 +37,7 @@ final class LocalFileVaultStore: VaultPrimaryStorage {
         }
         self.holdsSecurityScope = true
         self.localBackupDirectory = localBackupDirectory
-        self.backupCount = backupCount
+        self.backupManager = backupManager ?? VaultBackupManager(directory: localBackupDirectory)
     }
 
     deinit {
@@ -74,7 +75,11 @@ final class LocalFileVaultStore: VaultPrimaryStorage {
     /// level for the size of file a KDBX vault is.
     func save(data: Data) throws {
         try queue.sync {
-            try? backupCurrentContentIfPresent()
+            let fileURL = self.fileURL
+            backupManager.snapshotIfDue {
+                guard FileManager.default.fileExists(atPath: fileURL.path) else { return nil }
+                return try Data(contentsOf: fileURL)
+            }
             try data.write(to: fileURL)
         }
     }
@@ -83,38 +88,6 @@ final class LocalFileVaultStore: VaultPrimaryStorage {
         try queue.sync {
             guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
             try FileManager.default.removeItem(at: fileURL)
-        }
-    }
-
-    /// Best-effort: mirrors `ICloudDriveVaultStore.backupCurrentContentIfPresent`
-    /// — snapshots the current on-disk content into `localBackupDirectory`
-    /// (a directory this store fully owns, unlike `fileURL`'s own directory)
-    /// before it gets overwritten, then rotates to the last `backupCount`.
-    /// Swallowed by the `try?` at the call site: the backup is a
-    /// nice-to-have, not the authoritative write, and must never block the
-    /// actual save.
-    private func backupCurrentContentIfPresent() throws {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else { return }
-        let existingData = try Data(contentsOf: fileURL)
-        try FileManager.default.createDirectory(at: localBackupDirectory, withIntermediateDirectories: true)
-        let timestamp = String(format: "%.6f", Date().timeIntervalSince1970)
-        let backupURL = localBackupDirectory.appendingPathComponent("vault-\(timestamp).kdbx")
-        try existingData.write(to: backupURL, options: .atomic)
-        try rotateBackups()
-    }
-
-    private func rotateBackups() throws {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: localBackupDirectory.path) else { return }
-        let entries = try fm.contentsOfDirectory(at: localBackupDirectory, includingPropertiesForKeys: [.creationDateKey])
-        let sorted = try entries.sorted { lhs, rhs in
-            let l = try lhs.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
-            let r = try rhs.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
-            return l < r
-        }
-        guard sorted.count > backupCount else { return }
-        for url in sorted.prefix(sorted.count - backupCount) {
-            try fm.removeItem(at: url)
         }
     }
 }

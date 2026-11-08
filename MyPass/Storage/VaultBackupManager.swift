@@ -1,0 +1,248 @@
+import Foundation
+import os.log
+
+extension Notification.Name {
+    /// Posted (on the main queue) after a backup was written, pruned or failed, so Settings can
+    /// refresh its cached summary instead of touching the filesystem from `body`.
+    static let vaultBackupsDidChange = Notification.Name("com.mypass.vaultBackupsDidChange")
+}
+
+/// How often a save may snapshot the previous on-disk vault into `backups/`.
+enum VaultBackupInterval: String, CaseIterable, Identifiable {
+    case everySave
+    case tenMinutes
+    case hourly
+    case daily
+
+    var id: String { rawValue }
+
+    static let `default`: VaultBackupInterval = .everySave
+
+    /// Minimum gap between two snapshots; `0` means "every save".
+    var seconds: TimeInterval {
+        switch self {
+        case .everySave: return 0
+        case .tenMinutes: return 10 * 60
+        case .hourly: return 60 * 60
+        case .daily: return 24 * 60 * 60
+        }
+    }
+}
+
+/// The user-facing backup settings, read from `UserDefaults` at the moment they are needed
+/// (never captured at launch), so a change in Settings applies to the very next save.
+enum VaultBackupSettings {
+    static let countKey = "backupCount"
+    static let intervalKey = "backupInterval"
+    static let lastFailureMessageKey = "backupLastFailureMessage"
+    static let lastFailureDateKey = "backupLastFailureDate"
+
+    static let defaultCount = 10
+    static let countRange = 1...50
+
+    static func count(defaults: UserDefaults) -> Int {
+        let stored = defaults.object(forKey: countKey) == nil ? defaultCount : defaults.integer(forKey: countKey)
+        return min(max(stored, countRange.lowerBound), countRange.upperBound)
+    }
+
+    static func interval(defaults: UserDefaults) -> VaultBackupInterval {
+        defaults.string(forKey: intervalKey).flatMap(VaultBackupInterval.init(rawValue:)) ?? .default
+    }
+
+    /// The one place the "is a snapshot due" rule lives, so the three stores cannot drift apart.
+    /// The first write of a session always snapshots (the vault may have been changed outside
+    /// the app since the last backup); after that the interval must have elapsed since the
+    /// newest existing backup.
+    static func isSnapshotDue(
+        interval: VaultBackupInterval,
+        newestBackupDate: Date?,
+        now: Date,
+        isFirstWriteOfSession: Bool
+    ) -> Bool {
+        if isFirstWriteOfSession || interval == .everySave { return true }
+        guard let newestBackupDate else { return true }
+        return now.timeIntervalSince(newestBackupDate) >= interval.seconds
+    }
+}
+
+struct VaultBackupInfo: Identifiable, Equatable {
+    let url: URL
+    let date: Date
+    let size: Int64
+    var id: URL { url }
+}
+
+struct VaultBackupFailure: Equatable {
+    let message: String
+    let date: Date
+}
+
+/// Writes, rotates and lists the local pre-save snapshots of the vault file. Shared by
+/// `VaultFileStore`, `LocalFileVaultStore` and `ICloudDriveVaultStore`.
+///
+/// Backups live in the app's own container (never in the vault's folder, never in iCloud or any
+/// sync target), and a backup failure NEVER blocks the vault save: it is logged and recorded in
+/// `UserDefaults` (message + date) for Settings to show, and cleared by the next success.
+final class VaultBackupManager {
+    private static let log = OSLog(subsystem: "com.mypass.app", category: "Backups")
+
+    let directory: URL
+    private let defaults: UserDefaults
+    private let now: () -> Date
+    private let lock = NSLock()
+    private var hasSnapshottedThisSession = false
+    private var snapshotsSuppressed = false
+
+    init(directory: URL, defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init) {
+        self.directory = directory
+        self.defaults = defaults
+        self.now = now
+    }
+
+    /// Forget that this session already snapshotted, so the next write snapshots again.
+    /// Called when the vault locks.
+    func beginSession() {
+        lock.lock()
+        hasSnapshottedThisSession = false
+        lock.unlock()
+    }
+
+    /// Best-effort, never throws. `readCurrent` is only invoked when a snapshot is due, so a
+    /// skipped snapshot costs no read (relevant for evicted iCloud placeholders).
+    func snapshotIfDue(_ readCurrent: () throws -> Data?) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !snapshotsSuppressed else { return }
+        let backups = listLocked()
+        let due = VaultBackupSettings.isSnapshotDue(
+            interval: VaultBackupSettings.interval(defaults: defaults),
+            newestBackupDate: backups.first?.date,
+            now: now(),
+            isFirstWriteOfSession: !hasSnapshottedThisSession
+        )
+        guard due else { return }
+        do {
+            guard let data = try readCurrent() else { return }
+            try writeLocked(data)
+            hasSnapshottedThisSession = true
+            recordSuccess()
+        } catch {
+            recordFailure(error)
+        }
+    }
+
+    /// Snapshots `data` regardless of the interval; throws on failure. Used before a restore,
+    /// where "the current content is recoverable" is a hard requirement.
+    func forceSnapshot(_ data: Data) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        do {
+            try writeLocked(data)
+            hasSnapshottedThisSession = true
+            recordSuccess()
+        } catch {
+            recordFailure(error)
+            throw error
+        }
+    }
+
+    /// Runs `body` with automatic snapshots off (restore snapshots explicitly, once, before it
+    /// writes, so the write itself must not add a duplicate).
+    func withSnapshotsSuppressed<T>(_ body: () throws -> T) rethrows -> T {
+        lock.lock()
+        snapshotsSuppressed = true
+        lock.unlock()
+        defer {
+            lock.lock()
+            snapshotsSuppressed = false
+            lock.unlock()
+        }
+        return try body()
+    }
+
+    /// Newest first.
+    func list() -> [VaultBackupInfo] {
+        lock.lock()
+        defer { lock.unlock() }
+        return listLocked()
+    }
+
+    var lastFailure: VaultBackupFailure? {
+        guard let message = defaults.string(forKey: VaultBackupSettings.lastFailureMessageKey) else { return nil }
+        let seconds = defaults.double(forKey: VaultBackupSettings.lastFailureDateKey)
+        return VaultBackupFailure(message: message, date: Date(timeIntervalSince1970: seconds))
+    }
+
+    // MARK: - Private (lock held)
+
+    private func writeLocked(_ data: Data) throws {
+        let fm = FileManager.default
+        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        let stamp = String(format: "%.6f", now().timeIntervalSince1970)
+        var url = directory.appendingPathComponent("vault-\(stamp).kdbx")
+        var suffix = 1
+        while fm.fileExists(atPath: url.path) {
+            suffix += 1
+            url = directory.appendingPathComponent("vault-\(stamp)-\(suffix).kdbx")
+        }
+        try data.write(to: url, options: .atomic)
+        try pruneLocked()
+        notifyChanged()
+    }
+
+    private func pruneLocked() throws {
+        let backups = listLocked()
+        let keep = VaultBackupSettings.count(defaults: defaults)
+        guard backups.count > keep else { return }
+        for backup in backups.dropFirst(keep) {
+            try FileManager.default.removeItem(at: backup.url)
+        }
+    }
+
+    private func listLocked() -> [VaultBackupInfo] {
+        let keys: [URLResourceKey] = [.creationDateKey, .fileSizeKey]
+        guard let urls = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: keys) else {
+            return []
+        }
+        return urls.compactMap { url -> VaultBackupInfo? in
+            guard url.pathExtension == "kdbx", url.lastPathComponent.hasPrefix("vault-") else { return nil }
+            let values = try? url.resourceValues(forKeys: Set(keys))
+            // The timestamp in the name comes from the (injectable) clock, so it is the
+            // authoritative order; the creation date is only the fallback for odd names.
+            let date = Self.timestamp(fromFileName: url.lastPathComponent)
+                ?? values?.creationDate
+                ?? .distantPast
+            return VaultBackupInfo(url: url, date: date, size: Int64(values?.fileSize ?? 0))
+        }
+        .sorted { $0.date > $1.date }
+    }
+
+    static func timestamp(fromFileName name: String) -> Date? {
+        // Drop the extension first: its leading dot would otherwise be swallowed by the number scan.
+        let body = name.dropFirst("vault-".count).dropLast(".kdbx".count)
+        let digits = body.prefix { $0.isNumber || $0 == "." }
+        guard let seconds = Double(digits) else { return nil }
+        return Date(timeIntervalSince1970: seconds)
+    }
+
+    private func recordSuccess() {
+        let hadFailure = defaults.object(forKey: VaultBackupSettings.lastFailureMessageKey) != nil
+        defaults.removeObject(forKey: VaultBackupSettings.lastFailureMessageKey)
+        defaults.removeObject(forKey: VaultBackupSettings.lastFailureDateKey)
+        if hadFailure { notifyChanged() }
+    }
+
+    private func recordFailure(_ error: Error) {
+        let message = (error as NSError).localizedDescription
+        os_log("Vault backup failed: %{public}@", log: Self.log, type: .error, message)
+        defaults.set(message, forKey: VaultBackupSettings.lastFailureMessageKey)
+        defaults.set(now().timeIntervalSince1970, forKey: VaultBackupSettings.lastFailureDateKey)
+        notifyChanged()
+    }
+
+    private func notifyChanged() {
+        DispatchQueue.main.async {
+            NotificationCenter.default.post(name: .vaultBackupsDidChange, object: nil)
+        }
+    }
+}

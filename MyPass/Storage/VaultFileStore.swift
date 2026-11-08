@@ -3,20 +3,16 @@ import SyncKit
 
 struct VaultFileStore {
     let directory: URL
-    let backupCount: Int
+    let backupManager: VaultBackupManager
     private let queue = DispatchQueue(label: "com.tentens.mypass.VaultFileStore")
 
-    init(directory: URL, backupCount: Int = 10) {
+    init(directory: URL, backupManager: VaultBackupManager? = nil) {
         self.directory = directory
-        self.backupCount = backupCount
+        self.backupManager = backupManager ?? VaultBackupManager(directory: directory.appendingPathComponent("backups"))
     }
 
     var vaultURL: URL {
         directory.appendingPathComponent("vault.kdbx")
-    }
-
-    private var backupDirectory: URL {
-        directory.appendingPathComponent("backups")
     }
 
     func load() throws -> Data? {
@@ -31,7 +27,12 @@ struct VaultFileStore {
     func save(data: Data) throws {
         try queue.sync {
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-            try backupCurrentVaultIfPresent()
+            // Best-effort and non-throwing: a backup failure is logged and recorded by the
+            // manager (Settings shows it) but must never block the authoritative write.
+            backupManager.snapshotIfDue { [vaultURL] in
+                guard FileManager.default.fileExists(atPath: vaultURL.path) else { return nil }
+                return try Data(contentsOf: vaultURL)
+            }
             try atomicWrite(data: data, to: vaultURL)
         }
     }
@@ -41,34 +42,10 @@ struct VaultFileStore {
         try data.write(to: tempURL, options: .atomic)
         _ = try FileManager.default.replaceItemAt(url, withItemAt: tempURL)
     }
-
-    private func backupCurrentVaultIfPresent() throws {
-        guard FileManager.default.fileExists(atPath: vaultURL.path) else { return }
-        try FileManager.default.createDirectory(at: backupDirectory, withIntermediateDirectories: true)
-        let timestamp = String(format: "%.6f", Date().timeIntervalSince1970)
-        let backupURL = backupDirectory.appendingPathComponent("vault-\(timestamp).kdbx")
-        let existingData = try Data(contentsOf: vaultURL)
-        try existingData.write(to: backupURL, options: .atomic)
-        try rotateBackups()
-    }
-
-    private func rotateBackups() throws {
-        let fm = FileManager.default
-        guard fm.fileExists(atPath: backupDirectory.path) else { return }
-        let entries = try fm.contentsOfDirectory(at: backupDirectory, includingPropertiesForKeys: [.creationDateKey])
-        let sorted = try entries.sorted { lhs, rhs in
-            let l = try lhs.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
-            let r = try rhs.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
-            return l < r
-        }
-        guard sorted.count > backupCount else { return }
-        for url in sorted.prefix(sorted.count - backupCount) {
-            try fm.removeItem(at: url)
-        }
-    }
 }
 
 extension VaultFileStore: VaultPrimaryStorage {
+    var vaultBackupManager: VaultBackupManager? { backupManager }
     var primaryVaultFileURL: URL? { vaultURL }
 
     func deleteVaultFileIfPresent() throws {

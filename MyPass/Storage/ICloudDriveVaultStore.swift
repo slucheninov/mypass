@@ -10,17 +10,17 @@ import SyncKit
 final class ICloudDriveVaultStore: VaultPrimaryStorage {
     private let backend: iCloudBackend
     private let localBackupDirectory: URL
-    private let backupCount: Int
+    let backupManager: VaultBackupManager
 
     init(
         bookmarkData: Data,
         relativePath: String = "vault.kdbx",
         localBackupDirectory: URL,
-        backupCount: Int = 10
+        backupManager: VaultBackupManager? = nil
     ) throws {
         self.backend = try iCloudBackend(root: .userFolder(bookmark: bookmarkData), relativePath: relativePath)
         self.localBackupDirectory = localBackupDirectory
-        self.backupCount = backupCount
+        self.backupManager = backupManager ?? VaultBackupManager(directory: localBackupDirectory)
     }
 
     /// Fires when another device/process changes the iCloud Drive file while
@@ -46,36 +46,14 @@ final class ICloudDriveVaultStore: VaultPrimaryStorage {
         // Best-effort: an evicted iCloud placeholder or a slow network can make
         // the pre-save backup read throw `downloadTimedOut`. The backup is a
         // nice-to-have, not the authoritative write — it must never block
-        // `backend.write(data)` below, so failures here are swallowed rather
-        // than propagated.
-        try? backupCurrentContentIfPresent()
+        // `backend.write(data)` below, so failures here are recorded by the
+        // manager (and shown in Settings) rather than propagated.
+        backupManager.snapshotIfDue { try backend.read() }
         try backend.write(data)
     }
 
-    private func backupCurrentContentIfPresent() throws {
-        guard let existingData = try backend.read() else { return }
-        try FileManager.default.createDirectory(at: localBackupDirectory, withIntermediateDirectories: true)
-        let timestamp = String(format: "%.6f", Date().timeIntervalSince1970)
-        let backupURL = localBackupDirectory.appendingPathComponent("vault-\(timestamp).kdbx")
-        try existingData.write(to: backupURL, options: .atomic)
-        try rotateBackups()
-    }
-
-    private func rotateBackups() throws {
-        let fm = FileManager.default
-        let entries = try fm.contentsOfDirectory(at: localBackupDirectory, includingPropertiesForKeys: [.creationDateKey])
-        let sorted = try entries.sorted { lhs, rhs in
-            let l = try lhs.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
-            let r = try rhs.resourceValues(forKeys: [.creationDateKey]).creationDate ?? .distantPast
-            return l < r
-        }
-        guard sorted.count > backupCount else { return }
-        for url in sorted.prefix(sorted.count - backupCount) {
-            try fm.removeItem(at: url)
-        }
-    }
-
     var primaryVaultFileURL: URL? { backend.vaultFileURL }
+    var vaultBackupManager: VaultBackupManager? { backupManager }
 
     func deleteVaultFileIfPresent() throws {
         try backend.deleteFileIfPresent()

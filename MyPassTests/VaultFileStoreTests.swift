@@ -28,7 +28,7 @@ final class VaultFileStoreTests: XCTestCase {
     }
 
     func testBackupRotationKeepsOnlyBackupCountFiles() throws {
-        let store = VaultFileStore(directory: tempDir, backupCount: 2)
+        let store = VaultFileStore(directory: tempDir, backupManager: VaultBackupManager(directory: tempDir.appendingPathComponent("backups"), defaults: BackupTestDefaults.make(count: 2)))
         for i in 0..<5 {
             try store.save(data: Data("version \(i)".utf8))
         }

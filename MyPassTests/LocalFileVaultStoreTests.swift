@@ -96,7 +96,7 @@ final class LocalFileVaultStoreTests: XCTestCase {
     func testSaveRotatesBackupsKeepingOnlyBackupCount() throws {
         try Data("version-0".utf8).write(to: vaultFileURL)
         let bookmark = try LocalFileVaultStore.createFileBookmark(for: vaultFileURL)
-        let store = try LocalFileVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir, backupCount: 2)
+        let store = try LocalFileVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir, backupManager: VaultBackupManager(directory: backupDir, defaults: BackupTestDefaults.make(count: 2)))
 
         for version in 1...4 {
             try store.save(data: Data("version-\(version)".utf8))

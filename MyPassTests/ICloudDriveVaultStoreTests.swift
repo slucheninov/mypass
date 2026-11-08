@@ -63,7 +63,7 @@ final class ICloudDriveVaultStoreTests: XCTestCase {
 
     func testRotatesOldestBackupsBeyondBackupCount() throws {
         let bookmark = try iCloudBackend.createFolderBookmark(for: folderDir)
-        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir, backupCount: 2)
+        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir, backupManager: VaultBackupManager(directory: backupDir, defaults: BackupTestDefaults.make(count: 2)))
         try store.save(data: Data("v1".utf8))
         try store.save(data: Data("v2".utf8))
         try store.save(data: Data("v3".utf8))
