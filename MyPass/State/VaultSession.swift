@@ -21,6 +21,15 @@ extension VaultState: Equatable {
 enum VaultSessionError: Error {
     case notUnlocked
     case quitInProgress
+    /// A queued save is still running; restoring now could be overwritten by it.
+    case writeInProgress
+    /// The chosen file is not a KDBX vault.
+    case invalidBackup
+    /// The current primary store keeps no local backups.
+    case backupsUnavailable
+    /// The restore write failed part-way and putting the previous bytes back failed too, so the
+    /// vault file may be damaged. The safety snapshot taken just before is the way back.
+    case restoreFailedVaultMayBeDamaged
 }
 
 /// How a quit-time flush ended. `saveFailed` carries `lastSaveError` as it
@@ -149,6 +158,17 @@ final class VaultSession: ObservableObject, VaultFlushing {
     private let writeStateLock = NSLock()
     private var queuedWriteError: String?
     private var pendingLocalWrites = 0
+    /// `persist` jobs from enqueue until the closure fully returns, remote sync included.
+    private var persistJobsInFlight = 0
+    /// Set by `restoreBackup` (atomically with its busy check) until it returns. While set,
+    /// `persist` refuses to enqueue: `triggerBackgroundSync` is also reached from the folder
+    /// watcher, which is not the main thread, so a persist could otherwise start after the
+    /// busy check and write the pre-restore database over the restored file, or run a sync
+    /// that recreates the checkpoint the restore just cleared. A refused persist is safe to
+    /// drop: the restore locks the session, and the next unlock syncs again.
+    private var restoreReserved = false
+    /// Test seam: runs inside `restoreBackup` right after the reservation, before any write.
+    var restoreBackupAfterReservationHook: (() -> Void)?
     private var writeGeneration = 0
     private var supersededThroughGeneration = 0
     private var localDrainWaiters: [(String?) -> Void] = []
@@ -394,11 +414,114 @@ final class VaultSession: ObservableObject, VaultFlushing {
         touchAccessPersistWorkItem = nil
         state = .locked
         sessionPassword = nil
+        // The next session's first write snapshots regardless of the backup interval.
+        fileStore.vaultBackupManager?.beginSession()
         // A write still in flight may succeed after this, but the drafts of entries deleted
         // in it survive on purpose (they expire via the 7-day purge or the orphan logic).
         writeStateLock.lock()
         pendingDraftDeletions.removeAll()
         writeStateLock.unlock()
+    }
+
+    /// The backup manager of the current primary store (Settings lists and restores from it).
+    var backupManager: VaultBackupManager? { fileStore.vaultBackupManager }
+
+    /// `true` when a secondary sync destination (folder or SFTP) is configured.
+    var hasSecondaryDestination: Bool { syncEngine != nil }
+
+    /// Replaces the primary vault file with the bytes of `backupURL` and locks the vault.
+    ///
+    /// Semantics, chosen for safety:
+    /// - Refused while any queued save is pending (`writeInProgress`) or a quit is under way.
+    ///   Everything runs on the main thread, where new saves are enqueued, so none can start
+    ///   between the check and the write.
+    /// - The CURRENT on-disk bytes are force-snapshotted first (ignoring the backup interval);
+    ///   if that fails the restore is aborted, so a restore can always be undone by restoring
+    ///   the newest backup. The write itself runs with automatic snapshots suppressed so it
+    ///   does not add a duplicate of the same bytes.
+    /// - The vault is then locked, which drops the in-memory database and the cached "last
+    ///   written" state, so nothing in memory can overwrite the restored file. The user unlocks
+    ///   with whatever master password the backup was encrypted with.
+    /// - The secondary sync destination is deliberately NOT written. `SyncEngine` has no
+    ///   force-push, and pushing the old content would destroy changes other devices made that
+    ///   this device never merged. Its checkpoint IS cleared (see below), so the next sync
+    ///   merges and entries that exist only on the remote can come back. A backup under an
+    ///   older master password makes that merge fail (`KdbxDatabase.open` throws on the
+    ///   remote); the failure surfaces as `lastSaveError` ("Failed to sync vault" /
+    ///   "Local save completed, but sync failed") and nothing is written on either side.
+    func restoreBackup(from backupURL: URL, defaults: UserDefaults = .standard) throws {
+        guard !isQuitInProgress else { throw VaultSessionError.quitInProgress }
+        guard let manager = fileStore.vaultBackupManager else { throw VaultSessionError.backupsUnavailable }
+        writeStateLock.lock()
+        // `persistJobsInFlight` also covers the remote sync that follows a finished local write:
+        // a sync that started before the restore could otherwise save a fresh checkpoint after
+        // the restore cleared it, re-enabling the blind upload of the restored copy.
+        let busy = pendingLocalWrites > 0 || persistJobsInFlight > 0 || restoreReserved
+        if !busy { restoreReserved = true }
+        writeStateLock.unlock()
+        guard !busy else { throw VaultSessionError.writeInProgress }
+        // Released on every exit, after `lock()` on success so a refused persist cannot slip in
+        // between the reservation ending and the state being dropped.
+        defer {
+            writeStateLock.lock()
+            restoreReserved = false
+            writeStateLock.unlock()
+        }
+        restoreBackupAfterReservationHook?()
+
+        let backupData = try Data(contentsOf: backupURL)
+        guard VaultMigrationService.looksLikeKdbx(backupData) else { throw VaultSessionError.invalidBackup }
+
+        var safetySnapshot: URL?
+        let originalBytes = try fileStore.load()
+        if let current = originalBytes {
+            safetySnapshot = try manager.forceSnapshot(current)
+        }
+        touchAccessPersistWorkItem?.cancel()
+        touchAccessPersistWorkItem = nil
+        do {
+            try manager.withSnapshotsSuppressed {
+                try fileStore.save(data: backupData)
+            }
+        } catch {
+            // `LocalFileVaultStore.save` (the same call a normal save makes) is a direct
+            // `Data.write(to:)` on the user-selected file, because the sandbox grants no sibling
+            // temp file to rename from. A failure can therefore leave that file truncated or
+            // partly written. The pre-restore bytes are still in memory (they are also the
+            // safety snapshot), so put them back through the same store; if even that fails,
+            // say so, because the vault file may now be damaged.
+            if let current = originalBytes {
+                do {
+                    try manager.withSnapshotsSuppressed {
+                        try fileStore.save(data: current)
+                    }
+                } catch {
+                    throw VaultSessionError.restoreFailedVaultMayBeDamaged
+                }
+            }
+            throw error
+        }
+        // `async`, not `sync`: a remote sync may still be running on this queue, and waiting for
+        // it would block the main thread on the network. The queue is serial, so this runs after
+        // that job and before anything enqueued later (the next unlock's `recordSuccessfulWrite`
+        // hops on with `sync`), and nothing can enqueue until the user unlocks again.
+        persistQueue.async { [weak self] in
+            self?.lastSuccessfullyWrittenBytes = nil
+            self?.lastSuccessfullyWrittenDatabase = nil
+        }
+        noteSynchronousDurableWrite()
+        hasDirtyLocalChanges = false
+        // The file now holds an arbitrary older copy. Invalidate the secondary checkpoints so
+        // the next sync can never take `SyncEngine`'s "remote unchanged since checkpoint" fast
+        // path, which blindly uploads the local file over the remote (possibly under an older
+        // master password that other devices cannot open). Without a checkpoint it must take
+        // the merge path instead.
+        SyncBackendResolver.clearCheckpoint(for: .folder, defaults: defaults)
+        SyncBackendResolver.clearCheckpoint(for: .sftp, defaults: defaults)
+        // Only now that the restore write succeeded is it safe to rotate: the restore source
+        // may have been the oldest backup at the count limit.
+        manager.pruneNow(protecting: safetySnapshot)
+        lock()
     }
 
     /// Swaps the primary store the session reads/writes from — used when the
@@ -993,6 +1116,9 @@ final class VaultSession: ObservableObject, VaultFlushing {
         }
     }
 
+    /// Blocks until every job queued so far has run. Tests only.
+    func drainPersistQueueForTesting() { persistQueue.sync {} }
+
     private func persist(_ db: KdbxDatabase, deletingDraftsFor draftIDs: Set<UUID> = []) {
         guard let sessionPassword else { return }
         // Deep-copy the group tree synchronously (main thread, no concurrent
@@ -1003,7 +1129,17 @@ final class VaultSession: ObservableObject, VaultFlushing {
             deletedObjects: db.deletedObjects,
             recycleBinGroupUUID: db.recycleBinGroupUUID
         )
-        let generation = beginLocalWrite()
+        // Reservation check and job registration are one critical section (see `restoreReserved`).
+        writeStateLock.lock()
+        if restoreReserved {
+            writeStateLock.unlock()
+            return
+        }
+        pendingLocalWrites += 1
+        writeGeneration += 1
+        let generation = writeGeneration
+        persistJobsInFlight += 1
+        writeStateLock.unlock()
         if !draftIDs.isEmpty {
             writeStateLock.lock()
             pendingDraftDeletions.append((generation, draftIDs))
@@ -1011,6 +1147,11 @@ final class VaultSession: ObservableObject, VaultFlushing {
         }
         persistQueue.async { [weak self, fileStore, syncEngine] in
             guard let self else { return }
+            defer {
+                self.writeStateLock.lock()
+                self.persistJobsInFlight -= 1
+                self.writeStateLock.unlock()
+            }
 
             // Logically identical to what's already on disk (and, if
             // attached, already synced) — skip both the KDF derivation +

@@ -12,7 +12,14 @@ final class ControllableVaultStore: VaultPrimaryStorage {
     private var saveCompleted: (() -> Void)?
     private(set) var saveCount = 0
 
-    init(directory: URL) { inner = VaultFileStore(directory: directory) }
+    private let manager: VaultBackupManager?
+
+    init(directory: URL, manager: VaultBackupManager? = nil) {
+        inner = VaultFileStore(directory: directory, backupManager: manager)
+        self.manager = manager
+    }
+
+    var vaultBackupManager: VaultBackupManager? { manager }
 
     func holdWrites() { lock.lock(); gate = DispatchSemaphore(value: 0); lock.unlock() }
     func releaseWrites() { lock.lock(); let g = gate; gate = nil; lock.unlock(); g?.signal() }

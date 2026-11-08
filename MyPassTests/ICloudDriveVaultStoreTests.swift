@@ -16,6 +16,7 @@ final class ICloudDriveVaultStoreTests: XCTestCase {
     }
 
     override func tearDownWithError() throws {
+        BackupTestDefaults.cleanUp()
         try? FileManager.default.removeItem(at: folderDir.deletingLastPathComponent())
     }
 
@@ -61,9 +62,21 @@ final class ICloudDriveVaultStoreTests: XCTestCase {
         XCTAssertEqual(try store.load(), Data("second-version".utf8))
     }
 
+    func testBackupFailureIsRecordedAndDoesNotBlockSave() throws {
+        let manager = VaultBackupManager(directory: backupDir, defaults: BackupTestDefaults.make())
+        let bookmark = try iCloudBackend.createFolderBookmark(for: folderDir)
+        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir, backupManager: manager)
+        try store.save(data: Data("first-version".utf8))
+        try FileManager.default.removeItem(at: backupDir)
+        try Data().write(to: backupDir)
+        XCTAssertNoThrow(try store.save(data: Data("second-version".utf8)))
+        XCTAssertEqual(try store.load(), Data("second-version".utf8))
+        XCTAssertNotNil(manager.lastFailure)
+    }
+
     func testRotatesOldestBackupsBeyondBackupCount() throws {
         let bookmark = try iCloudBackend.createFolderBookmark(for: folderDir)
-        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir, backupCount: 2)
+        let store = try ICloudDriveVaultStore(bookmarkData: bookmark, localBackupDirectory: backupDir, backupManager: VaultBackupManager(directory: backupDir, defaults: BackupTestDefaults.make(count: 2)))
         try store.save(data: Data("v1".utf8))
         try store.save(data: Data("v2".utf8))
         try store.save(data: Data("v3".utf8))

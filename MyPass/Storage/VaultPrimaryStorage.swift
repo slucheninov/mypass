@@ -13,4 +13,14 @@ protocol VaultPrimaryStorage {
 
     /// Removes the primary vault file if it exists. Used after a verified move.
     func deleteVaultFileIfPresent() throws
+
+    /// The local snapshot writer, when the store keeps one (a requirement, not only an extension
+    /// member, so calls through the existential reach the store's own value).
+    var vaultBackupManager: VaultBackupManager? { get }
+}
+
+extension VaultPrimaryStorage {
+    /// Stores that keep no backups (test doubles) have none; `VaultSession` treats `nil` as
+    /// "nothing to restore from".
+    var vaultBackupManager: VaultBackupManager? { nil }
 }
