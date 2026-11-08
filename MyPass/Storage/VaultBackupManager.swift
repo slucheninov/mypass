@@ -94,13 +94,18 @@ final class VaultBackupManager {
     private let defaults: UserDefaults
     private let now: () -> Date
     private let removeFile: (URL) throws -> Void
+    private let createDirectory: (URL) throws -> Void
     private let lock = NSLock()
     private var hasSnapshottedThisSession = false
     private var snapshotsSuppressed = false
 
     init(directory: URL, defaults: UserDefaults = .standard, now: @escaping () -> Date = Date.init,
-         removeFile: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) }) {
+         removeFile: @escaping (URL) throws -> Void = { try FileManager.default.removeItem(at: $0) },
+         createDirectory: @escaping (URL) throws -> Void = {
+             try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true)
+         }) {
         self.directory = directory
+        self.createDirectory = createDirectory
         self.defaults = defaults
         self.now = now
         self.removeFile = removeFile
@@ -203,7 +208,20 @@ final class VaultBackupManager {
     @discardableResult
     private func writeLocked(_ data: Data) throws -> URL {
         let fm = FileManager.default
-        try fm.createDirectory(at: directory, withIntermediateDirectories: true)
+        do {
+            try createDirectory(directory)
+        } catch {
+            // `createDirectory(withIntermediateDirectories: true)` can report "a file with the
+            // same name already exists" (EEXIST) for a directory it did create, or that
+            // appeared meanwhile: seen on the first call under a fresh temporary folder on the
+            // GitHub macOS runner, where it made the very first snapshot silently fail. If the
+            // directory is there, the goal is met; only a missing directory (or a plain file in
+            // its place) is a real failure.
+            var isDirectory: ObjCBool = false
+            guard fm.fileExists(atPath: directory.path, isDirectory: &isDirectory), isDirectory.boolValue else {
+                throw error
+            }
+        }
         let stamp = String(format: "%.6f", now().timeIntervalSince1970)
         var url = directory.appendingPathComponent("vault-\(stamp).kdbx")
         var suffix = 1

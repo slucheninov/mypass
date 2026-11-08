@@ -59,6 +59,21 @@ final class VaultBackupManagerTests: XCTestCase {
         XCTAssertEqual(contents, ["v6", "v5"])
     }
 
+    /// Deterministic repro of the CI failure: the directory API creates the folder but reports
+    /// EEXIST, which used to lose the first snapshot of a fresh backups folder.
+    func testFirstSnapshotSurvivesSpuriousDirectoryExistsError() {
+        let m = VaultBackupManager(
+            directory: dir, defaults: BackupTestDefaults.make(count: 5), now: { [unowned self] in self.clock },
+            createDirectory: {
+                try FileManager.default.createDirectory(at: $0, withIntermediateDirectories: true)
+                throw CocoaError(.fileWriteFileExists)
+            })
+        snap(m, "first")
+        snap(m, "second")
+        XCTAssertEqual(m.list().count, 2)
+        XCTAssertNil(m.lastFailure)
+    }
+
     func testCountIsClamped() {
         let low = BackupTestDefaults.make(count: 0)
         XCTAssertEqual(VaultBackupSettings.count(defaults: low), 1)
