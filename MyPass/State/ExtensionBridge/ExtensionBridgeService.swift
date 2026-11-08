@@ -93,6 +93,7 @@ final class ExtensionBridgeService {
     /// indirectly through `passkeyCreateCandidates(forOriginUrl:rpId:in:)`).
     private func passkeyEntries(forRelyingParty rpId: String, in database: KdbxDatabase) -> [KdbxEntry] {
         EntrySearch.allEntries(in: database.rootGroup)
+            .filter { $0.entryType != .files } // Files items are app-only, even if one somehow carries passkey fields.
             .filter { $0.passkeyRelyingParty == rpId }
             .filter { $0.uriMatchMode != .never }
             .filter { !RecycleBinEntryFilter.isInRecycleBin($0, database: database) }

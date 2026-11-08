@@ -2,12 +2,16 @@ import Foundation
 import MyPassKit
 
 enum EntrySearch {
-    static func matches(entry: KdbxEntry, query: String) -> Bool {
+    /// `includeAttachmentNames` is true only for the in-app search. The browser bridge shares
+    /// this function and must not let a query probe file names it cannot otherwise see.
+    static func matches(entry: KdbxEntry, query: String, includeAttachmentNames: Bool = false) -> Bool {
         guard !query.isEmpty else { return true }
         var haystacks = [entry.title, entry.login, entry.url, entry.notes, entry.notesBody]
-        // Attachment names are not secret (the detail pane shows them unblurred), so any kind
-        // can be found by the name of a file it carries.
-        haystacks += entry.attachments.map(\.name)
+        // Attachment names are not secret (the detail pane shows them unblurred), so in the app
+        // any kind can be found by the name of a file it carries.
+        if includeAttachmentNames {
+            haystacks += entry.attachments.map(\.name)
+        }
         if entry.entryType == .address {
             let address = entry.address
             haystacks += KdbxEntry.addressFields.map { address[keyPath: $0.1] }
@@ -20,11 +24,11 @@ enum EntrySearch {
         return own + group.subgroups.flatMap { allEntries(in: $0) }
     }
 
-    static func entries(in group: KdbxGroup, matching query: String) -> [KdbxEntry] {
+    static func entries(in group: KdbxGroup, matching query: String, includeAttachmentNames: Bool = false) -> [KdbxEntry] {
         guard !query.isEmpty else {
             return group.entries
         }
-        return allEntries(in: findRoot(from: group)).filter { matches(entry: $0, query: query) }
+        return allEntries(in: findRoot(from: group)).filter { matches(entry: $0, query: query, includeAttachmentNames: includeAttachmentNames) }
     }
 
     private static func findRoot(from group: KdbxGroup) -> KdbxGroup {

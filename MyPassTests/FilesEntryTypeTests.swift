@@ -47,18 +47,44 @@ final class FilesEntryTypeTests: XCTestCase {
     func testSearchMatchesAttachmentNamesForAnyKind() {
         let login = makeEntry(title: "GitHub", files: ["recovery-codes.txt"])
         let files = makeEntry(title: "Scans", type: .files, files: ["passport.pdf"])
-        XCTAssertTrue(EntrySearch.matches(entry: login, query: "RECOVERY"))
-        XCTAssertTrue(EntrySearch.matches(entry: files, query: "passport"))
-        XCTAssertFalse(EntrySearch.matches(entry: files, query: "recovery"))
+        XCTAssertTrue(EntrySearch.matches(entry: login, query: "RECOVERY", includeAttachmentNames: true))
+        XCTAssertTrue(EntrySearch.matches(entry: files, query: "passport", includeAttachmentNames: true))
+        XCTAssertFalse(EntrySearch.matches(entry: files, query: "recovery", includeAttachmentNames: true))
+        // Default (browser bridge) never looks at attachment names.
+        XCTAssertFalse(EntrySearch.matches(entry: login, query: "recovery"))
+        XCTAssertFalse(EntrySearch.matches(entry: files, query: "passport"))
     }
 
     func testListSubtitleShowsFileCountForFilesAndLoginOtherwise() {
         let files = makeEntry(title: "Scans", type: .files, files: ["a", "b", "c"])
         XCTAssertEqual(EntryListSubtitle.text(for: files), "3 files")
+        XCTAssertEqual(EntryListSubtitle.fileCountText(0), "0 files")
         XCTAssertEqual(EntryListSubtitle.fileCountText(1), "1 file")
+        XCTAssertEqual(EntryListSubtitle.fileCountText(2), "2 files")
+        XCTAssertEqual(EntryListSubtitle.fileCountText(5), "5 files")
         var login = makeEntry(title: "GitHub", files: ["a"])
         login.login = "ada"
         XCTAssertEqual(EntryListSubtitle.text(for: login), "ada")
+    }
+
+    func testSaveLogicKeepsTypeMapsDescriptionAndPreservesCustomFields() {
+        var existing = makeEntry(title: "Old", type: .files)
+        existing.fields.append(KdbxField(key: "KPEX_PASSKEY_RELYING_PARTY", value: "example.com", isProtected: false))
+        existing.fields.append(KdbxField(key: "Custom", value: "keep", isProtected: false))
+        let saved = FilesEntrySaveLogic.savedEntry(
+            existing: existing, entryID: existing.uuid, title: "New", description: "scans of ids", isFavorite: true,
+            attachments: AttachmentsEditModel(attachments: []), preservedAdditionalFields: existing.additionalFields,
+            now: Date())
+        XCTAssertEqual(saved.entryType, .files)
+        XCTAssertEqual(saved.title, "New")
+        XCTAssertEqual(saved.notes, "scans of ids")
+        XCTAssertTrue(saved.isFavorite)
+        XCTAssertEqual(saved.passkeyRelyingParty, "example.com")
+        XCTAssertEqual(saved.fields.first { $0.key == "Custom" }?.value, "keep")
+        let fresh = FilesEntrySaveLogic.savedEntry(
+            existing: nil, entryID: UUID(), title: "T", description: "", isFavorite: false,
+            attachments: AttachmentsEditModel(attachments: []), preservedAdditionalFields: [], now: Date())
+        XCTAssertEqual(fresh.entryType, .files)
     }
 
     func testActionMenuOffersNoCopyActionsForFiles() {

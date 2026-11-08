@@ -98,30 +98,10 @@ struct FilesEditView: View {
     private func save() {
         // Same guard as the Notes editor: a drop still reading would be silently lost.
         guard !attachmentsModel.isLoadingDrops else { return }
-        let now = Date()
-        var entry = existingEntry ?? KdbxEntry(
-            uuid: entryID,
-            iconID: 0,
-            fields: [],
-            creationTime: now,
-            lastModificationTime: now,
-            lastAccessTime: now,
-            locationChanged: now,
-            history: []
-        )
-        entry = attachmentsModel.applying(to: entry)
-        entry.entryType = .files
-        entry.title = title
-        entry.notes = descriptionText
-        entry.isFavorite = isFavorite
-        entry.lastModificationTime = now
-        entry.lastAccessTime = now
-
-        entry.fields.removeAll { !KdbxEntry.standardFieldKeys.contains($0.key) }
-        for field in preservedAdditionalFields {
-            entry.fields.append(field)
-        }
-
+        let entry = FilesEntrySaveLogic.savedEntry(
+            existing: existingEntry, entryID: entryID, title: title, description: descriptionText,
+            isFavorite: isFavorite, attachments: attachmentsModel, preservedAdditionalFields: preservedAdditionalFields,
+            now: Date())
         onSave(entry, selectedGroupID)
     }
 }
