@@ -291,7 +291,7 @@ final class VaultBackupManagerTests: XCTestCase {
         let currentBytes = try Data(contentsOf: dir.appendingPathComponent("vault.kdbx"))
         XCTAssertNotEqual(currentBytes, oldBytes)
 
-        try session.restoreBackup(from: backupFile)
+        try session.restoreBackup(from: backupFile, defaults: defaults)
 
         XCTAssertEqual(session.state, .locked)
         XCTAssertEqual(try Data(contentsOf: dir.appendingPathComponent("vault.kdbx")), oldBytes)
